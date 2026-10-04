@@ -141,6 +141,22 @@ const getStageProgressColor = (project) => {
   return "bg-red-500";
 };
 
+const getProjectStatusBadgeClasses = (status) => {
+  const statusClasses = {
+    pending: "border-slate-300 bg-slate-100 text-slate-700",
+    cutting: "border-orange-200 bg-orange-100 text-orange-800",
+    assembly: "border-blue-200 bg-blue-100 text-blue-800",
+    fabrication: "border-amber-200 bg-amber-100 text-amber-800",
+    installation: "border-sky-200 bg-sky-100 text-sky-800",
+    completed: "border-emerald-200 bg-emerald-100 text-emerald-800",
+    delayed: "border-rose-200 bg-rose-100 text-rose-800",
+    accepted: "border-violet-200 bg-violet-100 text-violet-800",
+    cancelled: "border-rose-200 bg-rose-100 text-rose-800",
+  };
+
+  return statusClasses[normalizeStageStatus(status)] || "border-slate-300 bg-slate-100 text-slate-700";
+};
+
 const mapProgressFromStatus = (status, progress) => {
   // If API already provided a numeric progress, respect it but avoid showing 100%
   // for non-completed orders (cap at 90).
@@ -850,7 +866,16 @@ function ProgressMonitor() {
                       <p className="truncate text-sm font-bold text-gray-900">{project.product}</p>
                       <p className="mt-1 text-xs text-gray-500">{project.client}</p>
                     </div>
-                    <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[10px] font-semibold text-gray-700">{project.status}</span>
+                    <div className="flex max-w-[52%] flex-wrap justify-end gap-1.5">
+                      {hasAddedStages(project.stages) && (
+                        <span className="rounded-full border border-violet-200 bg-violet-100 px-2.5 py-1 text-[10px] font-semibold text-violet-800">
+                          Added stages
+                        </span>
+                      )}
+                      <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${getProjectStatusBadgeClasses(project.status)}`}>
+                        {project.status}
+                      </span>
+                    </div>
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-600">
                     <div>

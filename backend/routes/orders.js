@@ -25,7 +25,7 @@ const router = express.Router();
 
 router.get("/", authMiddleware, listOrders);
 router.post("/", authMiddleware, roleMiddleware("customer"), permissionMiddleware("can_request_orders"), createOrder);
-router.get("/track/:tracking", authMiddleware, permissionMiddleware("can_track_products"), trackOrder);
+router.get("/track/:tracking", trackOrder);
 router.put("/:orderId/contract", authMiddleware, roleMiddleware("customer"), respondToContract);
 router.put("/:orderId/cancel", authMiddleware, roleMiddleware("customer"), cancelCustomerOrder);
 router.put("/:orderId/payment-proof", authMiddleware, roleMiddleware("customer"), submitCustomerPaymentProof);

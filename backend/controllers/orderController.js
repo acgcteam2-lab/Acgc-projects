@@ -369,10 +369,6 @@ export const createOrderAsAdmin = async (req, res) => {
     const normalizedOrderType = order_type === "walk_in_customer" ? "walk_in_customer" : "online_order";
     const isWalkInCustomer = normalizedOrderType === "walk_in_customer";
 
-    if (isWalkInCustomer && !signed_contract_url) {
-      return res.status(400).json({ success: false, message: "A signed hard-copy contract is required for walk-in customers" });
-    }
-
     if (customer_id && !mongoose.Types.ObjectId.isValid(customer_id)) {
       return res.status(400).json({ success: false, message: "Customer account ID is invalid" });
     }
@@ -407,7 +403,10 @@ export const createOrderAsAdmin = async (req, res) => {
     const initialPaidAmount = downpayment_received ? requiredAmount : 0;
 
     const hasWebsiteAccount = Boolean(linkedCustomer);
-    const walkInSignedAt = contract_signed_date ? new Date(contract_signed_date) : new Date();
+    const hasSignedWalkInContract = isWalkInCustomer && Boolean(signed_contract_url);
+    const walkInSignedAt = hasSignedWalkInContract
+      ? contract_signed_date ? new Date(contract_signed_date) : new Date()
+      : null;
     const linkedCustomerName = `${linkedCustomer?.first_name || ""} ${linkedCustomer?.last_name || ""}`.trim();
 
     const order = new Order({
@@ -415,7 +414,7 @@ export const createOrderAsAdmin = async (req, res) => {
       customer_name: linkedCustomerName || customer_name || "",
       customer_phone: linkedCustomer?.phone || customer_phone || "",
       customer_email: linkedCustomer?.email || customer_email || "",
-      items: pricedItems,
+      items: sanitizedItems,
       total_amount,
       manual_override: Number(req.body.manual_override) || 0,
       contract_amount: isWalkInCustomer ? total_amount : 0,
@@ -436,31 +435,31 @@ export const createOrderAsAdmin = async (req, res) => {
       attachments: Array.isArray(attachments) ? attachments : [],
       tracking: generateTrackingNumber(),
       order_type: normalizedOrderType,
-      contract_status: isWalkInCustomer ? "accepted" : "pending",
+      contract_status: hasSignedWalkInContract ? "accepted" : "pending",
       payment_status: "pending",
-      status: isWalkInCustomer ? "contract_accepted" : "site_inspection",
-      inspection_status: isWalkInCustomer ? "completed" : "pending",
-      inspection_completed_at: isWalkInCustomer ? walkInSignedAt : null,
+      status: hasSignedWalkInContract ? "contract_accepted" : "site_inspection",
+      inspection_status: hasSignedWalkInContract ? "completed" : "pending",
+      inspection_completed_at: hasSignedWalkInContract ? walkInSignedAt : null,
       inspection_date: inspection_date ? new Date(inspection_date) : null,
       estimated_installation_date: estimated_installation_date ? new Date(estimated_installation_date) : null,
       inspection_notes: inspection_notes || "",
       // Walk-in specific
-      acceptance_method: isWalkInCustomer ? "walk_in_signed_contract" : "online",
-      acceptanceMethod: isWalkInCustomer ? "Walk-in Signed Contract" : "Online",
+      acceptance_method: hasSignedWalkInContract ? "walk_in_signed_contract" : isWalkInCustomer ? "walk_in_pending_contract" : "online",
+      acceptanceMethod: hasSignedWalkInContract ? "Walk-in Signed Contract" : isWalkInCustomer ? "Walk-in Pending Contract" : "Online",
       acceptedByCustomer: false,
       acceptedAt: null,
-      transactionCreated: isWalkInCustomer,
-      transactionCreatedAt: isWalkInCustomer ? new Date() : null,
+      transactionCreated: hasSignedWalkInContract,
+      transactionCreatedAt: hasSignedWalkInContract ? new Date() : null,
       signed_contract_url: isWalkInCustomer ? (signed_contract_url || "") : "",
       contract_number: isWalkInCustomer ? (contract_number || "") : "",
-      contract_signed_date: isWalkInCustomer ? walkInSignedAt : null,
-      contractStatus: isWalkInCustomer ? "Accepted" : "Not Generated",
-      contractGenerated: isWalkInCustomer,
-      contractId: isWalkInCustomer ? (contract_number || "") : "",
-      contractVersion: isWalkInCustomer ? 1 : 0,
-      currentContractVersion: isWalkInCustomer ? 1 : 0,
-      contractGeneratedAt: isWalkInCustomer ? walkInSignedAt : null,
-      contractHistory: isWalkInCustomer ? [{
+      contract_signed_date: hasSignedWalkInContract ? walkInSignedAt : null,
+      contractStatus: hasSignedWalkInContract ? "Accepted" : "Not Generated",
+      contractGenerated: hasSignedWalkInContract,
+      contractId: hasSignedWalkInContract ? (contract_number || "") : "",
+      contractVersion: hasSignedWalkInContract ? 1 : 0,
+      currentContractVersion: hasSignedWalkInContract ? 1 : 0,
+      contractGeneratedAt: hasSignedWalkInContract ? walkInSignedAt : null,
+      contractHistory: hasSignedWalkInContract ? [{
         version: 1,
         contractId: contract_number || "",
         generatedAt: walkInSignedAt,

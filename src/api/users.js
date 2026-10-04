@@ -63,7 +63,7 @@ export const downloadSystemBackup = async (backupId) => {
   }
 
   const disposition = response.headers.get("content-disposition") || "";
-  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `backup-${backupId}.json.gz`;
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `backup-${backupId}.zip`;
   return { blob: await response.blob(), filename };
 };
 

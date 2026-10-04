@@ -586,7 +586,7 @@ const OrderSchema = new mongoose.Schema(
     // Walk-in customer specific fields
     acceptance_method: {
       type: String,
-      enum: ["online", "walk_in_signed_contract"],
+      enum: ["online", "walk_in_signed_contract", "walk_in_pending_contract"],
       default: "online",
     },
     signed_contract_url: {

@@ -7,6 +7,14 @@ import { promisify } from "node:util";
 import { gzip, gunzip } from "node:zlib";
 import mongoose from "mongoose";
 import SystemSetting from "../models/SystemSetting.js";
+import { createTransactionWorkbookBuffer } from "./transactionWorkbook.js";
+import {
+  decryptBackupBuffer,
+  decryptZipBackupBuffer,
+  encryptZipBackupBuffer,
+  isEncryptedBackup,
+  isZipBackup,
+} from "./backupCrypto.js";
 
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
@@ -70,14 +78,25 @@ const createSnapshotBuffer = async () => {
   };
 
   const extendedJson = mongoose.mongo.BSON.EJSON.stringify(snapshot, { relaxed: false });
-  return gzipAsync(Buffer.from(extendedJson, "utf8"));
+  return {
+    buffer: await gzipAsync(Buffer.from(extendedJson, "utf8")),
+    orders: collections.find((collection) => collection.name === "orders")?.documents || [],
+    users: collections.find((collection) => collection.name === "users")?.documents || [],
+  };
+};
+
+const getCompressedSnapshotBuffer = async (buffer) => {
+  if (isZipBackup(buffer)) return decryptZipBackupBuffer(buffer);
+  return decryptBackupBuffer(buffer);
 };
 
 const parseSnapshot = async (buffer) => {
   let snapshot;
   try {
-    snapshot = mongoose.mongo.BSON.EJSON.parse((await gunzipAsync(buffer)).toString("utf8"), { relaxed: false });
-  } catch {
+    const compressedBuffer = await getCompressedSnapshotBuffer(buffer);
+    snapshot = mongoose.mongo.BSON.EJSON.parse((await gunzipAsync(compressedBuffer)).toString("utf8"), { relaxed: false });
+  } catch (error) {
+    if (error.status === 500) throw error;
     throw backupError("Backup file is invalid or corrupted.", 400);
   }
 
@@ -203,14 +222,34 @@ const findBackupRecord = async (backupId) => {
   return { settings, backup };
 };
 
-const getBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backupId}.json.gz`);
+const getBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backupId}.zip`);
+const getLegacyEncryptedBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backupId}.json.gz.enc`);
+const getLegacyBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backupId}.json.gz`);
+
+const findStoredBackupFilePath = async (backupId) => {
+  for (const filePath of [
+    getBackupFilePath(backupId),
+    getLegacyEncryptedBackupFilePath(backupId),
+    getLegacyBackupFilePath(backupId),
+  ]) {
+    try {
+      await fs.access(filePath);
+      return filePath;
+    } catch {
+      continue;
+    }
+  }
+  throw backupError("Backup file is not available.", 404);
+};
 
 export const createSystemBackup = async (type) => {
   if (!VALID_TYPES.has(type)) throw backupError("Invalid backup type.", 400);
 
   const id = randomUUID();
   const now = new Date();
-  const backupBuffer = await createSnapshotBuffer();
+  const snapshot = await createSnapshotBuffer();
+  const transactionWorkbook = await createTransactionWorkbookBuffer(snapshot.orders, snapshot.users);
+  const backupBuffer = await encryptZipBackupBuffer(snapshot.buffer, transactionWorkbook);
   const backupDirectory = getBackupDirectory();
   const filePath = getBackupFilePath(id);
   const temporaryPath = `${filePath}.tmp`;
@@ -251,8 +290,11 @@ export const createSystemBackup = async (type) => {
 };
 
 export const importSystemBackup = async (sourcePath) => {
-  const backupBuffer = await fs.readFile(sourcePath);
-  await parseSnapshot(backupBuffer);
+  const uploadedBuffer = await fs.readFile(sourcePath);
+  await parseSnapshot(uploadedBuffer);
+  const backupBuffer = isZipBackup(uploadedBuffer)
+    ? uploadedBuffer
+    : await encryptZipBackupBuffer(await getCompressedSnapshotBuffer(uploadedBuffer));
 
   const id = randomUUID();
   const now = new Date();
@@ -297,20 +339,21 @@ export const importSystemBackup = async (sourcePath) => {
 
 export const getSystemBackupDownload = async (backupId) => {
   const { backup } = await findBackupRecord(backupId);
-  const filePath = getBackupFilePath(backupId);
+  let filePath;
   try {
-    await fs.access(filePath);
+    filePath = await findStoredBackupFilePath(backupId);
   } catch {
     throw backupError("Backup file is not available for download.", 404);
   }
-  return { filePath, filename: `${backup.name}.json.gz` };
+  const extension = filePath.endsWith(".zip") ? ".zip" : filePath.endsWith(".enc") ? ".json.gz.enc" : ".json.gz";
+  return { filePath, filename: `${backup.name}${extension}` };
 };
 
 export const restoreSystemBackup = async (backupId) => {
   const { settings, backup } = await findBackupRecord(backupId);
   let backupBuffer;
   try {
-    backupBuffer = await fs.readFile(getBackupFilePath(backupId));
+    backupBuffer = await fs.readFile(await findStoredBackupFilePath(backupId));
   } catch {
     throw backupError("Backup file is not available for restore.", 404);
   }
@@ -411,6 +454,8 @@ export const deleteSystemBackup = async (backupId) => {
   const backupHistory = (settings.backup_history || []).filter((item) => item.id !== backupId);
   const remainingLatestDate = backupHistory[0]?.date || null;
   await fs.rm(getBackupFilePath(backupId), { force: true });
+  await fs.rm(getLegacyEncryptedBackupFilePath(backupId), { force: true });
+  await fs.rm(getLegacyBackupFilePath(backupId), { force: true });
 
   const updatedSettings = await SystemSetting.findOneAndUpdate(
     { key: "global" },

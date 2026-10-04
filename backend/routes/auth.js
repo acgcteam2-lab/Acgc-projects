@@ -20,8 +20,9 @@ const backupImportUpload = multer({
   dest: "backups/incoming",
   limits: { fileSize: 512 * 1024 * 1024 },
   fileFilter: (_req, file, callback) => {
-    if (!file.originalname.toLowerCase().endsWith(".json.gz")) {
-      const error = new Error("Upload a .json.gz system backup file.");
+    const filename = file.originalname.toLowerCase();
+    if (!filename.endsWith(".zip") && !filename.endsWith(".json.gz") && !filename.endsWith(".json.gz.enc")) {
+      const error = new Error("Upload an encrypted .zip backup, or a legacy .json.gz backup file.");
       error.status = 400;
       callback(error);
       return;

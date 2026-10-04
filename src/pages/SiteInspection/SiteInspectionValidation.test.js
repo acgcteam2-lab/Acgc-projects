@@ -6,8 +6,8 @@ import {
   buildWarrantyPayload,
   normalizeWalkInWebsiteAccountState,
   normalizeWarrantyPeriodValue,
-  requiresSignedContractForWalkIn,
   validateInspectionPayload,
+  resolveInspectionProductPrice,
 } from "./SiteInspection";
 import { buildOrderTimelineStages } from "@/lib/orderTimeline";
 
@@ -92,7 +92,6 @@ describe("walk-in account linking validation", () => {
     inspection_date: "2026-10-10",
     order_type: "walk_in_customer",
     items: [{ product_id: "p-1", name: "Sliding Window", width: 120, height: 150, qty: 1 }],
-    signed_contract_file: "/uploads/signed.pdf",
   };
 
   it("requires selecting an account when a walk-in is marked as having one", () => {
@@ -111,6 +110,10 @@ describe("walk-in account linking validation", () => {
       has_account_on_website: true,
     })).toEqual({});
   });
+
+  it("allows creating a walk-in inspection before the signed contract is approved", () => {
+    expect(validateInspectionPayload(validWalkInPayload)).toEqual({});
+  });
 });
 
 describe("getInspectionDisplayTotal", () => {
@@ -124,26 +127,6 @@ describe("getInspectionDisplayTotal", () => {
 
   it("falls back to item totals when no saved total is available", () => {
     expect(getInspectionDisplayTotal({}, 800)).toBe(800);
-  });
-});
-
-describe("requiresSignedContractForWalkIn", () => {
-  it("requires a signed contract for walk-in customers without a website account", () => {
-    expect(
-      requiresSignedContractForWalkIn({
-        order_type: "walk_in_customer",
-        has_account_on_website: false,
-      })
-    ).toBe(true);
-  });
-
-  it("requires a signed contract for walk-in customers regardless of account status", () => {
-    expect(
-      requiresSignedContractForWalkIn({
-        order_type: "walk_in_customer",
-        has_account_on_website: true,
-      })
-    ).toBe(true);
   });
 });
 
@@ -205,6 +188,37 @@ describe("normalizeWarrantyPeriodValue", () => {
     expect(normalizeWarrantyPeriodValue("Custom")).toBe("Custom");
     expect(normalizeWarrantyPeriodValue(45)).toBe("Custom");
     expect(normalizeWarrantyPeriodValue(0)).toBe(90);
+  });
+});
+
+describe("resolveInspectionProductPrice", () => {
+  it("uses the product pricing method instead of a stale generic unit price", () => {
+    expect(resolveInspectionProductPrice({
+      pricing_method: "sqft",
+      unit_price: 500,
+      price_per_sqft: 180,
+      base_price: 1500,
+      width: 48,
+      height: 72,
+    })).toMatchObject({
+      unit_price: 180,
+      pricing_method: "sqft",
+      width: 48,
+      height: 72,
+    });
+
+    expect(resolveInspectionProductPrice({
+      pricing_method: "fixed",
+      unit_price: 500,
+      base_price: 1500,
+      width: 36,
+      height: 48,
+    })).toMatchObject({
+      unit_price: 1500,
+      pricing_method: "fixed",
+      width: 36,
+      height: 48,
+    });
   });
 });
 

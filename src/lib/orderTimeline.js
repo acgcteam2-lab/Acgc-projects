@@ -521,7 +521,8 @@ export const buildOrderTimelineStages = (order) => {
       completedStage,
     ];
 
-    return progressStages.length ? progressStages : productionFallback;
+    const acceptedTimeline = progressStages.length ? progressStages : productionFallback;
+    return [...baseStages, ...acceptedTimeline];
   }
 
   return [...baseStages, ...progressStages, completedStage];

@@ -57,10 +57,6 @@ const getDefaultInspection = () => ({
   payment_terms: "50%_down_payment",
   agreed_payment_date: "",
   estimation_mode: "auto",
-  // Walk-in customer fields
-  signed_contract_file: null,
-  contract_number: "",
-  contract_signed_date: new Date().toISOString().split("T")[0],
   customerType: "walk-in",
 });
 
@@ -193,10 +189,6 @@ export const validateInspectionPayload = (payload = {}) => {
     nextErrors.customerId = "Select the matching registered customer account before creating this inspection.";
   }
 
-  if (requiresSignedContractForWalkIn(payload) && !payload.signed_contract_file) {
-    nextErrors.signed_contract_file = "Signed hard-copy contract is required for walk-in customers.";
-  }
-
   const itemErrors = payload.items?.map((item) => {
     const rowErrors = {};
     const normalizedProductId = normalizeProductId(item.product_id);
@@ -234,6 +226,103 @@ export const normalizeWalkInWebsiteAccountState = (payload = {}) => {
   return Boolean(payload.has_account_on_website);
 };
 
+export const resolveInspectionProductPrice = (product = null, fallbackItem = {}) => {
+  const pricingMethod = String(product?.pricing_method || fallbackItem?.pricing_method || "").toLowerCase();
+  const basePrice = Number(product?.base_price ?? fallbackItem?.base_price ?? 0) || 0;
+  const pricePerSqft = Number(product?.price_per_sqft ?? fallbackItem?.price_per_sqft ?? 0) || 0;
+  const pricePerBlade = Number(product?.price_per_blade ?? fallbackItem?.price_per_blade ?? 0) || 0;
+  const unitPrice = Number(product?.unit_price ?? fallbackItem?.unit_price ?? 0) || 0;
+  const estimatedPrice = Number(product?.estimated_price ?? fallbackItem?.estimated_price ?? 0) || 0;
+  const customizationFee = Number(product?.customization_fee ?? fallbackItem?.customization_fee ?? 0) || 0;
+  const widthValue = Number(product?.width ?? fallbackItem?.width ?? 0) || 0;
+  const heightValue = Number(product?.height ?? fallbackItem?.height ?? 0) || 0;
+  const width = widthValue || Number(fallbackItem?.width ?? 0) || 1;
+  const height = heightValue || Number(fallbackItem?.height ?? 0) || 1;
+  const fallbackUnitPrice = unitPrice || basePrice || estimatedPrice || pricePerSqft || pricePerBlade || 0;
+
+  switch (pricingMethod) {
+    case "sqft":
+      return {
+        pricing_method: "sqft",
+        unit_price: pricePerSqft || fallbackUnitPrice,
+        price_per_sqft: pricePerSqft,
+        price_per_blade: 0,
+        base_price: basePrice,
+        customization_fee: customizationFee,
+        width,
+        height,
+      };
+    case "blade":
+      return {
+        pricing_method: "blade",
+        unit_price: pricePerBlade || fallbackUnitPrice,
+        price_per_sqft: 0,
+        price_per_blade: pricePerBlade,
+        base_price: basePrice,
+        customization_fee: customizationFee,
+        width,
+        height,
+      };
+    case "fixed":
+      return {
+        pricing_method: "fixed",
+        unit_price: basePrice || estimatedPrice || fallbackUnitPrice,
+        price_per_sqft: pricePerSqft,
+        price_per_blade: pricePerBlade,
+        base_price: basePrice,
+        customization_fee: customizationFee,
+        width,
+        height,
+      };
+    case "per_piece":
+      return {
+        pricing_method: "per_piece",
+        unit_price: unitPrice || basePrice || estimatedPrice || fallbackUnitPrice,
+        price_per_sqft: pricePerSqft,
+        price_per_blade: pricePerBlade,
+        base_price: basePrice,
+        customization_fee: customizationFee,
+        width,
+        height,
+      };
+    default:
+      if (pricePerSqft > 0) {
+        return {
+          pricing_method: "sqft",
+          unit_price: pricePerSqft,
+          price_per_sqft: pricePerSqft,
+          price_per_blade: 0,
+          base_price: basePrice,
+          customization_fee: customizationFee,
+          width,
+          height,
+        };
+      }
+      if (pricePerBlade > 0) {
+        return {
+          pricing_method: "blade",
+          unit_price: pricePerBlade,
+          price_per_sqft: 0,
+          price_per_blade: pricePerBlade,
+          base_price: basePrice,
+          customization_fee: customizationFee,
+          width,
+          height,
+        };
+      }
+      return {
+        pricing_method: pricingMethod || "fixed",
+        unit_price: basePrice || estimatedPrice || fallbackUnitPrice,
+        price_per_sqft: pricePerSqft,
+        price_per_blade: pricePerBlade,
+        base_price: basePrice,
+        customization_fee: customizationFee,
+        width,
+        height,
+      };
+  }
+};
+
 const getRegisteredCustomerId = (inspection = {}) => {
   const candidateIds = [
     inspection.customer,
@@ -261,12 +350,6 @@ export const getInspectionDisplayTotal = (inspection = {}, itemTotal = 0) => {
 
   const savedTotal = Number(inspection.total_amount) || Number(inspection.contract_amount) || 0;
   return savedTotal > 0 ? savedTotal : Number(itemTotal) || 0;
-};
-
-export const requiresSignedContractForWalkIn = (payload = {}) => {
-  const rawOrderType = String(payload.order_type || payload.customerType || payload.customer_type || "").trim().toLowerCase();
-  const isWalkInCustomer = ["walk_in_customer", "walk-in_customer", "walk_in", "walk-in", "walkin", "walk in customer", "walk-in customer"].includes(rawOrderType);
-  return isWalkInCustomer;
 };
 
 export const isSiteInspectionVisible = (order) => {
@@ -321,8 +404,6 @@ function SiteInspection() {
   const [contractInspection, setContractInspection] = useState(null);
   const [contractNeedsRegeneration, setContractNeedsRegeneration] = useState(false);
   const [sendingCustomerEmail, setSendingCustomerEmail] = useState(false);
-  const [uploadingContractFile, setUploadingContractFile] = useState(false);
-  const [contractUploadError, setContractUploadError] = useState("");
   const [manualApprovalModal, setManualApprovalModal] = useState({
     open: false,
     orderId: null,
@@ -450,8 +531,6 @@ function SiteInspection() {
     setCustomerSuggestions([]);
     setCustomerSearchError("");
     setSelectedCustomer(null);
-    setUploadingContractFile(false);
-    setContractUploadError("");
   };
 
   const closeNewInspectionModal = () => {
@@ -709,20 +788,7 @@ function SiteInspection() {
   const deriveUnitPriceForPayload = (item) => {
     const normalizedProductId = normalizeProductId(item.product_id);
     const product = products.find((p) => String(p._id || p.id) === normalizedProductId) || null;
-    if (!product) return Number(item.unit_price) || 0;
-    const pricingMethod = product.pricing_method || "";
-    switch (pricingMethod) {
-      case "sqft":
-        return Number(product.price_per_sqft) || 0;
-      case "blade":
-        return Number(product.price_per_blade) || 0;
-      case "fixed":
-        return Number(product.base_price) || 0;
-      case "per_piece":
-        return Number(product.unit_price) || Number(item.unit_price) || 0;
-      default:
-        return Number(product.unit_price) || Number(item.unit_price) || 0;
-    }
+    return resolveInspectionProductPrice(product, item).unit_price;
   };
 
   const formatRateLabel = (item) => {
@@ -791,67 +857,13 @@ function SiteInspection() {
       downpayment_received: Boolean(payload.downpayment_received),
     };
 
-    // Add walk-in customer specific fields
-    if (payload.order_type === "walk_in_customer") {
-      const contractFileValue = payload.signed_contract_file;
-      basePayload.signed_contract_url =
-        typeof contractFileValue === "string"
-          ? contractFileValue
-          : contractFileValue?.url || "";
-      basePayload.contract_number = payload.contract_number || "";
-      basePayload.contract_signed_date = payload.contract_signed_date || null;
-    }
-
     return basePayload;
-  };
-
-  const handleSignedContractUpload = async (files) => {
-    if (!files || files.length === 0) {
-      setContractUploadError("Please select a file");
-      return;
-    }
-
-    const file = files[0];
-    const allowedExtensions = [".pdf", ".jpg", ".jpeg", ".png"];
-    const fileExtension = "." + file.name.split(".").pop().toLowerCase();
-
-    if (!allowedExtensions.includes(fileExtension)) {
-      setContractUploadError("Only PDF, JPG, and PNG files are allowed");
-      return;
-    }
-
-    const maxFileSize = 10 * 1024 * 1024; // 10 MB
-    if (file.size > maxFileSize) {
-      setContractUploadError("File size must be less than 10 MB");
-      return;
-    }
-
-    setUploadingContractFile(true);
-    setContractUploadError("");
-
-    try {
-      const uploadResp = await uploadFiles([file]);
-      if (uploadResp.success && uploadResp.files && uploadResp.files.length > 0) {
-        const uploadedFile = uploadResp.files[0];
-        const uploadedFileUrl = typeof uploadedFile === "string" ? uploadedFile : uploadedFile?.url || "";
-        setNewInspection((prev) => ({ ...prev, signed_contract_file: uploadedFileUrl }));
-        setErrors((prev) => ({ ...prev, signed_contract_file: undefined }));
-        toast.success("Contract file uploaded successfully");
-      } else {
-        setContractUploadError("Failed to upload contract file");
-      }
-    } catch (error) {
-      console.error("Contract upload error:", error);
-      setContractUploadError(error.message || "Failed to upload contract file");
-    } finally {
-      setUploadingContractFile(false);
-    }
   };
 
   const fetchProducts = async () => {
     setProductsLoading(true);
     try {
-      const productResp = await getProducts({ adminOnly: true });
+      const productResp = await getProducts();
       setProducts(productResp.products || []);
     } catch (error) {
       console.error("Failed to load admin products:", error);
@@ -931,11 +943,19 @@ function SiteInspection() {
       ...prev,
       items: prev.items.map((item) => {
         if (item.id !== id) return item;
+        const productSnapshot = resolveInspectionProductPrice(selectedProduct, item);
         const updated = {
           ...item,
           product_id: normalizedProductId,
           name: selectedProduct?.name || item.name || "",
-          unit_price: selectedProduct?.unit_price || item.unit_price || 0,
+          pricing_method: productSnapshot.pricing_method,
+          unit_price: productSnapshot.unit_price,
+          base_price: productSnapshot.base_price,
+          price_per_sqft: productSnapshot.price_per_sqft,
+          price_per_blade: productSnapshot.price_per_blade,
+          customization_fee: productSnapshot.customization_fee,
+          width: productSnapshot.width || item.width || 1,
+          height: productSnapshot.height || item.height || 1,
           unit: selectedProduct?.unit || item.unit || "sqft",
         };
         const width = Number(updated.width) || 0;
@@ -986,11 +1006,19 @@ function SiteInspection() {
       ...prev,
       items: (prev.items || []).map((item) => {
         if (item.id !== id) return item;
+        const productSnapshot = resolveInspectionProductPrice(selectedProduct, item);
         const updated = {
           ...item,
           product_id: normalizedProductId,
           name: selectedProduct?.name || item.name || "",
-          unit_price: selectedProduct?.unit_price || item.unit_price || 0,
+          pricing_method: productSnapshot.pricing_method,
+          unit_price: productSnapshot.unit_price,
+          base_price: productSnapshot.base_price,
+          price_per_sqft: productSnapshot.price_per_sqft,
+          price_per_blade: productSnapshot.price_per_blade,
+          customization_fee: productSnapshot.customization_fee,
+          width: productSnapshot.width || item.width || 1,
+          height: productSnapshot.height || item.height || 1,
           unit: selectedProduct?.unit || item.unit || "sqft",
         };
         const width = Number(updated.width) || 0;
@@ -1137,7 +1165,8 @@ function SiteInspection() {
       await fetchSiteInspections();
     } catch (err) {
       console.error("Create inspection failed", err);
-      toast.error(err?.data?.message || err?.message || "Failed to create inspection.");
+      const errorDetail = err?.data?.error || err?.data?.message || err?.message;
+      toast.error(errorDetail ? `Unable to create order: ${errorDetail}` : "Unable to create order.");
     } finally {
       setSubmitting(false);
     }
@@ -2741,54 +2770,6 @@ function SiteInspection() {
 
                   </section>
 
-                  {newInspection.order_type === "walk_in_customer" && (
-                    <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
-                      <h3 className={modalSectionTitleClass}>Signed Hard-Copy Contract</h3>
-                      <p className={`mb-4 text-sm leading-5 ${mutedTextClass}`}>Upload the signed contract to verify walk-in acceptance and move the completed inspection into Transactions.</p>
-                      <label className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed px-4 py-5 text-center transition ${uploadingContractFile ? "cursor-wait opacity-60" : "hover:border-red-400 hover:bg-red-50/50"} ${darkMode ? "border-slate-600 bg-[#122d42]" : "border-slate-300 bg-slate-50"}`}>
-                        <span className={`flex h-10 w-10 items-center justify-center rounded-lg ${darkMode ? "bg-slate-800 text-red-300" : "bg-white text-red-600 shadow-sm"}`}>
-                          <FileText size={20} aria-hidden="true" />
-                        </span>
-                        <span className={`text-sm font-semibold ${darkMode ? "text-slate-100" : "text-slate-800"}`}>
-                          {uploadingContractFile ? "Uploading contract..." : newInspection.signed_contract_file ? "Replace signed contract" : "Choose signed contract"}
-                        </span>
-                        <span className={`text-xs ${mutedTextClass}`}>PDF, JPG, or PNG</span>
-                        <input
-                          type="file"
-                          accept=".pdf,.jpg,.jpeg,.png"
-                          onChange={(event) => {
-                            handleSignedContractUpload(event.target.files);
-                            event.target.value = "";
-                          }}
-                          disabled={uploadingContractFile}
-                          className="sr-only"
-                        />
-                      </label>
-                      {newInspection.signed_contract_file && <p className="mt-2 text-sm font-semibold text-emerald-600">Signed contract uploaded</p>}
-                      {(contractUploadError || errors.signed_contract_file) && <p className="mt-2 text-sm text-red-500">{contractUploadError || errors.signed_contract_file}</p>}
-                      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                        <div>
-                          <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Contract Number</label>
-                          <input
-                            type="text"
-                            value={newInspection.contract_number}
-                            onChange={(event) => handleInspectionFieldChange("contract_number", event.target.value)}
-                            className={fieldClass}
-                          />
-                        </div>
-                        <div>
-                          <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Date Signed</label>
-                          <input
-                            type="date"
-                            value={newInspection.contract_signed_date}
-                            onChange={(event) => handleInspectionFieldChange("contract_signed_date", event.target.value)}
-                            className={fieldClass}
-                          />
-                        </div>
-                      </div>
-                    </section>
-                  )}
-
                   <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
                     <h3 className={modalSectionTitleClass}>Site Details</h3>
                     <textarea
@@ -3645,7 +3626,7 @@ function SiteInspection() {
                                 onChange={(e) => handleEditItemProductChange(item.id, e.target.value)}
                                 className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
                               >
-                                <option value="">-- Select Product --</option>
+                                <option value="">-- Select Active Product --</option>
                                 {products.map((product) => (
                                   <option key={String(product._id || product.id)} value={String(product._id || product.id)}>{product.name}</option>
                                 ))}
@@ -3721,7 +3702,7 @@ function SiteInspection() {
                                 onChange={(event) => handleEditItemProductChange(item.id, event.target.value)}
                                 className={inputClasses}
                               >
-                                <option value="">-- Select Product --</option>
+                                <option value="">-- Select Active Product --</option>
                                 {products.map((product) => (
                                   <option key={String(product._id || product.id)} value={String(product._id || product.id)}>{product.name}</option>
                                 ))}

@@ -1200,6 +1200,7 @@ body::-webkit-scrollbar,
 }
 
 .settings-premium main {
+  background-color: #eef1f3;
   background:
     radial-gradient(circle at 92% 8%, rgb(183 111 68 / 0.08), transparent 24rem),
     linear-gradient(135deg, #eef1f3 0%, #f8fafb 48%, #e8edf0 100%);
@@ -1325,6 +1326,7 @@ body::-webkit-scrollbar,
 }
 
 .admin-theme-dark .settings-premium main {
+  background-color: #0b1420;
   background:
     radial-gradient(circle at 92% 8%, rgb(182 109 67 / 0.12), transparent 24rem),
     linear-gradient(135deg, #0b1420 0%, #101d2b 52%, #142536 100%);

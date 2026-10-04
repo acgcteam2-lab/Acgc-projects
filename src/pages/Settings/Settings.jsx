@@ -34,6 +34,7 @@ import {
   getAdminUsers,
   getSystemSettings,
   restoreSystemBackup,
+  uploadSystemBackup,
   updateAdminUserAccess,
   updateSystemSettings,
 } from "@/api/users";
@@ -134,6 +135,7 @@ function Settings() {
   const [loadingBackupSettings, setLoadingBackupSettings] = useState(true);
   const [creatingBackup, setCreatingBackup] = useState(false);
   const [backupImportFile, setBackupImportFile] = useState(null);
+  const [isDraggingBackupFile, setIsDraggingBackupFile] = useState(false);
   const [uploadedBackup, setUploadedBackup] = useState(null);
   const [uploadingBackupFile, setUploadingBackupFile] = useState(false);
   const [removingBackupFile, setRemovingBackupFile] = useState(false);
@@ -430,10 +432,30 @@ function Settings() {
                 <div>
                   <h3 className={`text-[15px] font-semibold ${darkMode ? "text-slate-100" : "text-foreground"}`}>Upload Backup File</h3>
                   <p className={`mt-0.5 text-xs ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>
-                    Upload a previously downloaded .json.gz system backup, then sync it to restore the system.
+                    Drop a backup ZIP here or choose one to restore your system. The transactions Excel report is included inside the ZIP; do not upload it separately. Legacy .json.gz backups are also supported.
                   </p>
                 </div>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div
+                  onDragEnter={(event) => {
+                    event.preventDefault();
+                    if (!uploadedBackup && !uploadingBackupFile) setIsDraggingBackupFile(true);
+                  }}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDragLeave={(event) => {
+                    const nextTarget = event.relatedTarget;
+                    if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+                      setIsDraggingBackupFile(false);
+                    }
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    setIsDraggingBackupFile(false);
+                    if (!uploadedBackup && !uploadingBackupFile) {
+                      handleBackupFileSelection(event.dataTransfer.files?.[0]);
+                    }
+                  }}
+                  className={`flex flex-col gap-2 rounded-lg border border-dashed p-3 transition-colors sm:flex-row sm:items-center ${isDraggingBackupFile ? darkMode ? "border-red-400 bg-red-950/40" : "border-brand bg-brand/[0.06]" : darkMode ? "border-slate-600" : "border-border"} ${uploadedBackup || uploadingBackupFile ? "opacity-60" : ""}`}
+                >
                   <label
                     htmlFor="system-backup-upload"
                     className={`inline-flex min-h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${uploadedBackup || uploadingBackupFile ? "cursor-not-allowed opacity-50" : ""} ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-border bg-background text-slate-700 hover:bg-muted"}`}
@@ -445,28 +467,18 @@ function Settings() {
                     ref={backupUploadInputRef}
                     id="system-backup-upload"
                     type="file"
-                    accept=".json.gz,application/gzip,application/x-gzip"
+                    accept=".zip,.json.gz.enc,.json.gz,application/zip,application/octet-stream,application/gzip,application/x-gzip"
                     disabled={Boolean(uploadedBackup) || uploadingBackupFile}
                     onChange={(event) => {
-                      const file = event.target.files?.[0] || null;
-                      if (file && !file.name.toLowerCase().endsWith(".json.gz")) {
-                        toast.error("Choose a .json.gz system backup file.");
-                        event.target.value = "";
-                        return;
-                      }
-                      if (file && file.size > 512 * 1024 * 1024) {
-                        toast.error("Backup files must be 512 MB or smaller.");
-                        event.target.value = "";
-                        return;
-                      }
-                      setBackupImportFile(file);
+                      handleBackupFileSelection(event.target.files?.[0]);
+                      event.target.value = "";
                     }}
                     className="sr-only"
                   />
                   <span className={`min-w-0 flex-1 truncate text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                     {uploadedBackup
                       ? `Uploaded: ${backupImportFile?.name || uploadedBackup.name}`
-                      : backupImportFile?.name || "No backup file selected"}
+                      : backupImportFile?.name || (isDraggingBackupFile ? "Drop backup file to select" : "Drop a backup file here or choose a file")}
                   </span>
                 </div>
                 <div className="flex flex-wrap justify-start gap-1.5">
@@ -525,7 +537,7 @@ function Settings() {
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex justify-end gap-2">
-                                <button type="button" onClick={() => handleDownloadBackup(backup)} disabled={downloadingBackupId !== null} title="Download the complete snapshot, including database records and uploaded files" className={`inline-flex size-9 items-center justify-center rounded-[10px] transition-colors active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none ${darkMode ? "bg-blue-950/70 text-blue-300 hover:bg-blue-700 hover:text-white" : "bg-blue-500/10 text-blue-700 hover:bg-blue-600 hover:text-white"}`} aria-label={`Download complete backup ${backup.name}`}>
+                                <button type="button" onClick={() => handleDownloadBackup(backup)} disabled={downloadingBackupId !== null} title="Download the encrypted snapshot, uploaded files, and transactions Excel report" className={`inline-flex size-9 items-center justify-center rounded-[10px] transition-colors active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none ${darkMode ? "bg-blue-950/70 text-blue-300 hover:bg-blue-700 hover:text-white" : "bg-blue-500/10 text-blue-700 hover:bg-blue-600 hover:text-white"}`} aria-label={`Download complete backup ${backup.name}`}>
                                   {downloadingBackupId === backup.id ? <Loader2 aria-hidden="true" className="size-5 animate-spin" /> : <Download aria-hidden="true" className="size-5" />}
                                 </button>
                                 <button type="button" onClick={() => handleRestoreBackup(backup.id)} className={`inline-flex size-9 items-center justify-center rounded-[10px] transition-colors active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none ${darkMode ? "bg-amber-950/70 text-amber-300 hover:bg-amber-700 hover:text-white" : "bg-brand/[0.08] text-brand hover:bg-brand hover:text-white"}`} aria-label="Restore backup">
@@ -565,7 +577,7 @@ function Settings() {
                             <span className={`text-xs tabular-nums ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{formatBackupSize(backup.size)}</span>
                           </div>
                           <div className="flex gap-2">
-                            <button type="button" onClick={() => handleDownloadBackup(backup)} disabled={downloadingBackupId !== null} title="Download complete backup" aria-label={`Download complete backup ${backup.name}`} className={`inline-flex size-9 items-center justify-center rounded-[10px] disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "bg-blue-950/70 text-blue-300 hover:bg-blue-700 hover:text-white" : "bg-blue-500/10 text-blue-700 hover:bg-blue-600 hover:text-white"}`}>
+                            <button type="button" onClick={() => handleDownloadBackup(backup)} disabled={downloadingBackupId !== null} title="Download encrypted backup with transactions Excel report" aria-label={`Download complete backup ${backup.name}`} className={`inline-flex size-9 items-center justify-center rounded-[10px] disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "bg-blue-950/70 text-blue-300 hover:bg-blue-700 hover:text-white" : "bg-blue-500/10 text-blue-700 hover:bg-blue-600 hover:text-white"}`}>
                               {downloadingBackupId === backup.id ? <Loader2 aria-hidden="true" className="size-5 animate-spin" /> : <Download aria-hidden="true" className="size-5" />}
                             </button>
                             <button type="button" onClick={() => handleRestoreBackup(backup.id)} aria-label={`Restore backup ${backup.name}`} className={`inline-flex size-9 items-center justify-center rounded-[10px] ${darkMode ? "bg-amber-950/70 text-amber-300 hover:bg-amber-700 hover:text-white" : "bg-brand/[0.08] text-brand hover:bg-brand hover:text-white"}`}>
@@ -888,6 +900,20 @@ function Settings() {
     }
   };
 
+  const handleBackupFileSelection = (file) => {
+    if (!file) return;
+    const filename = file.name.toLowerCase();
+    if (!filename.endsWith(".zip") && !filename.endsWith(".json.gz") && !filename.endsWith(".json.gz.enc")) {
+      toast.error("Choose an encrypted .zip or a legacy .json.gz system backup file.");
+      return;
+    }
+    if (file.size > 512 * 1024 * 1024) {
+      toast.error("Backup files must be 512 MB or smaller.");
+      return;
+    }
+    setBackupImportFile(file);
+  };
+
   const handleBackupNow = async () => {
     if (creatingBackup || loadingBackupSettings) return;
     const backupType = backupOptions.find((option) => option.id === backupState.selectedSchedule)?.label;
@@ -1056,12 +1082,12 @@ function Settings() {
   };
 
   return (
-    <div className={`admin-settings settings-premium flex h-screen overflow-hidden ${darkMode ? "bg-slate-950 text-slate-100" : "bg-[#eef1f3] text-slate-900"}`}>
+    <div className={`admin-settings settings-premium flex h-dvh min-h-dvh overflow-hidden ${darkMode ? "bg-slate-950 text-slate-100" : "bg-[#eef1f3] text-slate-900"}`}>
       <Toaster position="bottom-right" />
       <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((open) => !open)} />
       <div className="flex min-h-0 flex-1 flex-col">
         <Navbar />
-        <main className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 lg:p-8">
+        <main className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain p-4 sm:p-6 lg:p-8">
           <AdminPageHeader
             title="System Settings"
             description="Manage customer access, permissions, and account availability."

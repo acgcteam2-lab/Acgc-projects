@@ -1,10 +1,10 @@
 import { useState } from "react";
 import {
   Camera,
-  ClipboardList,
-  CreditCard,
+  ClipboardCheck,
   Check,
   AlertTriangle,
+  FileSignature,
   FileText,
   Package,
   Scissors,
@@ -155,19 +155,19 @@ export const buildCustomerOrderTimelineSteps = (order, item = null, itemIndex = 
 const getStepIcon = (stepKey, isCompleted, isActive) => {
   const normalizedKey = String(stepKey || "").replace(/^batch_\d+_/, "").trim();
   const iconMap = {
-    order_submitted: ClipboardList,
-    admin_review: ClipboardList,
+    order_submitted: ClipboardCheck,
+    admin_review: ClipboardCheck,
     site_inspection: Camera,
     contract_sent: FileText,
-    contract_accepted: CreditCard,
+    contract_accepted: FileSignature,
     cutting: Scissors,
     assembly: Wrench,
     fabrication: Package,
     installation: Truck,
     completed: Star,
   };
-  const Icon = iconMap[normalizedKey] || (isCompleted ? Star : ClipboardList);
-  return <Icon size={12} aria-hidden="true" className={isActive || isCompleted ? "text-white" : "text-slate-500"} />;
+  const Icon = iconMap[normalizedKey] || (isCompleted ? Star : ClipboardCheck);
+  return <Icon size={16} aria-hidden="true" className={isActive || isCompleted ? "text-white" : "text-current"} />;
 };
 
 export default function OrderProgressTimeline({
@@ -190,7 +190,7 @@ export default function OrderProgressTimeline({
   }
 
   return (
-    <div className={`divide-y overflow-hidden rounded-xl border ${darkMode ? "divide-slate-700 border-slate-700 bg-slate-900" : "divide-slate-200 border-slate-200 bg-white"}`}>
+    <div>
       {items.map((item, itemIndex) => {
         const productName = item?.name || item?.product_name || `Product ${itemIndex + 1}`;
         const productSize = getItemDimension?.(item) || formatOrderItemMeasurements(item);
@@ -202,28 +202,28 @@ export default function OrderProgressTimeline({
         );
 
         return (
-          <article key={`${order?._id || order?.id || "order"}-detail-${itemIndex}`} className="p-2.5 sm:p-3">
+          <article key={`${order?._id || order?.id || "order"}-detail-${itemIndex}`} className={`mb-2.5 rounded-[14px] border p-4 last:mb-0 ${darkMode ? "border-slate-700 bg-slate-800/50" : "border-border bg-muted/40"}`}>
             <div className="flex min-w-0 items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
-                <div className={`flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-100"}`}>
+                <div className={`flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-[10px] border ${darkMode ? "border-slate-700 bg-slate-900" : "border-border bg-card"}`}>
                   {image ? (
                     <img src={image} alt={productName} className="h-full w-full object-cover" onError={(event) => {
                       event.currentTarget.onerror = null;
                       event.currentTarget.src = fallbackImage;
                     }} />
                   ) : (
-                    <Package size={16} aria-hidden="true" className="text-slate-400" />
+                    <Package size={16} aria-hidden="true" className="text-muted-foreground" />
                   )}
                 </div>
                 <div className="min-w-0">
-                  <p className={`truncate text-sm font-semibold ${darkMode ? "text-white" : "text-slate-900"}`}>{productName}</p>
-                  <p className={`mt-0.5 truncate text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{productSize}</p>
+                  <p className="truncate text-[15px] font-medium text-foreground">{productName}</p>
+                  <p className="mt-0.5 break-words text-[13px] text-muted-foreground">{productSize}</p>
                 </div>
               </div>
             </div>
 
-            <div className={`mt-2 overflow-x-auto rounded-xl border p-2.5 sm:p-3 ${darkMode ? "border-slate-700 bg-slate-800/70" : "border-slate-200 bg-slate-50"}`}>
-              <div className="flex w-max items-start gap-3 px-3">
+            <div className="mt-4 w-full">
+              <ol className="flex w-full items-start gap-0 max-[560px]:flex-col">
                 {progressSteps.map((step, stepIndex) => {
                   const isCompleted = step.done || (!isBatchOrder && normalizedStatus === "completed" && step.key === "completed");
                   const isCancelled = normalizedStatus === "cancelled";
@@ -232,51 +232,58 @@ export default function OrderProgressTimeline({
                     ? step.images.map(normalizeOrderImageUrl).filter(Boolean)
                     : [];
                   const circleClass = isCancelled && stepIndex === 0
-                    ? "border-red-600 bg-red-600 text-white shadow-red-200"
+                    ? "border-rose-600 bg-rose-600 text-white"
                     : step.status === "delayed"
-                      ? "border-rose-600 bg-rose-600 text-white shadow-rose-200"
+                      ? "border-rose-600 bg-rose-600 text-white"
                     : isCompleted
-                      ? "border-emerald-600 bg-emerald-600 text-white shadow-emerald-100"
+                      ? "border-emerald-600 bg-emerald-600 text-white"
                       : step.active
-                        ? "border-amber-500 bg-amber-500 text-white shadow-amber-100"
-                        : darkMode
-                          ? "border-slate-600 bg-slate-900 text-slate-400"
-                          : "border-slate-300 bg-white text-slate-500 shadow-slate-100";
+                        ? "border-amber-500 bg-amber-500 text-white ring-4 ring-amber-500/15"
+                        : "border-border bg-card text-muted-foreground";
                   const labelClass = isCancelled && stepIndex === 0
-                    ? "text-red-600"
+                    ? "text-rose-700 dark:text-rose-300"
                     : step.status === "delayed"
-                      ? "text-rose-700"
+                      ? "text-rose-700 dark:text-rose-300"
                     : isCompleted
-                      ? "text-emerald-700"
+                      ? "text-emerald-700 dark:text-emerald-300"
                       : step.active
-                        ? "text-amber-700"
-                        : darkMode
-                          ? "text-slate-400"
-                          : "text-slate-500";
+                        ? "text-amber-800 dark:text-amber-300"
+                        : "text-muted-foreground";
+                  const connectorClass = step.status === "delayed"
+                    ? "after:bg-rose-500"
+                    : isCompleted
+                      ? "after:bg-emerald-500"
+                      : "after:bg-border";
 
                   return (
-                    <div key={`${productName}-${step.key}`} className="flex shrink-0 items-start" aria-current={step.active ? "step" : undefined}>
-                      <div className="flex w-[68px] flex-col items-center gap-1 text-center">
-                        <span className={`flex h-6 w-6 items-center justify-center rounded-full border text-[9px] font-bold shadow-sm ${circleClass}`}>
+                    <li
+                      key={`${productName}-${step.key}`}
+                      aria-current={step.active ? "step" : undefined}
+                      className={`relative flex min-w-0 flex-1 flex-col items-center gap-1.75 text-center after:absolute after:left-[calc(50%+22px)] after:right-[calc(-50%+22px)] after:top-[15px] after:z-0 after:h-0.5 after:rounded after:content-[''] last:after:hidden ${connectorClass} max-[560px]:flex-row max-[560px]:items-start max-[560px]:gap-3.5 max-[560px]:pb-[18px] max-[560px]:text-left max-[560px]:after:left-[15px] max-[560px]:after:right-auto max-[560px]:after:top-9 max-[560px]:after:h-[calc(100%-36px)] max-[560px]:after:w-0.5 max-[560px]:last:pb-0`}
+                    >
+                      <div className="flex min-w-0 flex-col items-center gap-1 max-[560px]:flex-row max-[560px]:items-center max-[560px]:gap-3.5 max-[560px]:text-left">
+                        <span className={`relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-[9px] font-medium ${circleClass}`}>
                           {step.status === "delayed"
-                            ? <AlertTriangle size={12} aria-hidden="true" className="text-white" />
-                            : getStepIcon(step.key, isCompleted, step.active)}
+                            ? <AlertTriangle size={16} aria-hidden="true" className="text-white" />
+                            : isCompleted
+                              ? <Check size={16} aria-hidden="true" />
+                              : getStepIcon(step.key, isCompleted, step.active)}
                         </span>
-                        <span className={`text-[9px] font-semibold leading-tight ${labelClass}`}>{step.label}</span>
+                        <span className={`max-w-full break-words text-[12.5px] font-medium leading-tight ${labelClass}`}>{step.label}</span>
                         {step.status === "delayed" && (
-                          <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[8px] font-bold text-rose-800">Delayed</span>
+                          <span className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200">Delayed</span>
                         )}
                         {stagePhotos.length > 0 && (
                           <button
                             type="button"
                             onClick={() => setPhotoGallery({ title: step.label, images: stagePhotos })}
-                            className="relative mt-1 h-9 w-9 overflow-hidden rounded-md border border-slate-300 bg-white shadow-sm transition hover:ring-2 hover:ring-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                            className="relative mt-1 h-9 w-9 shrink-0 overflow-hidden rounded-md border border-border bg-card transition-colors hover:border-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
                             aria-label={`View ${stagePhotos.length} ${step.label} proof photo${stagePhotos.length === 1 ? "" : "s"}`}
                             title={`${stagePhotos.length} proof photo${stagePhotos.length === 1 ? "" : "s"}`}
                           >
                             <img src={stagePhotos[0]} alt={`${step.label} proof`} className="h-full w-full object-cover" />
                             {stagePhotos.length > 1 && (
-                              <span className="absolute inset-0 flex items-center justify-center bg-black/55 text-[10px] font-bold text-white">
+                              <span className="absolute inset-0 flex items-center justify-center bg-black/55 text-[10px] font-medium text-white">
                                 +{stagePhotos.length - 1}
                               </span>
                             )}
@@ -285,7 +292,7 @@ export default function OrderProgressTimeline({
                       </div>
 
                       {visibleSubStages.length > 0 && (
-                        <div className="mt-5 flex items-start gap-2">
+                        <div className="mt-2 flex flex-wrap items-start justify-center gap-2 max-[560px]:justify-start">
                           {visibleSubStages.map((sub, subIndex) => {
                             const normalizedSubStatus = String(sub.status || "pending").toLowerCase();
                             const isSubCompleted = ["completed", "done"].includes(normalizedSubStatus);
@@ -296,34 +303,32 @@ export default function OrderProgressTimeline({
                                 ? "border-rose-600 bg-rose-600 text-white"
                                 : ["in-progress", "in_progress", "active"].includes(normalizedSubStatus)
                                   ? "border-amber-500 bg-amber-500 text-white"
-                                  : darkMode
-                                    ? "border-slate-600 bg-slate-900 text-slate-400"
-                                    : "border-slate-300 bg-white text-slate-500";
+                                  : "border-border bg-card text-muted-foreground";
                             const subPhotoUrls = Array.isArray(sub.images)
                               ? sub.images.map(normalizeOrderImageUrl).filter(Boolean)
                               : [];
 
                             return (
-                              <div key={`${step.key}-sub-${subIndex}`} className="flex w-[68px] shrink-0 flex-col items-center gap-1 text-center">
-                                <span className={`flex h-5 w-5 items-center justify-center rounded-full border text-[8px] font-bold shadow-sm ${subStatusClass}`}>
+                              <div key={`${step.key}-sub-${subIndex}`} className="flex max-w-full shrink-0 flex-col items-center gap-1 text-center max-[560px]:items-start">
+                                <span className={`flex h-5 w-5 items-center justify-center rounded-full border text-[8px] font-medium ${subStatusClass}`}>
                                   {isSubCompleted
                                     ? <Check size={10} aria-hidden="true" />
                                     : isSubDelayed
                                       ? <AlertTriangle size={10} aria-hidden="true" />
                                       : subIndex + 1}
                                 </span>
-                                <span className={`text-[8px] font-semibold leading-tight ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+                                <span className="text-[10px] leading-tight text-muted-foreground">
                                   {sub.name || `Sub-stage ${subIndex + 1}`}
                                 </span>
                                 {subPhotoUrls.length > 0 && (
                                   <button
                                     type="button"
                                     onClick={() => setPhotoGallery({ title: `${step.label} · ${sub.name || `Sub-stage ${subIndex + 1}`}`, images: subPhotoUrls })}
-                                    className="relative mt-0.5 h-7 w-7 overflow-hidden rounded border border-slate-300 bg-white"
+                                    className="relative mt-0.5 h-7 w-7 overflow-hidden rounded border border-border bg-card"
                                     aria-label={`View ${subPhotoUrls.length} ${sub.name || `sub-stage ${subIndex + 1}`} proof photo${subPhotoUrls.length === 1 ? "" : "s"}`}
                                   >
                                     <img src={subPhotoUrls[0]} alt="" className="h-full w-full object-cover" />
-                                    {subPhotoUrls.length > 1 && <span className="absolute inset-0 flex items-center justify-center bg-black/55 text-[8px] font-bold text-white">+{subPhotoUrls.length - 1}</span>}
+                                    {subPhotoUrls.length > 1 && <span className="absolute inset-0 flex items-center justify-center bg-black/55 text-[8px] font-medium text-white">+{subPhotoUrls.length - 1}</span>}
                                   </button>
                                 )}
                               </div>
@@ -331,19 +336,19 @@ export default function OrderProgressTimeline({
                           })}
                         </div>
                       )}
-                    </div>
+                    </li>
                   );
                 })}
-              </div>
+              </ol>
               {delayedSteps.length > 0 && (
                 <div className="mt-3 space-y-2">
                   {delayedSteps.map((step) => (
-                    <div key={`${step.key}-delay`} className={`flex items-start gap-2 rounded-lg border p-3 text-xs ${darkMode ? "border-rose-900 bg-rose-950/40 text-rose-100" : "border-rose-200 bg-rose-50 text-rose-950"}`}>
+                    <div key={`${step.key}-delay`} className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-950 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100">
                       <AlertTriangle size={15} aria-hidden="true" className="mt-0.5 shrink-0 text-rose-600" />
                       <div className="min-w-0">
-                        <p className="font-semibold">{step.label} is delayed</p>
-                        <p className={`mt-1 break-words ${darkMode ? "text-rose-200" : "text-rose-800"}`}>{step.delayReason || step.notes || "A delay has been reported."}</p>
-                        <p className={`mt-1 ${darkMode ? "text-rose-300" : "text-rose-700"}`}>Expected resolution: {step.delayExpectedResolution || "Not set"}</p>
+                        <p className="font-medium">{step.label} is delayed</p>
+                        <p className="mt-1 break-words dark:text-rose-200">{step.delayReason || step.notes || "A delay has been reported."}</p>
+                        <p className="mt-1 dark:text-rose-300">Expected resolution: {step.delayExpectedResolution || "Not set"}</p>
                       </div>
                     </div>
                   ))}
@@ -360,23 +365,23 @@ export default function OrderProgressTimeline({
           role="presentation"
         >
           <div
-            className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-xl bg-white shadow-2xl"
+            className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-xl border border-border bg-card"
             onClick={(event) => event.stopPropagation()}
             role="dialog"
             aria-modal="true"
             aria-labelledby="order-stage-gallery-title"
           >
-            <div className="sticky top-0 flex items-center justify-between border-b border-slate-200 bg-white p-4">
-              <h3 id="order-stage-gallery-title" className="text-base font-semibold text-slate-900">
+            <div className="sticky top-0 flex items-center justify-between border-b border-border bg-card p-4">
+              <h3 id="order-stage-gallery-title" className="text-base font-medium text-foreground">
                 {photoGallery.title} proof photos
               </h3>
               <button
                 type="button"
                 onClick={() => setPhotoGallery(null)}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
                 aria-label="Close photo gallery"
               >
-                <X size={18} />
+                <X size={18} aria-hidden="true" />
               </button>
             </div>
             <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
@@ -385,7 +390,7 @@ export default function OrderProgressTimeline({
                   key={`${photoGallery.title}-proof-${index}`}
                   src={src}
                   alt={`${photoGallery.title} proof photo ${index + 1}`}
-                  className="max-h-[65vh] w-full rounded-lg bg-slate-100 object-contain"
+                  className="max-h-[65vh] w-full rounded-lg border border-border bg-muted object-contain"
                 />
               ))}
             </div>
