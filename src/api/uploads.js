@@ -12,6 +12,65 @@ const buildAuthHeaders = () => {
 export const uploadFiles = async (files = [], onProgress, options = {}) => {
   if (!files || files.length === 0) return { success: false, files: [] };
 
+  if (options.purpose === "product-images") {
+    const fieldNames = options.fieldNames || [];
+    const totalSize = Array.from(files).reduce((size, file) => size + file.size, 0);
+    if (totalSize > 4 * 1024 * 1024) {
+      throw new Error("Product photos must total 4 MB or less per upload.");
+    }
+    const formData = new FormData();
+    Array.from(files).forEach((file, index) => {
+      formData.append(fieldNames[index] || "files", file, file.name);
+    });
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const headers = buildAuthHeaders();
+      const signal = options.signal;
+      const abortUpload = () => xhr.abort();
+      const removeAbortListener = () => signal?.removeEventListener("abort", abortUpload);
+
+      if (signal?.aborted) {
+        reject(new DOMException("Upload aborted.", "AbortError"));
+        return;
+      }
+
+      xhr.open("POST", `${API_BASE}/uploads/product-images`);
+      Object.entries(headers).forEach(([key, value]) => xhr.setRequestHeader(key, value));
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && typeof onProgress === "function") {
+          onProgress(Math.round((event.loaded / event.total) * 100));
+        }
+      };
+      xhr.onload = () => {
+        removeAbortListener();
+        try {
+          const response = JSON.parse(xhr.responseText || "{}");
+          if (xhr.status >= 200 && xhr.status < 300 && response.success) {
+            resolve(response);
+            return;
+          }
+          const error = new Error(response.message || `Upload failed with status ${xhr.status}`);
+          error.data = response;
+          error.response = response;
+          reject(error);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      xhr.onerror = () => {
+        removeAbortListener();
+        reject(new Error("Network error while uploading product photos."));
+      };
+      xhr.onabort = () => {
+        removeAbortListener();
+        reject(new DOMException("Upload aborted.", "AbortError"));
+      };
+      signal?.addEventListener("abort", abortUpload, { once: true });
+      xhr.send(formData);
+    });
+  }
+
   if (import.meta.env.PROD) {
     const purpose = options.purpose || "uploads";
     const fieldNames = options.fieldNames || [];

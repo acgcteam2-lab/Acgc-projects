@@ -4,6 +4,7 @@ import multer from "multer";
 import jwt from "jsonwebtoken";
 import process from "node:process";
 import { handleUpload } from "@vercel/blob/client";
+import { uploadImageBuffer } from "../config/cloudinary.js";
 
 const uploadsDir = path.join(process.cwd(), "uploads");
 const isVercelRuntime = process.env.VERCEL === "1";
@@ -39,6 +40,41 @@ export const uploadMiddleware = multer({
   fileFilter,
   limits: { fileSize: 50 * 1024 * 1024 },
 });
+
+const productImageUploadParser = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (_req, file, cb) => {
+    if (["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.mimetype)) {
+      return cb(null, true);
+    }
+    const error = new Error("Product photos must be JPEG, PNG, WEBP, or GIF images.");
+    error.status = 400;
+    return cb(error);
+  },
+  limits: { fileSize: 4 * 1024 * 1024, files: 5 },
+}).fields([
+  { name: "main", maxCount: 1 },
+  { name: "left", maxCount: 1 },
+  { name: "right", maxCount: 1 },
+  { name: "top", maxCount: 1 },
+  { name: "bottom", maxCount: 1 },
+  { name: "files", maxCount: 5 },
+]);
+
+export const productImageUploadMiddleware = (req, res, next) => {
+  productImageUploadParser(req, res, (error) => {
+    if (!error) return next();
+    if (error instanceof multer.MulterError) {
+      const message = error.code === "LIMIT_FILE_SIZE"
+        ? "Product photos must be 4 MB or smaller."
+        : error.code === "LIMIT_FILE_COUNT"
+        ? "Upload no more than 5 product photos at a time."
+        : "Unable to process product photos.";
+      return res.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400).json({ success: false, message });
+    }
+    return res.status(error.status || 400).json({ success: false, message: error.message });
+  });
+};
 
 const cleanupFiles = async (files = []) => {
   await Promise.all(
@@ -77,6 +113,41 @@ export const uploadImages = async (req, res) => {
       return res.status(400).json({ success: false, message });
     }
     res.status(500).json({ success: false, message: "Unable to upload images", error: error.message });
+  }
+};
+
+export const uploadProductImages = async (req, res) => {
+  const files = Object.entries(req.files || {}).flatMap(([key, fieldFiles]) =>
+    fieldFiles.map((file) => ({ key: key === "files" ? file.fieldname : key, file }))
+  );
+
+  if (files.length === 0) {
+    return res.status(400).json({ success: false, message: "No product photos uploaded." });
+  }
+  if (files.reduce((size, { file }) => size + file.size, 0) > 4 * 1024 * 1024) {
+    return res.status(413).json({ success: false, message: "Product photos must total 4 MB or less per upload." });
+  }
+
+  try {
+    const saved = await Promise.all(files.map(async ({ key, file }) => {
+      const result = await uploadImageBuffer(file.buffer, { folder: "acgc/products" });
+      return {
+        key,
+        url: result.secure_url,
+        filename: result.public_id,
+        width: result.width,
+        height: result.height,
+        format: result.format,
+      };
+    }));
+
+    return res.status(201).json({ success: true, files: saved });
+  } catch (error) {
+    console.error("Product image Cloudinary upload failed:", error.message);
+    return res.status(error.status || 502).json({
+      success: false,
+      message: error.status ? error.message : "Unable to upload product photos to Cloudinary.",
+    });
   }
 };
 
@@ -146,4 +217,10 @@ const createBlobUploadTokenForStore = async (req, res, privateBackupStore = fals
 export const createBlobUploadToken = (req, res) => createBlobUploadTokenForStore(req, res);
 export const createPrivateBackupUploadToken = (req, res) => createBlobUploadTokenForStore(req, res, true);
 
-export default { uploadImages, createBlobUploadToken, createPrivateBackupUploadToken, uploadMiddleware };
+export default {
+  uploadImages,
+  uploadProductImages,
+  createBlobUploadToken,
+  createPrivateBackupUploadToken,
+  uploadMiddleware,
+};

@@ -2,10 +2,10 @@ import { uploadFiles } from "../uploads";
 import { describe, it, expect, vi, afterEach } from "vitest";
 
 describe("uploadFiles", () => {
-  const originalXHR = global.XMLHttpRequest;
+  const originalXHR = globalThis.XMLHttpRequest;
 
   afterEach(() => {
-    global.XMLHttpRequest = originalXHR;
+    globalThis.XMLHttpRequest = originalXHR;
     vi.restoreAllMocks();
   });
 
@@ -32,7 +32,7 @@ describe("uploadFiles", () => {
       this.onerror = null;
     }
 
-    global.XMLHttpRequest = FakeXHR;
+    globalThis.XMLHttpRequest = FakeXHR;
 
     const file = new File(["filecontent"], "proof.png", { type: "image/png" });
     const result = await uploadFiles([file], (progress) => {
@@ -41,5 +41,42 @@ describe("uploadFiles", () => {
 
     expect(progressEvents).toContain(100);
     expect(result).toEqual(fakeResponse);
+  });
+
+  it("sends product photos to the backend with their image slot names", async () => {
+    let sentFormData;
+    let requestUrl;
+
+    function FakeXHR() {
+      this.upload = {};
+      this.open = vi.fn((_method, url) => { requestUrl = url; });
+      this.setRequestHeader = vi.fn();
+      this.send = (formData) => {
+        sentFormData = formData;
+        this.status = 201;
+        this.responseText = JSON.stringify({
+          success: true,
+          files: [
+            { key: "main", url: "https://res.cloudinary.com/demo/image/upload/main.jpg" },
+            { key: "left", url: "https://res.cloudinary.com/demo/image/upload/left.jpg" },
+          ],
+        });
+        this.onload();
+      };
+    }
+
+    globalThis.XMLHttpRequest = FakeXHR;
+
+    const mainImage = new File(["main image"], "main.jpg", { type: "image/jpeg" });
+    const leftImage = new File(["left image"], "left.jpg", { type: "image/jpeg" });
+    const result = await uploadFiles([mainImage, leftImage], undefined, {
+      purpose: "product-images",
+      fieldNames: ["main", "left"],
+    });
+
+    expect(requestUrl).toMatch(/\/api\/uploads\/product-images$/);
+    expect(sentFormData.get("main").name).toBe(mainImage.name);
+    expect(sentFormData.get("left").name).toBe(leftImage.name);
+    expect(result.files.map(({ key }) => key)).toEqual(["main", "left"]);
   });
 });
