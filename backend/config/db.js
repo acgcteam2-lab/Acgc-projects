@@ -1,10 +1,26 @@
 import mongoose from "mongoose";
+import dns from "node:dns";
 import process from "node:process";
 
 mongoose.set("strictQuery", true);
 
 let connectionPromise;
 let lastConnectionError = null;
+let activeDnsServers = "";
+
+const configureMongoDns = () => {
+  const servers = (process.env.MONGODB_DNS_SERVERS || "")
+    .split(",")
+    .map((server) => server.trim())
+    .filter(Boolean);
+  if (!servers.length) return;
+
+  const serverList = servers.join(",");
+  if (serverList !== activeDnsServers) {
+    dns.setServers(servers);
+    activeDnsServers = serverList;
+  }
+};
 
 export const hasMongoUri = () => Boolean(process.env.MONGO_URI?.trim());
 
@@ -49,10 +65,13 @@ export async function connectMongo() {
 
   if (!connectionPromise) {
     connectionPromise = Promise.resolve()
-      .then(() => mongoose.connect(validateMongoUri(getMongoUri()), {
-        autoIndex: true,
-        serverSelectionTimeoutMS: 8000,
-      }))
+      .then(() => {
+        configureMongoDns();
+        return mongoose.connect(validateMongoUri(getMongoUri()), {
+          autoIndex: true,
+          serverSelectionTimeoutMS: 8000,
+        });
+      })
       .then((connection) => {
         lastConnectionError = null;
         console.info("MongoDB connected");
