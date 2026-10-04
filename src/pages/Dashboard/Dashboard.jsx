@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   ClipboardCheck,
   FolderOpen,
@@ -132,6 +132,7 @@ import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import ProgressViewModal from "../../components/ProgressViewModal";
+import useNotificationHighlight from "@/hooks/useNotificationHighlight";
 
 const toProgressProject = (order) => ({
   id: order?._id || order?.id,
@@ -148,9 +149,35 @@ const toProgressProject = (order) => ({
   rawOrder: order,
 });
 
+const getOrderWarrantyRecords = (order) => {
+  const items = Array.isArray(order?.items) ? order.items : [];
+  const itemRecords = items
+    .filter((item) => item.warranty_start_date || item.warranty_expiry_date || item.warranty_status)
+    .map((item, index) => ({
+      key: `${order._id || order.id}-warranty-${index}`,
+      order,
+      item,
+      status: String(item.warranty_status || "").toLowerCase(),
+      start: item.warranty_start_date ? new Date(item.warranty_start_date) : null,
+      expiry: item.warranty_expiry_date ? new Date(item.warranty_expiry_date) : null,
+    }));
+  if (itemRecords.length) return itemRecords;
+  if (!order?.warranty_status && !order?.warranty_expiry_date) return [];
+  return [{
+    key: `${order._id || order.id}-warranty`,
+    order,
+    item: items[0] || {},
+    status: String(order.warranty_status || "").toLowerCase(),
+    start: order.warranty_start_date ? new Date(order.warranty_start_date) : null,
+    expiry: order.warranty_expiry_date ? new Date(order.warranty_expiry_date) : null,
+  }];
+};
+
 function Dashboard() {
   const { user } = useAuth();
   const { darkMode } = useAdminTheme();
+  const location = useLocation();
+  const highlightedNotificationRecordId = useNotificationHighlight(location);
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     if (typeof window === "undefined") return true;
     const stored = localStorage.getItem("sidebarOpen");
@@ -430,17 +457,21 @@ function Dashboard() {
     return activeProjectStatuses.has(status) && !isCompleted;
   };
   const activeProjectsCount = orders.filter(isActiveProject).length;
-  const activeWarrantiesCount = orders.filter(
-    (order) => String(order.warranty_status || "").toLowerCase() === "active",
-  ).length;
+  const isWarrantyCurrentlyActive = ({ status, start, expiry }) => (
+    status === "active" && (!start || start <= new Date()) && (!expiry || expiry > new Date())
+  );
+  const activeWarranties = orders
+    .flatMap(getOrderWarrantyRecords)
+    .filter(isWarrantyCurrentlyActive)
+    .slice(0, 5);
+  const activeWarrantiesCount = orders
+    .flatMap(getOrderWarrantyRecords)
+    .filter(isWarrantyCurrentlyActive).length;
   const pendingInspectionCount = orders.filter(
     (order) => String(order.status || "").toLowerCase() === "site_inspection",
   ).length;
   const activeProjects = orders
     .filter(isActiveProject)
-    .slice(0, 5);
-  const activeWarranties = orders
-    .filter((order) => String(order.warranty_status || "").toLowerCase() === "active")
     .slice(0, 5);
   const orderStatusGroups = [
     {
@@ -504,6 +535,13 @@ function Dashboard() {
     ? 0
     : (currentRecentTransactionsPage - 1) * recentTransactionsPerPage + 1;
   const recentTransactionEnd = Math.min(currentRecentTransactionsPage * recentTransactionsPerPage, recentTransactions.length);
+
+  useEffect(() => {
+    if (!highlightedNotificationRecordId) return;
+    const targetIndex = recentTransactions.findIndex((order) => String(order._id || order.id) === highlightedNotificationRecordId);
+    if (targetIndex >= 0) setRecentTransactionsPage(Math.floor(targetIndex / recentTransactionsPerPage) + 1);
+  }, [highlightedNotificationRecordId, orders]);
+
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
       <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((open) => !open)} />
@@ -701,8 +739,14 @@ function Dashboard() {
                                 ? "bg-amber-100 text-amber-700"
                                 : "bg-rose-100 text-rose-700";
 
+                        const orderId = String(order._id || order.id || "");
+                        const isNotificationTarget = highlightedNotificationRecordId === orderId;
                         return (
-                          <tr key={order._id || order.id} className="hover:bg-gray-50">
+                          <tr
+                            key={orderId}
+                            data-notification-record-id={orderId}
+                            className={`transition-colors ${isNotificationTarget ? "bg-amber-100 ring-2 ring-inset ring-amber-500" : "hover:bg-gray-50"}`}
+                          >
                             <td className="px-5 py-4"><ProfileAvatar name={customerName} email={order.customer?.email || order.customer_email || ""} compact /></td>
                             <td className="px-5 py-4 font-bold text-gray-900">{productName}</td>
                             <td className="px-5 py-4 text-gray-700">{formattedDate}</td>
@@ -752,8 +796,14 @@ function Dashboard() {
                             ? "bg-amber-100 text-amber-700"
                             : "bg-rose-100 text-rose-700";
 
+                    const orderId = String(order._id || order.id || "");
+                    const isNotificationTarget = highlightedNotificationRecordId === orderId;
                     return (
-                      <div key={order._id || order.id} className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                      <div
+                        key={orderId}
+                        data-notification-record-id={orderId}
+                        className={`rounded-2xl border p-3 transition-colors ${isNotificationTarget ? "border-amber-500 bg-amber-100 ring-2 ring-amber-400" : "border-gray-200 bg-gray-50"}`}
+                      >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <p className="truncate text-sm font-bold text-gray-900">{productName}</p>
@@ -890,15 +940,16 @@ function Dashboard() {
               </div>
 
               <div className="mt-5 space-y-3">
-                {activeWarranties.length > 0 ? activeWarranties.map((order) => {
+                {activeWarranties.length > 0 ? activeWarranties.map(({ key, order, item }) => {
                   const customerName = order.customer
                     ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() || order.customer.email || "Customer"
                     : "Customer";
-                  const productName = order.items?.[0]?.name || order.items?.[0]?.product_id?.name || "Warranty";
+                  const productName = item.name || item.product_id?.name || "Warranty";
+                  const warrantyPeriod = item.warranty_period || order.warranty_period || "Warranty";
                   return (
                     <button
                       type="button"
-                      key={order._id || order.id}
+                      key={key}
                       onClick={() => navigate("/transactions", { state: { activeTable: "projects" } })}
                       className="flex w-full items-center justify-between gap-4 rounded-2xl border border-gray-100 p-4 text-left transition hover:border-green-200 hover:bg-green-50/40"
                     >
@@ -907,7 +958,7 @@ function Dashboard() {
                         <p className="mt-1 truncate text-sm text-gray-400">{customerName}</p>
                       </div>
                       <span className="shrink-0 rounded-lg bg-green-500 px-3 py-1.5 text-xs font-semibold text-white">
-                        Active
+                        {warrantyPeriod === "Per product" ? "Active" : warrantyPeriod}
                       </span>
                     </button>
                   );

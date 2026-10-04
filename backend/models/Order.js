@@ -109,6 +109,28 @@ const OrderItemSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    warranty_period: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    custom_warranty_days: {
+      type: Number,
+      default: null,
+    },
+    warranty_start_date: {
+      type: Date,
+      default: null,
+    },
+    warranty_expiry_date: {
+      type: Date,
+      default: null,
+    },
+    warranty_status: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     customized: {
       type: Boolean,
       default: false,
@@ -525,6 +547,11 @@ const OrderSchema = new mongoose.Schema(
         )
       ],
       default: [],
+    },
+    warranty_assignment_mode: {
+      type: String,
+      enum: ["same", "per_product"],
+      default: "same",
     },
     warranty_period: {
       type: String,

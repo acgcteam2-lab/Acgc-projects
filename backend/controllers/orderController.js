@@ -162,6 +162,11 @@ const sanitizeOrderItems = (items = []) => {
       estimation_mode,
       manual_estimated_total,
       notes: item.notes || "",
+      warranty_period: item.warranty_period !== undefined ? String(item.warranty_period) : "",
+      custom_warranty_days: Number(item.custom_warranty_days) > 0 ? Number(item.custom_warranty_days) : null,
+      warranty_start_date: item.warranty_start_date ? new Date(item.warranty_start_date) : null,
+      warranty_expiry_date: item.warranty_expiry_date ? new Date(item.warranty_expiry_date) : null,
+      warranty_status: item.warranty_status || "",
       customized,
       is_estimate: Boolean(item.is_estimate),
     };
@@ -352,6 +357,7 @@ export const createOrderAsAdmin = async (req, res) => {
       downpayment_received,
       warranty_period,
       custom_warranty_days,
+      warranty_assignment_mode,
       required_downpayment_amount,
       // Walk-in customer fields
       signed_contract_url,
@@ -429,6 +435,7 @@ export const createOrderAsAdmin = async (req, res) => {
       warranty_period: warranty_period !== undefined && warranty_period !== null && String(warranty_period).trim() !== ""
         ? String(warranty_period)
         : "90",
+      warranty_assignment_mode: warranty_assignment_mode === "per_product" ? "per_product" : "same",
       custom_warranty_days: custom_warranty_days !== undefined && custom_warranty_days !== null && Number(custom_warranty_days) > 0
         ? Number(custom_warranty_days)
         : null,
@@ -599,6 +606,7 @@ export const updateOrderStatus = async (req, res) => {
       inspection_notes,
       inspection_date,
       warranty_period,
+      warranty_assignment_mode,
       warranty_start_date,
       warranty_expiry_date,
       warranty_status,
@@ -696,6 +704,9 @@ export const updateOrderStatus = async (req, res) => {
     if (inspection_date) order.inspection_date = inspection_date;
     if (inspection_notes) order.inspection_notes = inspection_notes;
     if (warranty_period !== undefined) order.warranty_period = warranty_period !== null && String(warranty_period).trim() !== "" ? String(warranty_period) : "90";
+    if (warranty_assignment_mode !== undefined) {
+      order.warranty_assignment_mode = warranty_assignment_mode === "per_product" ? "per_product" : "same";
+    }
     if (custom_warranty_days !== undefined) order.custom_warranty_days = Number(custom_warranty_days) > 0 ? Number(custom_warranty_days) : null;
     if (signed_contract_url !== undefined) order.signed_contract_url = signed_contract_url || "";
     if (acceptance_method !== undefined) order.acceptance_method = ["online", "walk_in_signed_contract"].includes(String(acceptance_method)) ? acceptance_method : order.acceptance_method;
@@ -1262,7 +1273,7 @@ export const updateOrderInspection = async (req, res) => {
     }
 
     const { orderId } = req.params;
-    const { inspection_status, inspection_date, estimated_installation_date, inspection_notes, issues_found, shipping_address, payment_terms, agreed_payment_date, items, total_amount, customer_name, customer_email, customer_phone, has_account_on_website, downpayment_received, required_downpayment_amount, manual_override, warranty_period, custom_warranty_days } = req.body;
+    const { inspection_status, inspection_date, estimated_installation_date, inspection_notes, issues_found, shipping_address, payment_terms, agreed_payment_date, items, total_amount, customer_name, customer_email, customer_phone, has_account_on_website, downpayment_received, required_downpayment_amount, manual_override, warranty_period, custom_warranty_days, warranty_assignment_mode } = req.body;
 
     updateData = {
       status: "site_inspection",
@@ -1296,6 +1307,7 @@ export const updateOrderInspection = async (req, res) => {
     if (has_account_on_website !== undefined) updateData.has_account_on_website = Boolean(has_account_on_website);
     if (downpayment_received !== undefined) updateData.downpayment_received = Boolean(downpayment_received);
     if (warranty_period !== undefined) updateData.warranty_period = warranty_period !== null && String(warranty_period).trim() !== "" ? String(warranty_period) : "90";
+    if (warranty_assignment_mode !== undefined) updateData.warranty_assignment_mode = warranty_assignment_mode === "per_product" ? "per_product" : "same";
     if (custom_warranty_days !== undefined) updateData.custom_warranty_days = Number(custom_warranty_days) > 0 ? Number(custom_warranty_days) : null;
     if (manual_override !== undefined) updateData.manual_override = Number(manual_override) || 0;
     if (customer_name !== undefined) updateData.customer_name = customer_name || "";

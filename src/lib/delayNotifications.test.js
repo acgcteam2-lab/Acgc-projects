@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildDelayNotifications, sortCustomerNotificationsNewestFirst } from "./delayNotifications";
+import { sortAdminNotificationsNewestFirst } from "./notificationState";
 
 describe("buildDelayNotifications", () => {
   it("creates one notification for each saved delayed-stage report", () => {
@@ -60,5 +61,37 @@ describe("buildDelayNotifications", () => {
 
     expect(delayNotification.notificationDate).toBe(orderUpdatedAt);
     expect([genericOrderNotification, delayNotification].sort(sortCustomerNotificationsNewestFirst)[0]).toBe(delayNotification);
+  });
+
+  it("sorts customer notifications newest-first when some timestamps are missing or invalid", () => {
+    const notifications = [
+      { notificationDate: "not-a-date", notificationType: "order" },
+      { notificationDate: "2026-10-04T11:00:00.000Z", notificationType: "payment_confirmed" },
+      { notificationDate: "2026-10-04T09:00:00.000Z", notificationType: "payment" },
+      { notificationType: "contract" },
+    ];
+
+    expect(notifications.sort(sortCustomerNotificationsNewestFirst).map((item) => item.notificationType)).toEqual([
+      "payment_confirmed",
+      "payment",
+      "order",
+      "contract",
+    ]);
+  });
+
+  it("sorts admin notifications newest-first and places invalid timestamps last", () => {
+    const notifications = [
+      { date: "invalid" },
+      { date: "2026-10-04T11:00:00.000Z" },
+      { updatedAt: "2026-10-04T09:00:00.000Z" },
+      {},
+    ];
+
+    expect(notifications.sort(sortAdminNotificationsNewestFirst)).toEqual([
+      { date: "2026-10-04T11:00:00.000Z" },
+      { updatedAt: "2026-10-04T09:00:00.000Z" },
+      { date: "invalid" },
+      {},
+    ]);
   });
 });

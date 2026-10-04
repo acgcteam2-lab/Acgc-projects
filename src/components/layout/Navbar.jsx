@@ -3,10 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { Bell, Moon, Sun, ClipboardCheck, CheckCircle2, XCircle, ShoppingCart, CheckCheck, CreditCard, Send, LogOut } from "lucide-react";
 import { getAdminOrders } from "@/api/orders";
 import { formatDateTimeToMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
+import { getAdminNotificationId, getAdminReadNotificationIds, markAdminNotificationRead, markAdminNotificationsRead, sortAdminNotificationsNewestFirst } from "@/lib/notificationState";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import { useAuth } from "@/contexts/AuthContext";
-
-const ADMIN_READ_NOTIFICATIONS_KEY = "acgc-admin-read-notifications";
 
 function Navbar() {
   const { darkMode, toggleDarkMode } = useAdminTheme();
@@ -115,14 +114,6 @@ function NotificationMenu() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const getReadNotificationIds = () => {
-    try {
-      return new Set(JSON.parse(localStorage.getItem(ADMIN_READ_NOTIFICATIONS_KEY) || "[]"));
-    } catch {
-      return new Set();
-    }
-  };
-
   useEffect(() => {
     let active = true;
     let hasFetched = false;
@@ -146,10 +137,11 @@ function NotificationMenu() {
           fetchModuleOrders({ payment_proof_submitted: "true" }, "transactions"),
         ]);
 
-        const readNotificationIds = getReadNotificationIds();
+        const readNotificationIds = getAdminReadNotificationIds();
         const items = [
           ...(newOrders.orders || []).map((order) => ({
-            id: `${order._id}-new-order`,
+            id: getAdminNotificationId("new-order", order),
+            recordId: String(order._id || order.id || order.tracking),
             title: "New order request",
             message: `${order.tracking || "An order"} is waiting for approval.`,
             icon: ShoppingCart,
@@ -161,7 +153,8 @@ function NotificationMenu() {
           ...(inspections.orders || [])
             .filter((order) => !["sent", "declined"].includes(String(order.contract_status || "").toLowerCase()))
             .map((order) => ({
-            id: `${order._id}-inspection`,
+            id: getAdminNotificationId("inspection", order),
+            recordId: String(order._id || order.id || order.tracking),
             title: "Inspection needs attention",
             message: `${order.tracking || "A project"} is ready for site inspection.`,
             icon: ClipboardCheck,
@@ -171,7 +164,8 @@ function NotificationMenu() {
             date: order.updatedAt || order.createdAt,
           })),
           ...(accepted.orders || []).map((order) => ({
-            id: `${order._id}-accepted`,
+            id: getAdminNotificationId("accepted", order),
+            recordId: String(order._id || order.id || order.tracking),
             title: "Contract accepted",
             message: `Customer accepted ${order.tracking || "a contract"}.`,
             icon: CheckCircle2,
@@ -181,7 +175,8 @@ function NotificationMenu() {
             date: order.updatedAt || order.createdAt,
           })),
           ...(declined.orders || []).map((order) => ({
-            id: `${order._id}-declined`,
+            id: getAdminNotificationId("declined", order),
+            recordId: String(order._id || order.id || order.tracking),
             title: "Contract declined",
             message: `Customer declined ${order.tracking || "a contract"}.`,
             icon: XCircle,
@@ -191,7 +186,8 @@ function NotificationMenu() {
             date: order.updatedAt || order.createdAt,
           })),
           ...(sentContracts.orders || []).map((order) => ({
-            id: `${order._id}-contract-sent-${new Date(order.contractSentAt || order.updatedAt || order.createdAt).getTime()}`,
+            id: getAdminNotificationId("sent", order),
+            recordId: String(order._id || order.id || order.tracking),
             title: "Contract sent",
             message: `Contract for ${order.tracking || "a project"} was sent to the customer.`,
             icon: Send,
@@ -209,7 +205,8 @@ function NotificationMenu() {
               .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
             return {
-              id: `${order._id}-payment-submitted-${new Date(order.payment_proof_submitted_at).getTime()}`,
+              id: getAdminNotificationId("payment", order),
+              recordId: String(order._id || order.id || order.tracking),
               title: "Customer Reported a Payment",
               message: `${customerName} says they paid ₱${amount} for order ${orderNumber}. Please confirm.`,
               icon: CreditCard,
@@ -220,7 +217,7 @@ function NotificationMenu() {
             };
           }),
         ]
-          .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+          .sort(sortAdminNotificationsNewestFirst)
           .slice(0, 8)
           .map((item) => ({ ...item, read: readNotificationIds.has(item.id) }));
 
@@ -260,20 +257,21 @@ function NotificationMenu() {
     setNotifications((current) => current.map((item) => (
       item.id === notification.id ? { ...item, read: true } : item
     )));
-    const readNotificationIds = getReadNotificationIds();
-    readNotificationIds.add(notification.id);
-    localStorage.setItem(ADMIN_READ_NOTIFICATIONS_KEY, JSON.stringify([...readNotificationIds]));
-    window.dispatchEvent(new Event("admin-notifications-updated"));
+    markAdminNotificationRead(notification.id);
     setOpen(false);
-    navigate(notification.path);
+    navigate(notification.path, {
+      state: {
+        notificationHighlight: {
+          recordId: notification.recordId,
+          recordType: "order",
+        },
+      },
+    });
   };
 
   const markAllNotificationsRead = () => {
     setNotifications((current) => current.map((item) => ({ ...item, read: true })));
-    const readNotificationIds = getReadNotificationIds();
-    notifications.forEach((notification) => readNotificationIds.add(notification.id));
-    localStorage.setItem(ADMIN_READ_NOTIFICATIONS_KEY, JSON.stringify([...readNotificationIds]));
-    window.dispatchEvent(new Event("admin-notifications-updated"));
+    markAdminNotificationsRead(notifications.map((notification) => notification.id));
   };
 
   return (
@@ -355,15 +353,22 @@ function NotificationMenu() {
                 <button
                   key={n.id}
                   onClick={() => openNotification(n)}
-                  className={`w-full px-4 py-3 text-left transition ${darkMode ? "hover:bg-slate-700" : "hover:bg-slate-50"} ${n.read ? "opacity-65" : ""}`}
+                  className={`w-full border-l-2 px-4 py-3 text-left transition ${
+                    n.read
+                      ? darkMode ? "border-transparent bg-slate-800/60 hover:bg-slate-800" : "border-transparent bg-white hover:bg-slate-50"
+                      : darkMode ? "border-sky-400/70 bg-slate-800/90 hover:bg-slate-800" : "border-sky-400/70 bg-sky-50/40 hover:bg-sky-50/70"
+                  }`}
                 >
                   <div className="flex gap-3">
                     <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-slate-100">
                       <n.icon size={17} className={n.color} />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className={`text-sm font-semibold truncate ${darkMode ? "text-white" : "text-slate-950"}`}>{n.title}</p>
-                      <p className={`text-xs mt-0.5 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{n.message}</p>
+                      <div className="flex items-center gap-2">
+                        <p className={`truncate text-sm ${n.read ? "font-medium" : "font-bold"} ${darkMode ? n.read ? "text-slate-300" : "text-white" : n.read ? "text-slate-600" : "text-slate-950"}`}>{n.title}</p>
+                        {!n.read && <span className="shrink-0 rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-sky-700">New</span>}
+                      </div>
+                      <p className={`mt-0.5 text-xs ${darkMode ? n.read ? "text-slate-400" : "text-slate-300" : n.read ? "text-slate-500" : "text-slate-700"}`}>{n.message}</p>
                       <p className="mt-1 text-xs text-slate-400" title={n.date ? formatDateTimeToMMDDYYYY(n.date) : undefined}>
                         {formatTimeAgo(n.date)}
                       </p>

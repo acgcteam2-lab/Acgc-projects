@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Search,
   Plus,
@@ -32,6 +32,7 @@ import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import { recordActivity } from "@/lib/activityLog";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import useNotificationHighlight from "@/hooks/useNotificationHighlight";
 
 const getDefaultInspection = () => ({
   customerId: null,
@@ -47,6 +48,7 @@ const getDefaultInspection = () => ({
   site_notes: "",
   warranty_period: 90,
   custom_warranty_days: 90,
+  warranty_assignment_mode: "same",
   has_account_on_website: false,
   downpayment_received: false,
   required_downpayment_amount: "",
@@ -86,10 +88,14 @@ const CONTRACT_STAGE_STATUSES = new Set([
 const normalizeWorkflowValue = (value) =>
   (value || "").toString().trim().toLowerCase();
 
+const normalizePhoneInput = (value) => String(value ?? "").replace(/\D/g, "");
+
 export const normalizeWarrantyPeriodValue = (value, fallback = 90) => {
   if (value === "Custom" || value === "No Warranty") return value;
 
-  const numericValue = Number(value);
+  const periodText = String(value).trim().toLowerCase();
+  const durationMatch = periodText.match(/^(\d+)\s*(?:days?)?$/);
+  const numericValue = durationMatch ? Number(durationMatch[1]) : Number(value);
   if (Number.isFinite(numericValue) && numericValue > 0) {
     if (numericValue === 30 || numericValue === 90) {
       return numericValue;
@@ -139,8 +145,70 @@ export const getEstimatedInstallationDate = (inspection) => (
 
 const toApiDate = (value) => {
   if (!value) return null;
-  const date = new Date(`${String(value).slice(0, 10)}T00:00:00.000Z`);
+  const date = value instanceof Date
+    ? new Date(value)
+    : new Date(`${String(value).slice(0, 10)}T00:00:00.000Z`);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+export const getWarrantyPeriodDays = (period) => {
+  const numericPeriod = Number(period);
+  if (Number.isFinite(numericPeriod) && numericPeriod > 0) return numericPeriod;
+
+  const match = String(period ?? "").trim().toLowerCase().match(/^(\d+)\s*(days?|months?|years?)$/);
+  if (!match) return null;
+  const count = Number(match[1]);
+  if (match[2].startsWith("year")) return count * 365;
+  if (match[2].startsWith("month")) return count * 30;
+  return count;
+};
+
+export const calculateWarrantyExpiry = (startDate, period, customDays) => {
+  if (!startDate || period === "No Warranty") return null;
+  const days = period === "Custom"
+    ? Number(customDays)
+    : getWarrantyPeriodDays(period) || Number(customDays);
+  if (!Number.isFinite(days) || days <= 0) return null;
+  const expiry = startDate instanceof Date
+    ? new Date(startDate)
+    : new Date(`${String(startDate).slice(0, 10)}T00:00:00.000Z`);
+  if (Number.isNaN(expiry.getTime())) return null;
+  expiry.setUTCDate(expiry.getUTCDate() + days);
+  return expiry.toISOString();
+};
+
+export const calculateMeasurementArea = (width, height, quantity = 1) => {
+  const area = ((Number(width) || 0) * (Number(height) || 0) * (Number(quantity) || 1)) / 144;
+  return Math.round(area * 100) / 100;
+};
+
+export const calculateMeasurementSubtotal = (item, product = null) => {
+  const quantity = Number(item.quantity ?? item.qty ?? 1) || 1;
+  const area = Number(item.area) || calculateMeasurementArea(item.width, item.height, quantity);
+  const unitPrice = Number(product?.unit_price) || Number(item.unit_price ?? item.price) || 0;
+  const customizationFee = Number(product?.customization_fee) || 0;
+
+  if (!product) return Math.round(area * unitPrice * 100) / 100;
+
+  let subtotal = 0;
+  switch (product.pricing_method || "") {
+    case "sqft":
+      subtotal = area * (Number(product.price_per_sqft) || 0) + customizationFee;
+      break;
+    case "blade":
+      subtotal = quantity * (Number(product.price_per_blade) || 0) + customizationFee;
+      break;
+    case "fixed":
+      subtotal = (Number(product.base_price) || 0) + customizationFee;
+      break;
+    case "per_piece":
+      subtotal = quantity * unitPrice + customizationFee;
+      break;
+    default:
+      subtotal = (area > 0 ? area * unitPrice : quantity * unitPrice) + customizationFee;
+  }
+
+  return Math.round(subtotal * 100) / 100;
 };
 
 const createContractPrintClone = (element) => {
@@ -180,6 +248,7 @@ export const validateInspectionPayload = (payload = {}) => {
   if (!payload.phone?.trim()) nextErrors.phone = "Phone number is required.";
   if (!payload.siteAddress?.trim()) nextErrors.siteAddress = "Site address is required.";
   if (!payload.inspection_date) nextErrors.inspection_date = "Inspection date is required.";
+  if (!payload.estimated_installation_date) nextErrors.estimated_installation_date = "Estimated installation date is required.";
   if (!payload.items || payload.items.length === 0) nextErrors.items = "Add at least one measurement row.";
   if (
     payload.order_type === "walk_in_customer" &&
@@ -369,6 +438,8 @@ function SiteInspection() {
   const isMobile = useIsMobile();
   const { user } = useAuth();
   const { darkMode } = useAdminTheme();
+  const location = useLocation();
+  const highlightedNotificationRecordId = useNotificationHighlight(location);
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     if (typeof window === "undefined") return true;
@@ -424,6 +495,21 @@ function SiteInspection() {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(Number(value || 0));
+  const getDimensionInputValue = (value) => value === 0 ? "" : value ?? "";
+  const clearDefaultDimensionZero = (id, field, value, onChange) => {
+    if (value !== "" && value !== null && value !== undefined && Number(value) === 0) {
+      onChange(id, field, "");
+    }
+  };
+  const getItemWarrantySelectValue = (item) => {
+    if (item.warranty_period === "No Warranty") return "No Warranty";
+    if (item.warranty_period === "Custom") return "Custom";
+    const days = getWarrantyPeriodDays(item.warranty_period ?? 90);
+    return [30, 60, 90].includes(days) ? String(days) : "Custom";
+  };
+  const getItemWarrantyCustomDays = (item) => (
+    Number(item.custom_warranty_days) || getWarrantyPeriodDays(item.warranty_period) || ""
+  );
 
   const modalShellClass = darkMode
     ? "border border-slate-700/80 bg-[#071d2d] text-slate-100 shadow-[0_28px_100px_rgba(0,0,0,0.55)] ring-1 ring-white/5"
@@ -722,11 +808,7 @@ function SiteInspection() {
   };
 
   const calculateItemArea = (item) => {
-    const width = Number(item.width) || 0;
-    const height = Number(item.height) || 0;
-    const qty = Number(item.quantity || item.qty) || 1;
-    const sqft = (width * height * qty) / 144;
-    return Math.round(sqft * 100) / 100;
+    return calculateMeasurementArea(item.width, item.height, item.quantity ?? item.qty ?? 1);
   };
 
   const getInspectionItemTotal = (item) => {
@@ -745,44 +827,9 @@ function SiteInspection() {
   };
 
   const calculateRowSubtotal = (item) => {
-    const area = Number(item.area) || calculateItemArea(item);
-    const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
     const normalizedProductId = normalizeProductId(item.product_id);
     const product = products.find((p) => String(p._id || p.id) === normalizedProductId) || null;
-
-    if (!product) {
-      const unitPrice = Number(item.unit_price ?? item.price ?? 0) || 0;
-      return Math.round(area * unitPrice * qty * 100) / 100;
-    }
-
-    const pricingMethod = product.pricing_method || "";
-    const base = Number(product.base_price) || 0;
-    const perSqft = Number(product.price_per_sqft) || 0;
-    const perBlade = Number(product.price_per_blade) || 0;
-    const unitPrice = Number(product.unit_price) || Number(item.unit_price) || 0;
-    const customization = Number(product.customization_fee) || 0;
-
-    let subtotal = 0;
-    switch (pricingMethod) {
-      case "sqft":
-        subtotal = area * perSqft * qty + customization;
-        break;
-      case "blade":
-        subtotal = qty * perBlade + customization;
-        break;
-      case "fixed":
-        subtotal = base + customization;
-        break;
-      case "per_piece":
-        subtotal = qty * unitPrice + customization;
-        break;
-      default:
-        // fallback: use unit_price * area (legacy) or qty * unit_price
-        subtotal = area > 0 ? area * unitPrice * qty : qty * unitPrice;
-        subtotal = subtotal + customization;
-    }
-
-    return Math.round(subtotal * 100) / 100;
+    return calculateMeasurementSubtotal(item, product);
   };
 
   const deriveUnitPriceForPayload = (item) => {
@@ -824,19 +871,40 @@ function SiteInspection() {
     const basePayload = {
       customer_id: payload.customerId || null,
       customer_email: payload.customerEmail || "",
-      items: (payload.items || []).map((item) => ({
-        _id: null,
-        product_id: item.product_id || null,
-        name: item.name || payload.productName || "Inspection Item",
-        quantity: Number(item.qty) || 1,
-        unit_price: deriveUnitPriceForPayload(item),
-        width: Number(item.width) || 0,
-        height: Number(item.height) || 0,
-        area: Number(item.area) || 0,
-        estimation_mode: item.estimation_mode || 'auto',
-        is_estimate: true,
-        estimated_price: getInspectionItemTotal(item),
-      })),
+      items: (payload.items || []).map((item) => {
+        const hasMultipleItems = (payload.items || []).length > 1;
+        const itemWarrantyPeriod = hasMultipleItems && payload.warranty_assignment_mode === "per_product"
+          ? item.warranty_period ?? 90
+          : payload.warranty_period;
+        const itemCustomWarrantyDays = hasMultipleItems && payload.warranty_assignment_mode === "per_product"
+          ? item.custom_warranty_days ?? 90
+          : payload.custom_warranty_days;
+        const warrantyPeriod = itemWarrantyPeriod === "Custom"
+          ? Number(itemCustomWarrantyDays) || 90
+          : itemWarrantyPeriod;
+        const warrantyStartDate = payload.estimated_installation_date || "";
+
+        return {
+          _id: null,
+          product_id: item.product_id || null,
+          name: item.name || payload.productName || "Inspection Item",
+          quantity: Number(item.qty) || 1,
+          unit_price: deriveUnitPriceForPayload(item),
+          width: Number(item.width) || 0,
+          height: Number(item.height) || 0,
+          area: Number(item.area) || 0,
+          estimation_mode: item.estimation_mode || 'auto',
+          is_estimate: true,
+          estimated_price: getInspectionItemTotal(item),
+          ...(hasMultipleItems ? {
+            warranty_period: String(warrantyPeriod),
+            custom_warranty_days: itemWarrantyPeriod === "Custom" ? Number(itemCustomWarrantyDays) || 90 : null,
+            warranty_start_date: toApiDate(warrantyStartDate),
+            warranty_expiry_date: calculateWarrantyExpiry(warrantyStartDate, itemWarrantyPeriod, itemCustomWarrantyDays),
+            warranty_status: "pending",
+          } : {}),
+        };
+      }),
       shipping_address: payload.siteAddress,
       order_type: payload.order_type === "walk_in_customer" ? "walk_in_customer" : "online_order",
       inspection_notes: payload.notes || payload.site_notes || "",
@@ -849,6 +917,9 @@ function SiteInspection() {
       inspection_date: toApiDate(payload.inspection_date),
       estimated_installation_date: toApiDate(payload.estimated_installation_date),
       ...buildWarrantyPayload(payload.warranty_period, payload.custom_warranty_days),
+      warranty_assignment_mode: (payload.items || []).length > 1 && payload.warranty_assignment_mode === "per_product"
+        ? "per_product"
+        : "same",
       has_account_on_website: Boolean(payload.has_account_on_website),
       manual_override: payload.manual_override || "",
       total_amount: computedTotal,
@@ -893,7 +964,7 @@ function SiteInspection() {
         };
       }
 
-      return { ...prev, [field]: value };
+      return { ...prev, [field]: field === "phone" ? normalizePhoneInput(value) : value };
     });
   };
 
@@ -903,12 +974,10 @@ function SiteInspection() {
       items: prev.items.map((item) => {
         if (item.id !== id) return item;
         const updated = { ...item, [field]: value };
-        const width = Number(updated.width) || 0;
-        const height = Number(updated.height) || 0;
-        const qty = Number(updated.qty) || 1;
-        // Convert from square inches to square feet: (w * h) / 144
-        const sqft = (width * height * qty) / 144;
-        return { ...updated, area: Math.round(sqft * 100) / 100 };
+        return {
+          ...updated,
+          area: calculateMeasurementArea(updated.width, updated.height, updated.qty),
+        };
       }),
     }));
   };
@@ -958,11 +1027,11 @@ function SiteInspection() {
           height: productSnapshot.height || item.height || 1,
           unit: selectedProduct?.unit || item.unit || "sqft",
         };
-        const width = Number(updated.width) || 0;
-        const height = Number(updated.height) || 0;
-        const qty = Number(updated.qty) || 1;
-        const sqft = (width * height * qty) / 144;
-        return { ...updated, area: Math.round(sqft * 100) / 100, estimation_mode: item.estimation_mode || "auto" };
+        return {
+          ...updated,
+          area: calculateMeasurementArea(updated.width, updated.height, updated.qty),
+          estimation_mode: item.estimation_mode || "auto",
+        };
       }),
     }));
   };
@@ -973,11 +1042,10 @@ function SiteInspection() {
       items: (prev.items || []).map((item) => {
         if (item.id !== id) return item;
         const updated = { ...item, [field]: value };
-        const width = Number(updated.width) || 0;
-        const height = Number(updated.height) || 0;
-        const qty = Number(updated.qty) || 1;
-        const sqft = (width * height * qty) / 144;
-        return { ...updated, area: Math.round(sqft * 100) / 100 };
+        return {
+          ...updated,
+          area: calculateMeasurementArea(updated.width, updated.height, updated.qty ?? updated.quantity),
+        };
       }),
     }));
   };
@@ -1021,11 +1089,11 @@ function SiteInspection() {
           height: productSnapshot.height || item.height || 1,
           unit: selectedProduct?.unit || item.unit || "sqft",
         };
-        const width = Number(updated.width) || 0;
-        const height = Number(updated.height) || 0;
-        const qty = Number(updated.qty) || 1;
-        const sqft = (width * height * qty) / 144;
-        return { ...updated, area: Math.round(sqft * 100) / 100, estimation_mode: item.estimation_mode || "auto" };
+        return {
+          ...updated,
+          area: calculateMeasurementArea(updated.width, updated.height, updated.qty ?? updated.quantity),
+          estimation_mode: item.estimation_mode || "auto",
+        };
       }),
     }));
   };
@@ -1284,6 +1352,10 @@ function SiteInspection() {
         unitPrice,
         amount,
         category: item.product_id?.category || item.product_type || "N/A",
+        warrantyPeriod: item.warranty_period,
+        warrantyCustomDays: item.custom_warranty_days,
+        warrantyStartDate: item.warranty_start_date,
+        warrantyExpiryDate: item.warranty_expiry_date,
       };
     });
 
@@ -1615,6 +1687,10 @@ function SiteInspection() {
         inspection_date: normalizeDateInputValue(inspection.inspection_date),
         estimated_installation_date: normalizeDateInputValue(getEstimatedInstallationDate(inspection)),
         warranty_period: normalizedWarrantyPeriod,
+        warranty_assignment_mode: inspection.warranty_assignment_mode === "per_product" ? "per_product" : "same",
+        warranty_status: inspection.warranty_status || "",
+        warranty_start_date: inspection.warranty_start_date || null,
+        warranty_expiry_date: inspection.warranty_expiry_date || null,
         custom_warranty_days:
           normalizedWarrantyPeriod === "Custom"
             ? Number(inspection.custom_warranty_days || inspection.warranty_period) > 0
@@ -1908,7 +1984,7 @@ function SiteInspection() {
         };
       }
 
-      return { ...prev, [name]: value };
+      return { ...prev, [name]: name === "phone" ? normalizePhoneInput(value) : value };
     });
   };
 
@@ -1954,11 +2030,30 @@ function SiteInspection() {
         ),
         agreed_payment_date: toApiDate(editInspection.agreed_payment_date),
         ...buildWarrantyPayload(editInspection.warranty_period, editInspection.custom_warranty_days),
+        warranty_assignment_mode: (editInspection.items || []).length > 1 && editInspection.warranty_assignment_mode === "per_product"
+          ? "per_product"
+          : "same",
         downpayment_received: Boolean(editInspection.downpayment_received),
         items: (editInspection.items || []).map((item) => {
           const normalizedProductId = normalizeProductId(item.product_id);
           // Preserve original product_id if normalization fails; only use null as last resort
           const finalProductId = normalizedProductId || item.product_id || item._id || null;
+          const hasMultipleItems = (editInspection.items || []).length > 1;
+          const usesItemWarranty = hasMultipleItems && editInspection.warranty_assignment_mode === "per_product";
+          const hasStoredItemWarranty = Boolean(
+            item.warranty_period || item.warranty_start_date || item.warranty_expiry_date || item.warranty_status
+          );
+          const isCustomItemWarranty = usesItemWarranty && getItemWarrantySelectValue(item) === "Custom";
+          const itemWarrantyPeriod = usesItemWarranty
+            ? isCustomItemWarranty ? "Custom" : item.warranty_period || 90
+            : editInspection.warranty_period;
+          const itemCustomWarrantyDays = usesItemWarranty
+            ? Number(item.custom_warranty_days) || getWarrantyPeriodDays(item.warranty_period) || 90
+            : Number(editInspection.custom_warranty_days) || 90;
+          const warrantyPeriod = itemWarrantyPeriod === "Custom"
+            ? itemCustomWarrantyDays
+            : itemWarrantyPeriod;
+          const warrantyStartDate = item.warranty_start_date || editInspection.warranty_start_date || editInspection.estimated_installation_date;
           return {
             product_id: finalProductId,
             name: item.name || "",
@@ -1972,6 +2067,13 @@ function SiteInspection() {
               : calculateRowSubtotal(item),
             is_estimate: true,
             unit: item.unit || "sqft",
+            ...(hasMultipleItems || hasStoredItemWarranty ? {
+              warranty_period: String(warrantyPeriod),
+              custom_warranty_days: itemWarrantyPeriod === "Custom" || isCustomItemWarranty ? itemCustomWarrantyDays : null,
+              warranty_start_date: toApiDate(warrantyStartDate),
+              warranty_expiry_date: calculateWarrantyExpiry(warrantyStartDate, itemWarrantyPeriod, itemCustomWarrantyDays),
+              warranty_status: item.warranty_status || editInspection.warranty_status || "pending",
+            } : {}),
           };
         }),
         total_amount: Number(editInspection.manual_override) || computeEditTotals().totalEstimate,
@@ -2036,6 +2138,12 @@ function SiteInspection() {
   const visibleInspections = isMobile ? filteredList : paginatedList;
   const visibleRecordStart = filteredList.length === 0 ? 0 : (currentPageIndex - 1) * pageSize + 1;
   const visibleRecordEnd = Math.min(currentPageIndex * pageSize, filteredList.length);
+
+  useEffect(() => {
+    if (!highlightedNotificationRecordId) return;
+    const targetIndex = filteredList.findIndex((inspection) => String(inspection._id || inspection.id) === highlightedNotificationRecordId);
+    if (targetIndex >= 0) setCurrentPage(Math.floor(targetIndex / pageSize) + 1);
+  }, [highlightedNotificationRecordId, inspections, filteredList.length]);
 
   const getInspectionProductSummary = (inspection) => {
     const items = Array.isArray(inspection?.items) ? inspection.items : [];
@@ -2424,7 +2532,13 @@ function SiteInspection() {
                         const progressColor = getInspectionStatusTone(statusDisplay);
                         const rowActions = getInspectionActionButtons(inspection);
                         return (
-                          <tr key={inspection._id || inspection.id || index} className={darkMode ? "border-t border-slate-700 bg-slate-900/20 hover:bg-slate-800/50" : "border-t border-slate-200 bg-white hover:bg-slate-50"}>
+                          <tr
+                            key={inspection._id || inspection.id || index}
+                            data-notification-record-id={String(inspection._id || inspection.id || "")}
+                            className={highlightedNotificationRecordId === String(inspection._id || inspection.id || "")
+                              ? "border-t border-amber-400 bg-amber-100 ring-2 ring-inset ring-amber-500"
+                              : darkMode ? "border-t border-slate-700 bg-slate-900/20 hover:bg-slate-800/50" : "border-t border-slate-200 bg-white hover:bg-slate-50"}
+                          >
                             <td className="px-2 py-3"><div className="min-w-0"><div className="truncate text-[12px] font-bold text-slate-800 dark:text-slate-100">{clientName}</div><div className="mt-1 text-[10px] text-slate-500">{phone}</div></div></td>
                             <td className="px-2 py-3 text-[12px] text-slate-700">{trackingId}</td>
                             <td className="px-2 py-3 text-[12px] text-slate-700">{customerTypeLabel}</td>
@@ -2458,7 +2572,11 @@ function SiteInspection() {
                 const statusDisplay = getInspectionStatusDisplay(inspection);
                 const total = Number(inspection.total_amount || inspection.contract_amount || 0) || (Array.isArray(inspection.items) ? inspection.items.reduce((sum, item) => sum + getInspectionItemTotal(item), 0) : 0);
                 return (
-                  <div key={inspection._id || inspection.id || index} className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                  <div
+                    key={inspection._id || inspection.id || index}
+                    data-notification-record-id={String(inspection._id || inspection.id || "")}
+                    className={`rounded-2xl border p-3 transition-colors ${highlightedNotificationRecordId === String(inspection._id || inspection.id || "") ? "border-amber-500 bg-amber-100 ring-2 ring-amber-400" : "border-gray-200 bg-gray-50"}`}
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-bold text-gray-900">{clientName}</p>
@@ -2595,10 +2713,12 @@ function SiteInspection() {
                       <div className="md:col-span-1">
                         <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Client Number <span className="text-red-400">*</span></label>
                         <input
-                          type="text"
+                          type="tel"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
                           placeholder="e.g. 09171234567"
                           className={selectedCustomer ? lockedFieldClass : fieldClass}
-                          value={newInspection.phone}
+                          value={normalizePhoneInput(newInspection.phone)}
                           onChange={(e) => handleInspectionFieldChange("phone", e.target.value)}
                           readOnly={!!selectedCustomer}
                         />
@@ -2633,7 +2753,7 @@ function SiteInspection() {
                       </div>
 
                       <div>
-                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Est. Installation Date <span className="</span>text-red-400"></span></label>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Est. Installation Date <span className="text-red-400">*</span></label>
                         <input
                           type="date"
                           className={fieldClass}
@@ -2653,7 +2773,29 @@ function SiteInspection() {
                       </div>
                     </div>
 
-                    <div className="mt-6">
+                    {newInspection.items.length > 1 && (
+                      <div className="mt-6">
+                        <p className={`mb-3 text-sm font-semibold ${labelClass}`}>Warranty Assignment</p>
+                        <div className="grid max-w-2xl gap-2 sm:grid-cols-2">
+                          {[
+                            { value: "same", label: "Same Warranty for All Products" },
+                            { value: "per_product", label: "Different Warranty per Product" },
+                          ].map((option) => (
+                            <button
+                              key={option.value}
+                              type="button"
+                              aria-pressed={(newInspection.warranty_assignment_mode || "same") === option.value}
+                              onClick={() => setNewInspection((prev) => ({ ...prev, warranty_assignment_mode: option.value }))}
+                              className={`min-h-11 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition ${(newInspection.warranty_assignment_mode || "same") === option.value ? "border-red-600 bg-red-600 text-white" : darkMode ? "border-slate-600 bg-[#122d42] text-slate-200" : "border-slate-200 bg-white text-slate-700"}`}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {!(newInspection.items.length > 1 && newInspection.warranty_assignment_mode === "per_product") && <div className="mt-6">
                       <p className={`mb-3 text-sm font-semibold ${labelClass}`}>Warranty Period</p>
                       <div className="grid max-w-2xl grid-cols-2 gap-2 sm:grid-cols-4">
                         {["No Warranty", 30, 90, "Custom"].map((option) => {
@@ -2713,7 +2855,7 @@ function SiteInspection() {
                       )}
 
                       <p className={`mt-3 text-xs ${mutedTextClass}`}>Coverage starts on the installation date. Used for testing warranty expiry.</p>
-                    </div>
+                    </div>}
                   </section>
 
                   <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
@@ -2803,7 +2945,7 @@ function SiteInspection() {
                         const rowSubtotal = calculateRowSubtotal(item);
                         return (
                           <div key={item.id} className={`grid min-w-[760px] grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 border-t p-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-col items-start gap-2">
                               <select
                                 value={item.product_id || ""}
                                 onChange={(e) => handleItemProductChange(item.id, e.target.value)}
@@ -2814,18 +2956,57 @@ function SiteInspection() {
                                   <option key={String(product._id || product.id)} value={String(product._id || product.id)}>{product.name}</option>
                                 ))}
                               </select>
+                              {newInspection.items.length > 1 && newInspection.warranty_assignment_mode === "per_product" && (
+                                <div className="w-full">
+                                  <label className={`mb-1 block text-[10px] font-bold uppercase ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Warranty</label>
+                                  <select
+                                    aria-label={`Warranty for ${item.name || `product ${index + 1}`}`}
+                                    value={getItemWarrantySelectValue(item)}
+                                    onChange={(event) => {
+                                      const value = event.target.value;
+                                      if (value === "Custom") {
+                                        handleItemFieldChange(item.id, "warranty_period", "Custom");
+                                        if (!Number(item.custom_warranty_days)) handleItemFieldChange(item.id, "custom_warranty_days", 90);
+                                      } else {
+                                        handleItemFieldChange(item.id, "warranty_period", value === "No Warranty" ? value : Number(value));
+                                      }
+                                    }}
+                                    className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900"}
+                                  >
+                                    <option value="No Warranty">No Warranty</option>
+                                    <option value="30">30 Days</option>
+                                    <option value="60">60 Days</option>
+                                    <option value="90">90 Days</option>
+                                    <option value="Custom">Custom</option>
+                                  </select>
+                                  {getItemWarrantySelectValue(item) === "Custom" && (
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      step="1"
+                                      aria-label={`Custom warranty days for product ${index + 1}`}
+                                      value={getItemWarrantyCustomDays(item)}
+                                      onChange={(event) => handleItemFieldChange(item.id, "custom_warranty_days", event.target.value)}
+                                      className={`mt-2 ${darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900"}`}
+                                      placeholder="Custom days"
+                                    />
+                                  )}
+                                </div>
+                              )}
                             </div>
                             <input
                               type="number"
                               min="0"
-                              value={item.width || 0}
+                              value={getDimensionInputValue(item.width)}
+                              onFocus={() => clearDefaultDimensionZero(item.id, "width", item.width, handleItemFieldChange)}
                               onChange={(e) => handleItemFieldChange(item.id, "width", e.target.value)}
                               className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
                             />
                             <input
                               type="number"
                               min="0"
-                              value={item.height || 0}
+                              value={getDimensionInputValue(item.height)}
+                              onFocus={() => clearDefaultDimensionZero(item.id, "height", item.height, handleItemFieldChange)}
                               onChange={(e) => handleItemFieldChange(item.id, "height", e.target.value)}
                               className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
                             />
@@ -2880,15 +3061,52 @@ function SiteInspection() {
                                   <option key={String(product._id || product.id)} value={String(product._id || product.id)}>{product.name}</option>
                                 ))}
                               </select>
+                                {newInspection.items.length > 1 && newInspection.warranty_assignment_mode === "per_product" && (
+                                  <div className="mt-3">
+                                    <label className={labelClasses} htmlFor={`new-measurement-warranty-${index}`}>Warranty</label>
+                                    <select
+                                      id={`new-measurement-warranty-${index}`}
+                                      value={getItemWarrantySelectValue(item)}
+                                      onChange={(event) => {
+                                        const value = event.target.value;
+                                        if (value === "Custom") {
+                                          handleItemFieldChange(item.id, "warranty_period", "Custom");
+                                          if (!Number(item.custom_warranty_days)) handleItemFieldChange(item.id, "custom_warranty_days", 90);
+                                        } else {
+                                          handleItemFieldChange(item.id, "warranty_period", value === "No Warranty" ? value : Number(value));
+                                        }
+                                      }}
+                                      className={inputClasses}
+                                    >
+                                      <option value="No Warranty">No Warranty</option>
+                                      <option value="30">30 Days</option>
+                                      <option value="60">60 Days</option>
+                                      <option value="90">90 Days</option>
+                                      <option value="Custom">Custom</option>
+                                    </select>
+                                    {getItemWarrantySelectValue(item) === "Custom" && (
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        step="1"
+                                        aria-label={`Custom warranty days for measurement ${index + 1}`}
+                                        value={getItemWarrantyCustomDays(item)}
+                                        onChange={(event) => handleItemFieldChange(item.id, "custom_warranty_days", event.target.value)}
+                                        className={`${inputClasses} mt-2`}
+                                        placeholder="Custom warranty days"
+                                      />
+                                    )}
+                                  </div>
+                                )}
                             </div>
                             <div className="mt-3 grid grid-cols-2 gap-3">
                               <label className="min-w-0">
                                 <span className={labelClasses}>Width</span>
-                                <input type="number" min="0" inputMode="decimal" aria-label={`Width for measurement ${index + 1}`} value={item.width || 0} onChange={(event) => handleItemFieldChange(item.id, "width", event.target.value)} className={inputClasses} />
+                                <input type="number" min="0" inputMode="decimal" aria-label={`Width for measurement ${index + 1}`} value={getDimensionInputValue(item.width)} onFocus={() => clearDefaultDimensionZero(item.id, "width", item.width, handleItemFieldChange)} onChange={(event) => handleItemFieldChange(item.id, "width", event.target.value)} className={inputClasses} />
                               </label>
                               <label className="min-w-0">
                                 <span className={labelClasses}>Height</span>
-                                <input type="number" min="0" inputMode="decimal" aria-label={`Height for measurement ${index + 1}`} value={item.height || 0} onChange={(event) => handleItemFieldChange(item.id, "height", event.target.value)} className={inputClasses} />
+                                <input type="number" min="0" inputMode="decimal" aria-label={`Height for measurement ${index + 1}`} value={getDimensionInputValue(item.height)} onFocus={() => clearDefaultDimensionZero(item.id, "height", item.height, handleItemFieldChange)} onChange={(event) => handleItemFieldChange(item.id, "height", event.target.value)} className={inputClasses} />
                               </label>
                               <div className="min-w-0">
                                 <span className={labelClasses}>Area Unit</span>
@@ -3095,7 +3313,10 @@ function SiteInspection() {
             const paymentReceivedQuestion = getPaymentReceivedQuestion(viewInspection.payment_terms);
             const paymentStatusLabel = getPaymentStatusLabel(viewInspection.payment_terms);
             const paymentTermsText = getPaymentTermsLabel(viewInspection.payment_terms);
-            const warrantyPeriod = viewInspection.warranty_period === "No Warranty"
+            const isPerProductWarranty = inspectionItems.length > 1 && viewInspection.warranty_assignment_mode === "per_product";
+            const warrantyPeriod = isPerProductWarranty
+              ? "Different per product"
+              : viewInspection.warranty_period === "No Warranty"
               ? "No Warranty"
               : `${viewInspection.warranty_period === "Custom"
                 ? Number(viewInspection.custom_warranty_days) || 90
@@ -3132,6 +3353,17 @@ function SiteInspection() {
               const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
               const unitPrice = Number(item.unit_price ?? item.price ?? 0) || 0;
               const explicitLineTotal = Number(item.estimated_price ?? item.total_price ?? 0);
+              const itemWarrantyPeriod = item.warranty_period ?? viewInspection.warranty_period ?? 90;
+              const isNoItemWarranty = itemWarrantyPeriod === "No Warranty";
+              const itemWarrantyDays = itemWarrantyPeriod === "Custom"
+                ? Number(item.custom_warranty_days ?? viewInspection.custom_warranty_days) || 90
+                : getWarrantyPeriodDays(itemWarrantyPeriod) || 90;
+              const warrantyStartDate = isNoItemWarranty
+                ? null
+                : item.warranty_start_date || viewInspection.warranty_start_date || getEstimatedInstallationDate(viewInspection);
+              const warrantyExpiryDate = isNoItemWarranty
+                ? null
+                : item.warranty_expiry_date || calculateWarrantyExpiry(warrantyStartDate, itemWarrantyPeriod, item.custom_warranty_days ?? viewInspection.custom_warranty_days);
 
               return {
                 key: `${itemName}-${index}`,
@@ -3144,13 +3376,19 @@ function SiteInspection() {
                 lineTotal: Number.isFinite(explicitLineTotal) && explicitLineTotal > 0
                   ? explicitLineTotal
                   : qty * unitPrice,
+                warrantyPeriod: isNoItemWarranty ? "No Warranty" : `${itemWarrantyDays} days`,
+                warrantyStartDate: warrantyStartDate ? formatDateToMMDDYYYY(warrantyStartDate) || "TBD" : "TBD",
+                warrantyExpiryDate: warrantyExpiryDate ? formatDateToMMDDYYYY(warrantyExpiryDate) || "TBD" : "TBD",
               };
             });
             const measurementLabelClass = `text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`;
 
             return (
               <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/45 pt-6">
-                <div className={`flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[18px] border ${modalShellClass}`}>
+                <div
+                  data-notification-record-id={String(orderId || "")}
+                  className={`flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[18px] border transition-shadow ${modalShellClass} ${highlightedNotificationRecordId === String(orderId || "") ? "ring-4 ring-amber-400" : ""}`}
+                >
                   <div className={`flex shrink-0 flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-4 ${darkMode ? "border-b border-slate-700 bg-[#0b2338]" : "border-b border-slate-200 bg-white"}`}>
                     <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-4">
                       <h2 className={`text-xl font-black leading-tight sm:text-[28px] ${darkMode ? "text-white" : "text-slate-900"}`}>Inspection Details</h2>
@@ -3247,6 +3485,7 @@ function SiteInspection() {
                               <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Unit</th>
                               <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Qty</th>
                               <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Price/SQFT</th>
+                              {inspectionItems.length > 1 && <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Warranty</th>}
                               <th className="px-4 py-3 text-right text-[11px] font-black uppercase tracking-[0.14em]">Est. Total</th>
                             </tr>
                           </thead>
@@ -3259,11 +3498,22 @@ function SiteInspection() {
                                 <td className="px-4 py-3">{measurement.unit}</td>
                                 <td className="px-4 py-3">{measurement.qty}</td>
                                 <td className="px-4 py-3">{measurement.unitPrice ? formatCurrency(measurement.unitPrice) : "—"}</td>
+                                {inspectionItems.length > 1 && (
+                                  <td className="px-4 py-3 text-sm">
+                                    <div className="font-semibold">{measurement.warrantyPeriod}</div>
+                                    {measurement.warrantyPeriod !== "No Warranty" && (
+                                      <div className={darkMode ? "mt-1 text-xs text-slate-400" : "mt-1 text-xs text-slate-500"}>
+                                        <div>Start: {measurement.warrantyStartDate}</div>
+                                        <div>End: {measurement.warrantyExpiryDate}</div>
+                                      </div>
+                                    )}
+                                  </td>
+                                )}
                                 <td className="px-4 py-3 text-right font-semibold">{formatCurrency(measurement.lineTotal)}</td>
                               </tr>
                             )) : (
                               <tr>
-                                <td colSpan={7} className={`px-4 py-6 text-center text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                                <td colSpan={inspectionItems.length > 1 ? 8 : 7} className={`px-4 py-6 text-center text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
                                   No measurement rows available.
                                 </td>
                               </tr>
@@ -3295,6 +3545,17 @@ function SiteInspection() {
                                 <dt className={measurementLabelClass}>Quantity</dt>
                                 <dd className={`mt-1 text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{measurement.qty}</dd>
                               </div>
+                              {inspectionItems.length > 1 && (
+                                <div className="col-span-2 min-w-0">
+                                  <dt className={measurementLabelClass}>Warranty</dt>
+                                  <dd className={`mt-1 text-sm font-semibold ${darkMode ? "text-slate-100" : "text-slate-800"}`}>{measurement.warrantyPeriod}</dd>
+                                  {measurement.warrantyPeriod !== "No Warranty" && (
+                                    <dd className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                                      Start: {measurement.warrantyStartDate} · End: {measurement.warrantyExpiryDate}
+                                    </dd>
+                                  )}
+                                </div>
+                              )}
                             </dl>
                             <div className={`mt-3 grid grid-cols-2 gap-3 border-t pt-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                               <div className="min-w-0">
@@ -3424,9 +3685,11 @@ function SiteInspection() {
                       <div>
                         <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Client Number</label>
                         <input
-                          type="text"
+                          type="tel"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
                           className={editInspection.isOnlineCustomer ? lockedFieldClass : fieldClass}
-                          value={editInspection.phone || ""}
+                          value={normalizePhoneInput(editInspection.phone)}
                           onChange={(e) => handleEditChange("phone", e.target.value)}
                           readOnly={Boolean(editInspection.isOnlineCustomer)}
                           aria-readonly={Boolean(editInspection.isOnlineCustomer)}
@@ -3480,7 +3743,29 @@ function SiteInspection() {
                       </div>
                     </div>
 
-                    <div className="mt-6">
+                    {editInspection.items.length > 1 && (
+                      <div className="mt-6">
+                        <p className={`mb-3 text-sm font-semibold ${labelClass}`}>Warranty Assignment</p>
+                        <div className="grid max-w-2xl gap-2 sm:grid-cols-2">
+                          {[
+                            { value: "same", label: "Same Warranty for All Products" },
+                            { value: "per_product", label: "Different Warranty per Product" },
+                          ].map((option) => (
+                            <button
+                              key={option.value}
+                              type="button"
+                              aria-pressed={(editInspection.warranty_assignment_mode || "same") === option.value}
+                              onClick={() => setEditInspection((prev) => ({ ...prev, warranty_assignment_mode: option.value }))}
+                              className={`min-h-11 rounded-lg border px-3 py-2 text-left text-sm font-semibold transition ${(editInspection.warranty_assignment_mode || "same") === option.value ? "border-red-600 bg-red-600 text-white" : darkMode ? "border-slate-600 bg-[#122d42] text-slate-200" : "border-slate-200 bg-white text-slate-700"}`}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {!(editInspection.items.length > 1 && editInspection.warranty_assignment_mode === "per_product") && <div className="mt-6">
                       <p className={`mb-3 text-sm font-semibold ${labelClass}`}>Warranty Period</p>
                       <div className="grid max-w-2xl grid-cols-2 gap-2 sm:grid-cols-4">
                         {["No Warranty", 30, 90, "Custom"].map((option) => {
@@ -3540,7 +3825,7 @@ function SiteInspection() {
                       )}
 
                       <p className={`mt-3 text-xs ${mutedTextClass}`}>Coverage starts on the installation date. Used for testing warranty expiry.</p>
-                    </div>
+                    </div>}
 
                   </section>
 
@@ -3620,7 +3905,7 @@ function SiteInspection() {
                         const rowSubtotal = calculateRowSubtotal(item);
                         return (
                           <div key={item.id || `${item.product_id || "row"}-${Math.random()}`} className={`grid grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 border-t p-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-col items-start gap-2">
                               <select
                                 value={item.product_id || ""}
                                 onChange={(e) => handleEditItemProductChange(item.id, e.target.value)}
@@ -3631,12 +3916,41 @@ function SiteInspection() {
                                   <option key={String(product._id || product.id)} value={String(product._id || product.id)}>{product.name}</option>
                                 ))}
                               </select>
+                              {editInspection.items.length > 1 && editInspection.warranty_assignment_mode === "per_product" && (
+                                <div className="w-full">
+                                  <label className={`mb-1 block text-[10px] font-bold uppercase ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Warranty</label>
+                                  <select
+                                    aria-label={`Warranty for ${item.name || "product"}`}
+                                    value={getItemWarrantySelectValue(item)}
+                                    onChange={(event) => {
+                                      const value = event.target.value;
+                                      if (value === "Custom") {
+                                        handleEditItemFieldChange(item.id, "warranty_period", "Custom");
+                                        if (!Number(item.custom_warranty_days)) handleEditItemFieldChange(item.id, "custom_warranty_days", 90);
+                                      } else {
+                                        handleEditItemFieldChange(item.id, "warranty_period", value === "No Warranty" ? value : Number(value));
+                                      }
+                                    }}
+                                    className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900"}
+                                  >
+                                    <option value="No Warranty">No Warranty</option>
+                                    <option value="30">30 Days</option>
+                                    <option value="60">60 Days</option>
+                                    <option value="90">90 Days</option>
+                                    <option value="Custom">Custom</option>
+                                  </select>
+                                  {getItemWarrantySelectValue(item) === "Custom" && (
+                                    <input type="number" min="1" step="1" aria-label={`Custom warranty days for ${item.name || "product"}`} value={getItemWarrantyCustomDays(item)} onChange={(event) => handleEditItemFieldChange(item.id, "custom_warranty_days", event.target.value)} className={`mt-2 ${darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900"}`} placeholder="Custom days" />
+                                  )}
+                                </div>
+                              )}
                             </div>
 
                             <input
                               type="number"
                               min="0"
-                              value={item.width || 0}
+                              value={getDimensionInputValue(item.width)}
+                              onFocus={() => clearDefaultDimensionZero(item.id, "width", item.width, handleEditItemFieldChange)}
                               onChange={(e) => handleEditItemFieldChange(item.id, "width", e.target.value)}
                               className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
                             />
@@ -3644,7 +3958,8 @@ function SiteInspection() {
                             <input
                               type="number"
                               min="0"
-                              value={item.height || 0}
+                              value={getDimensionInputValue(item.height)}
+                              onFocus={() => clearDefaultDimensionZero(item.id, "height", item.height, handleEditItemFieldChange)}
                               onChange={(e) => handleEditItemFieldChange(item.id, "height", e.target.value)}
                               className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
                             />
@@ -3707,15 +4022,43 @@ function SiteInspection() {
                                   <option key={String(product._id || product.id)} value={String(product._id || product.id)}>{product.name}</option>
                                 ))}
                               </select>
+                              {editInspection.items.length > 1 && editInspection.warranty_assignment_mode === "per_product" && (
+                                <div className="mt-3">
+                                  <label className={labelClasses} htmlFor={`edit-measurement-warranty-${index}`}>Warranty</label>
+                                  <select
+                                    id={`edit-measurement-warranty-${index}`}
+                                    value={getItemWarrantySelectValue(item)}
+                                    onChange={(event) => {
+                                      const value = event.target.value;
+                                      if (value === "Custom") {
+                                        handleEditItemFieldChange(item.id, "warranty_period", "Custom");
+                                        if (!Number(item.custom_warranty_days)) handleEditItemFieldChange(item.id, "custom_warranty_days", 90);
+                                      } else {
+                                        handleEditItemFieldChange(item.id, "warranty_period", value === "No Warranty" ? value : Number(value));
+                                      }
+                                    }}
+                                    className={inputClasses}
+                                  >
+                                    <option value="No Warranty">No Warranty</option>
+                                    <option value="30">30 Days</option>
+                                    <option value="60">60 Days</option>
+                                    <option value="90">90 Days</option>
+                                    <option value="Custom">Custom</option>
+                                  </select>
+                                  {getItemWarrantySelectValue(item) === "Custom" && (
+                                    <input type="number" min="1" step="1" aria-label={`Custom warranty days for item ${index + 1}`} value={getItemWarrantyCustomDays(item)} onChange={(event) => handleEditItemFieldChange(item.id, "custom_warranty_days", event.target.value)} className={`${inputClasses} mt-2`} placeholder="Custom warranty days" />
+                                  )}
+                                </div>
+                              )}
                             </div>
                             <div className="mt-3 grid grid-cols-2 gap-3">
                               <label className="min-w-0">
                                 <span className={labelClasses}>Width</span>
-                                <input type="number" min="0" inputMode="decimal" aria-label={`Width for measurement ${index + 1}`} value={item.width || 0} onChange={(event) => handleEditItemFieldChange(item.id, "width", event.target.value)} className={inputClasses} />
+                                <input type="number" min="0" inputMode="decimal" aria-label={`Width for measurement ${index + 1}`} value={getDimensionInputValue(item.width)} onFocus={() => clearDefaultDimensionZero(item.id, "width", item.width, handleEditItemFieldChange)} onChange={(event) => handleEditItemFieldChange(item.id, "width", event.target.value)} className={inputClasses} />
                               </label>
                               <label className="min-w-0">
                                 <span className={labelClasses}>Height</span>
-                                <input type="number" min="0" inputMode="decimal" aria-label={`Height for measurement ${index + 1}`} value={item.height || 0} onChange={(event) => handleEditItemFieldChange(item.id, "height", event.target.value)} className={inputClasses} />
+                                <input type="number" min="0" inputMode="decimal" aria-label={`Height for measurement ${index + 1}`} value={getDimensionInputValue(item.height)} onFocus={() => clearDefaultDimensionZero(item.id, "height", item.height, handleEditItemFieldChange)} onChange={(event) => handleEditItemFieldChange(item.id, "height", event.target.value)} className={inputClasses} />
                               </label>
                               <div className="min-w-0">
                                 <span className={labelClasses}>Area Unit</span>

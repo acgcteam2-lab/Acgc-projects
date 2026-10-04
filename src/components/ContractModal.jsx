@@ -53,6 +53,16 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
     totalAmount,
     Math.max(configuredDownPayment > 0 ? configuredDownPayment : contractDataDownPayment > 0 ? contractDataDownPayment : fallbackDownPayment, 0),
   );
+  const contractItems = contractData.items || [];
+  const sourceItems = inspection.items || [];
+  const getItemWarrantyPeriod = (item, index) => (
+    item.warrantyPeriod ?? sourceItems[index]?.warranty_period ?? inspection.warranty_period
+  );
+  const itemWarrantyPeriods = contractItems.map((item, index) => getItemWarrantyPeriod(item, index));
+  const hasDifferentItemWarranties = new Set(itemWarrantyPeriods.map((period) => String(period ?? ""))).size > 1;
+  const isPerProductWarranty = contractItems.length > 1 && (
+    inspection.warranty_assignment_mode === "per_product" || hasDifferentItemWarranties
+  );
   const isNoWarranty = inspection.warranty_period === "No Warranty";
   const hasCustomWarranty = !isNoWarranty && (inspection.warranty_period === "Custom" || (
     Number.isFinite(Number(inspection.warranty_period)) &&
@@ -62,7 +72,24 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
   const warrantyPeriod = hasCustomWarranty
     ? Number(inspection.custom_warranty_days || inspection.warranty_period || 90)
     : Number(inspection.warranty_period ?? inspection.custom_warranty_days ?? 90) || 90;
-  const warrantyPeriodLabel = isNoWarranty ? "No Warranty" : `${warrantyPeriod} days`;
+  const warrantyPeriodLabel = isPerProductWarranty
+    ? "Assigned per product below"
+    : isNoWarranty ? "No Warranty" : `${warrantyPeriod} days`;
+  const getItemWarrantyDetails = (item, index) => {
+    const sourceItem = sourceItems[index] || {};
+    const period = getItemWarrantyPeriod(item, index);
+    const customDays = item.warrantyCustomDays ?? sourceItem.custom_warranty_days ?? inspection.custom_warranty_days;
+    const periodText = period === "No Warranty"
+      ? "No Warranty"
+      : period === "Custom"
+        ? `${Number(customDays) || 90} days`
+        : Number.isFinite(Number(period))
+          ? `${Number(period)} days`
+          : String(period || `${warrantyPeriod} days`);
+    const start = item.warrantyStartDate ?? sourceItem.warranty_start_date;
+    const expiry = item.warrantyExpiryDate ?? sourceItem.warranty_expiry_date;
+    return { periodText, start, expiry, hasCoverage: period !== "No Warranty" };
+  };
   const inspectionDate = contractData.siteInspectionDate || formatDate(inspection.inspection_date, "TBD");
   const installationDate = formatDate(inspection.estimated_installation_date, "TBD");
   const customerName = contractData.customerName || inspection.customer_name || "Customer";
@@ -173,24 +200,39 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
                   <th className="px-2 py-2 text-center">W x H (Unit)</th>
                   <th className="px-2 py-2 text-center">Qty</th>
                   <th className="px-2 py-2 text-right">Rate</th>
+                  {isPerProductWarranty && <th className="px-2 py-2 text-center">Warranty</th>}
                   <th className="px-2 py-2 text-right">Amount</th>
                 </tr>
               </thead>
               <tbody>
-                {(contractData.items || []).map((item, index) => (
+                {contractItems.map((item, index) => {
+                  const warranty = getItemWarrantyDetails(item, index);
+                  return (
                   <tr key={`${item.name || "item"}-${index}`} className={darkMode ? "border-b border-slate-600" : "border-b border-slate-200"}>
                     <td className="px-2 py-2">{index + 1}</td>
                     <td className="px-2 py-2 font-medium">{item.name || "Item"}</td>
                     <td className="px-2 py-2 text-center">{item.width || 0} x {item.height || 0} ({item.unit || "in"})</td>
                     <td className="px-2 py-2 text-center">{item.quantity || 1}</td>
                     <td className="px-2 py-2 text-right">{formatCurrency(item.unitPrice)}</td>
+                    {isPerProductWarranty && (
+                      <td className="px-2 py-2 text-center text-[9px]">
+                        <div className="font-bold">{warranty.periodText}</div>
+                        {warranty.hasCoverage && (
+                          <div className="mt-1 text-slate-500">
+                            <div>Start: {formatDate(warranty.start, "TBD")}</div>
+                            <div>End: {formatDate(warranty.expiry, "TBD")}</div>
+                          </div>
+                        )}
+                      </td>
+                    )}
                     <td className="px-2 py-2 text-right font-semibold">{formatCurrency(item.amount)}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr className={darkMode ? "bg-[#153451] font-black" : "bg-slate-50 font-black"}>
-                  <td colSpan="5" className="px-2 py-2 text-right uppercase">Total Contract Amount</td>
+                  <td colSpan={isPerProductWarranty ? 6 : 5} className="px-2 py-2 text-right uppercase">Total Contract Amount</td>
                   <td className={`px-2 py-2 text-right ${darkMode ? "text-[#9ed0ff]" : "text-[#3f78b5]"}`}>{formatCurrency(totalAmount)}</td>
                 </tr>
               </tfoot>
@@ -214,7 +256,12 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
           <section className="mt-5">
             <h2 className={`${sectionLabelClass} border-b ${darkMode ? "border-slate-600" : "border-slate-200"} pb-2`}>Warranty</h2>
             <div className={`${minorPanelClass} mt-3`}>
-              {isNoWarranty ? (
+              {isPerProductWarranty ? (
+                <>
+                  <span className="mr-2">🛡️</span>
+                  <span className="font-bold">Product-specific warranty coverage:</span> Warranty periods and start/end dates are listed with each product above. Coverage begins on the listed start date.
+                </>
+              ) : isNoWarranty ? (
                 <>
                   <span className="mr-2">ℹ️</span>
                   <span className="font-bold">No Warranty:</span> This project does not include warranty coverage.

@@ -4,6 +4,10 @@ import {
   getInspectionDisplayTotal,
   isOnlineCustomerInspection,
   buildWarrantyPayload,
+  calculateWarrantyExpiry,
+  calculateMeasurementArea,
+  calculateMeasurementSubtotal,
+  getWarrantyPeriodDays,
   normalizeWalkInWebsiteAccountState,
   normalizeWarrantyPeriodValue,
   validateInspectionPayload,
@@ -181,6 +185,7 @@ describe("normalizeWarrantyPeriodValue", () => {
     expect(normalizeWarrantyPeriodValue(30)).toBe(30);
     expect(normalizeWarrantyPeriodValue(90)).toBe(90);
     expect(normalizeWarrantyPeriodValue("90")).toBe(90);
+    expect(normalizeWarrantyPeriodValue("90 days")).toBe(90);
   });
 
   it("preserves no-warranty and custom warranty selections", () => {
@@ -188,6 +193,41 @@ describe("normalizeWarrantyPeriodValue", () => {
     expect(normalizeWarrantyPeriodValue("Custom")).toBe("Custom");
     expect(normalizeWarrantyPeriodValue(45)).toBe("Custom");
     expect(normalizeWarrantyPeriodValue(0)).toBe(90);
+  });
+});
+
+describe("per-product custom warranty duration", () => {
+  it("restores stored custom-day values and calculates expiry from them", () => {
+    expect(getWarrantyPeriodDays("365 days")).toBe(365);
+    expect(getWarrantyPeriodDays("1 year")).toBe(365);
+    expect(getWarrantyPeriodDays(1000)).toBe(1000);
+    expect(calculateWarrantyExpiry("2026-10-04", "Custom", 365)).toBe("2027-10-04T00:00:00.000Z");
+    expect(calculateWarrantyExpiry("2026-10-04", "365 days", 365)).toBe("2027-10-04T00:00:00.000Z");
+    const expiry = new Date(calculateWarrantyExpiry("2026-10-04", "Custom", 1000));
+    expect((expiry.getTime() - new Date("2026-10-04T00:00:00.000Z").getTime()) / 86400000).toBe(1000);
+  });
+});
+
+describe("inspection measurement calculations", () => {
+  it("recalculates row area when dimensions or quantity change", () => {
+    expect(calculateMeasurementArea(48, 24, 1)).toBe(8);
+    expect(calculateMeasurementArea(72, 36, 2)).toBe(36);
+  });
+
+  it("uses quantity-inclusive area once for square-foot and fallback pricing", () => {
+    const item = {
+      width: 72,
+      height: 36,
+      quantity: 2,
+      area: calculateMeasurementArea(72, 36, 2),
+      unit_price: 100,
+    };
+
+    expect(calculateMeasurementSubtotal(item, {
+      pricing_method: "sqft",
+      price_per_sqft: 100,
+    })).toBe(3600);
+    expect(calculateMeasurementSubtotal(item)).toBe(3600);
   });
 });
 

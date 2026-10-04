@@ -83,7 +83,10 @@ function TrackOrder() {
 
   const getOrderShippingAddress = (order) => {
     if (!order) return "—";
-    const shipping = order.shipping_address || order.customer?.shipping_address || {};
+    const shippingAddress = order.shipping_address || order.customer?.shipping_address;
+    if (typeof shippingAddress === "string" && shippingAddress.trim()) return shippingAddress.trim();
+
+    const shipping = shippingAddress && typeof shippingAddress === "object" ? shippingAddress : {};
     const addressParts = [
       shipping.street_address || shipping.street || shipping.address_line || shipping.line1,
       shipping.city,
@@ -92,7 +95,11 @@ function TrackOrder() {
     ].filter(Boolean);
 
     if (addressParts.length > 0) return addressParts.join(", ");
-    return order.customer?.street_address || order.customer?.city ? [order.customer.street_address, order.customer.city, order.customer.province].filter(Boolean).join(", ") : "—";
+    const customer = order.customer || {};
+    const customerAddress = [customer.street_address, customer.city, customer.province, customer.zip_code]
+      .filter(Boolean)
+      .join(", ");
+    return customerAddress || "—";
   };
 
   const getTrackedItemAmount = (item) => {

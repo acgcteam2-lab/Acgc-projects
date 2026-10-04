@@ -3,6 +3,7 @@ import { getAdminOrders } from "@/api/orders";
 import { Bell, CreditCard, Send } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { formatDateTimeToMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
+import { getAdminNotificationId, getAdminReadNotificationIds, markAdminNotificationRead, sortAdminNotificationsNewestFirst } from "@/lib/notificationState";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
 
 export default function Notifications() {
@@ -21,13 +22,13 @@ export default function Notifications() {
           getAdminOrders({ payment_proof_submitted: "true", module: "dashboard" }),
         ]);
         const items = [
-          ...(acceptedResp.orders || []).map((o) => ({ ...o, notificationType: "accepted", read: false })),
-          ...(declinedResp.orders || []).map((o) => ({ ...o, notificationType: "declined", read: false })),
+          ...(acceptedResp.orders || []).map((o) => ({ ...o, notificationType: "accepted", id: getAdminNotificationId("accepted", o) })),
+          ...(declinedResp.orders || []).map((o) => ({ ...o, notificationType: "declined", id: getAdminNotificationId("declined", o) })),
           ...(sentResp.orders || []).map((o) => ({
             ...o,
             updatedAt: o.contractSentAt || o.updatedAt,
             notificationType: "sent",
-            read: false,
+            id: getAdminNotificationId("sent", o),
           })),
           ...(paymentResp.orders || []).map((o) => {
             const customerName = `${o.customer?.first_name || ""} ${o.customer?.last_name || ""}`.trim()
@@ -41,13 +42,14 @@ export default function Notifications() {
               ...o,
               updatedAt: o.payment_proof_submitted_at,
               notificationType: "payment",
+              id: getAdminNotificationId("payment", o),
               title: "Customer Reported a Payment",
               message: `${customerName} says they paid ₱${amount} for order ${orderNumber}. Please confirm.`,
-              read: false,
             };
           }),
-        ].sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
-        setNotifications(items);
+        ].sort(sortAdminNotificationsNewestFirst);
+        const readNotificationIds = getAdminReadNotificationIds();
+        setNotifications(items.map((item) => ({ ...item, read: readNotificationIds.has(item.id) })));
       } catch (err) {
         console.error(err);
         setNotifications([]);
@@ -78,9 +80,16 @@ export default function Notifications() {
             <div className="space-y-3">
               {notifications.map((n) => (
                 <button
-                  key={`${n._id || n.tracking}-${n.notificationType}`}
-                  onClick={() => n.notificationType === "payment" ? navigate("/transactions") : navigate(`/site-inspection?view=${n._id || n.id || n.tracking}`)}
-                  className={`w-full text-left p-3 rounded-xl border hover:bg-gray-50 flex gap-3 ${n.read ? "bg-white" : "bg-slate-50"}`}
+                  key={n.id}
+                  onClick={() => {
+                    markAdminNotificationRead(n.id);
+                    setNotifications((current) => current.map((item) => item.id === n.id ? { ...item, read: true } : item));
+                    const recordId = String(n._id || n.id || n.tracking);
+                    navigate(n.notificationType === "payment" ? "/transactions" : `/site-inspection?view=${recordId}`, {
+                      state: { notificationHighlight: { recordId, recordType: "order" } },
+                    });
+                  }}
+                  className={`w-full border-l-2 p-3 text-left flex gap-3 transition-colors ${n.read ? "border-l-transparent border-y border-r border-slate-200 bg-white hover:bg-slate-50" : "border-l-sky-400 border-y border-r border-sky-200 bg-sky-50/50 hover:bg-sky-50"}`}
                 >
                   <div className="flex-shrink-0">
                     {n.notificationType === "payment" ? (
@@ -92,13 +101,16 @@ export default function Notifications() {
                     )}
                   </div>
                   <div className="flex-1">
-                    <div className="flex justify-between items-center">
-                      <div className="font-semibold text-slate-900">{n.notificationType === "payment" ? n.title : n.tracking}</div>
-                      <div className="text-xs text-slate-400" title={formatDateTimeToMMDDYYYY(n.updatedAt || n.createdAt) || undefined}>
+                    <div className="flex justify-between items-center gap-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div className={`truncate font-semibold ${n.read ? "text-slate-600" : "text-slate-950"}`}>{n.notificationType === "payment" ? n.title : n.tracking}</div>
+                        {!n.read && <span className="shrink-0 rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-sky-700">New</span>}
+                      </div>
+                      <div className={`shrink-0 text-xs ${n.read ? "text-slate-400" : "text-slate-500"}`} title={formatDateTimeToMMDDYYYY(n.updatedAt || n.createdAt) || undefined}>
                         {formatTimeAgo(n.updatedAt || n.createdAt)}
                       </div>
                     </div>
-                    <div className="text-sm text-slate-600 mt-1">{n.notificationType === "payment"
+                    <div className={`mt-1 text-sm ${n.read ? "text-slate-500" : "text-slate-700"}`}>{n.notificationType === "payment"
                       ? n.message
                       : n.notificationType === "accepted"
                       ? `Customer accepted the contract for ₱${Number(n.contract_amount || n.total_amount || 0).toLocaleString()}`

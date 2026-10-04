@@ -380,6 +380,7 @@ function CustomerDashboard() {
   const [orderSuccessData, setOrderSuccessData] = useState(null);
   const [cancelRequestModal, setCancelRequestModal] = useState({ open: false, order: null });
   const [expandedOrderId, setExpandedOrderId] = useState(null);
+  const [highlightedOrderId, setHighlightedOrderId] = useState(null);
   const [orderFilter, setOrderFilter] = useState("all");
   const [orderPage, setOrderPage] = useState(1);
   const [orderViewMode, setOrderViewMode] = useState("view2");
@@ -413,14 +414,37 @@ function CustomerDashboard() {
     setContractPage(1);
   }, [contractHistoryTab, contractsInTab.length]);
 
-  // Warranty filtering logic
-  const activeWarranties = orders.filter((order) => {
+  // Expand batch warranties so each product has its own transaction record.
+  const warrantyRecords = orders.flatMap((order) => {
+    const items = Array.isArray(order.items) ? order.items : [];
+    const hasItemWarranties = items.some((item) => (
+      item.warranty_start_date || item.warranty_expiry_date || item.warranty_status
+    ));
+    if (hasItemWarranties) {
+      return items
+        .filter((item) => item.warranty_status !== "no_warranty" && (item.warranty_start_date || item.warranty_expiry_date || item.warranty_status))
+        .map((item, index) => ({
+          ...order,
+          warranty_record_id: `${order._id || order.id}-item-${index}`,
+          items: [item],
+          warranty_period: item.warranty_period || order.warranty_period,
+          warranty_start_date: item.warranty_start_date || order.warranty_start_date,
+          warranty_expiry_date: item.warranty_expiry_date || order.warranty_expiry_date,
+          warranty_status: item.warranty_status || order.warranty_status,
+        }));
+    }
+    return order.warranty_expiry_date || order.warranty_status
+      ? [{ ...order, warranty_record_id: `${order._id || order.id}-order`, items: [items[0] || {}] }]
+      : [];
+  });
+  const activeWarranties = warrantyRecords.filter((order) => {
     if (!order.warranty_expiry_date) return false;
     const expiryDate = new Date(order.warranty_expiry_date);
     const today = new Date();
-    return expiryDate > today && (order.warranty_status?.toLowerCase() === "active" || !order.warranty_status);
+    const startDate = order.warranty_start_date ? new Date(order.warranty_start_date) : null;
+    return expiryDate > today && (!startDate || startDate <= today) && (order.warranty_status?.toLowerCase() === "active" || !order.warranty_status);
   });
-  const expiredWarranties = orders.filter((order) => {
+  const expiredWarranties = warrantyRecords.filter((order) => {
     if (!order.warranty_expiry_date) return false;
     const expiryDate = new Date(order.warranty_expiry_date);
     const today = new Date();
@@ -487,6 +511,15 @@ function CustomerDashboard() {
         notificationId: `${orderId}-payment-${new Date(order.payment_proof_submitted_at).getTime()}`,
         notificationDate: order.payment_proof_submitted_at,
       });
+
+      if (order.payment_proof_confirmed_at) {
+        notifications.unshift({
+          ...order,
+          notificationType: "payment_confirmed",
+          notificationId: `${orderId}-payment-confirmed-${new Date(order.payment_proof_confirmed_at).getTime()}`,
+          notificationDate: order.payment_proof_confirmed_at,
+        });
+      }
     }
 
     return [...notifications, ...buildDelayNotifications(order)];
@@ -1202,8 +1235,8 @@ function CustomerDashboard() {
     if (!orderOwnerId) return;
     let active = true;
 
-    const fetchOrders = async () => {
-      setOrdersLoading(true);
+    const fetchOrders = async (showLoading = true) => {
+      if (showLoading) setOrdersLoading(true);
 
       try {
         const response = await getOrders();
@@ -1212,14 +1245,16 @@ function CustomerDashboard() {
       } catch {
         if (!active) return;
       } finally {
-        if (active) setOrdersLoading(false);
+        if (active && showLoading) setOrdersLoading(false);
       }
     };
 
     fetchOrders();
+    const refreshInterval = window.setInterval(() => fetchOrders(false), 30000);
 
     return () => {
       active = false;
+      window.clearInterval(refreshInterval);
     };
   }, [orderOwnerId]);
 
@@ -2716,6 +2751,10 @@ function CustomerDashboard() {
       area: item.area || 0,
       unitPrice: Number(item.unit_price || 0),
       amount: Number(item.line_total || (item.is_estimate ? item.estimated_price : 0) || (item.quantity || 0) * Number(item.unit_price || 0)),
+      warrantyPeriod: item.warranty_period,
+      warrantyCustomDays: item.custom_warranty_days,
+      warrantyStartDate: item.warranty_start_date,
+      warrantyExpiryDate: item.warranty_expiry_date,
     }));
 
     const contractStatusRaw = String(order.contract_status || "").trim();
@@ -2915,8 +2954,9 @@ function CustomerDashboard() {
   const pagedFilteredOrders = filteredOrders.slice(pageStart, pageStart + ORDER_PAGE_SIZE);
   const displayedOrders = isMobile ? filteredOrders : pagedFilteredOrders;
 
-  const openOrderDetailsFromNotification = (order) => {
+  const openOrderDetailsFromNotification = (order, notificationId = null) => {
     const orderIdentifier = getOrderIdentifier(order);
+    markCustomerNotificationRead(notificationId);
     const myOrders = orders.filter((entry) =>
       !["installation", "completed", "cancelled"].includes(normalizeOrderStatus(entry?.status)),
     );
@@ -2932,8 +2972,36 @@ function CustomerDashboard() {
     setOrderPage(orderIndex >= 0 ? Math.floor(orderIndex / ORDER_PAGE_SIZE) + 1 : 1);
     setSelectedOrderForModal(null);
     setExpandedOrderId(orderIdentifier);
+    setHighlightedOrderId(orderIdentifier);
     setActiveTab("orders");
   };
+
+  useEffect(() => {
+    if (!highlightedOrderId) return undefined;
+    if (activeTab !== "orders") {
+      setHighlightedOrderId(null);
+      return undefined;
+    }
+
+    let attempts = 0;
+    const scrollInterval = window.setInterval(() => {
+      const target = Array.from(document.querySelectorAll("[data-notification-record-id]"))
+        .find((element) => element.dataset.notificationRecordId === highlightedOrderId);
+      if (target) {
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+        window.clearInterval(scrollInterval);
+      } else if (attempts >= 20) {
+        window.clearInterval(scrollInterval);
+      }
+      attempts += 1;
+    }, 100);
+    const timeoutId = window.setTimeout(() => setHighlightedOrderId(null), 5000);
+
+    return () => {
+      window.clearInterval(scrollInterval);
+      window.clearTimeout(timeoutId);
+    };
+  }, [highlightedOrderId, activeTab]);
 
   const orderViewClass = orderViewMode === "view2"
     ? "grid gap-5 sm:grid-cols-2 xl:grid-cols-3"
@@ -3337,9 +3405,11 @@ function CustomerDashboard() {
                         .slice(0, 5)
                         .map((order) => {
                           const product = order.items?.[0] || {};
+                          const isRead = readNotificationIds.has(order.notificationId);
                           const status = normalizeOrderStatusKey(order?.status);
                           const contractStatus = normalizeOrderStatusKey(order?.contract_status);
-                          const isPaymentNotification = order.notificationType === "payment";
+                          const isPaymentNotification = ["payment", "payment_confirmed"].includes(order.notificationType);
+                          const isPaymentConfirmationNotification = order.notificationType === "payment_confirmed";
                           const isDelayNotification = order.notificationType === "delay";
                           const isContractReady =
                             status === "contract_sent" ||
@@ -3354,6 +3424,13 @@ function CustomerDashboard() {
                               };
                             }
                             if (isPaymentNotification) {
+                              if (isPaymentConfirmationNotification) {
+                                return {
+                                  title: "Payment confirmed",
+                                  message: `Your payment of ${formatCurrency(order.payment_proof_amount)} has been confirmed by our team.`,
+                                  color: "text-emerald-600",
+                                };
+                              }
                               return {
                                 title: "Payment proof submitted",
                                 message: `Your payment proof for ${formatCurrency(order.payment_proof_amount)} has been sent for confirmation.`,
@@ -3398,35 +3475,45 @@ function CustomerDashboard() {
                             ["contract_accepted"].includes(status) ||
                             ["accepted"].includes(contractStatus)
                           );
+                          const NotificationIcon = isPaymentConfirmationNotification
+                            ? CheckCircle
+                            : order.notificationType === "payment"
+                              ? CreditCard
+                              : isDelayNotification
+                                ? AlertTriangle
+                                : isContractNotification
+                                  ? FileText
+                                  : Bell;
 
                           return (
                             <button
                               key={order.notificationId}
                               onClick={() => {
-                                markCustomerNotificationRead(order.notificationId);
-                                if (isPaymentNotification || isContractNotification) {
-                                  openOrderDetailsFromNotification(order);
-                                } else {
-                                  setSelectedOrderForModal(order);
-                                  setActiveTab("orders");
-                                }
+                                openOrderDetailsFromNotification(order, order.notificationId);
                                 setNotificationsOpen(false);
                               }}
-                              className={`w-full px-4 py-3 text-left transition ${darkMode ? "hover:bg-slate-700" : "hover:bg-slate-50"}`}
+                              className={`w-full border-l-2 px-4 py-3 text-left transition ${
+                                isRead
+                                  ? darkMode ? "border-transparent bg-slate-800/60 hover:bg-slate-800" : "border-transparent bg-white hover:bg-slate-50"
+                                  : darkMode ? "border-red-400/70 bg-slate-800/90 hover:bg-slate-800" : "border-red-400/70 bg-red-50/40 hover:bg-red-50/70"
+                              }`}
                             >
                               <div className="flex gap-3">
                                 <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-slate-700" : "bg-slate-100"}`}>
-                                  <Bell size={17} className={details.color} />
+                                  <NotificationIcon size={17} className={details.color} />
                                 </div>
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center justify-between gap-3">
-                                    <p className={`truncate text-sm font-semibold ${darkMode ? "text-white" : "text-slate-950"}`}>{details.title}</p>
+                                    <div className="flex min-w-0 items-center gap-2">
+                                      <p className={`truncate text-sm ${isRead ? "font-medium" : "font-bold"} ${darkMode ? isRead ? "text-slate-300" : "text-white" : isRead ? "text-slate-600" : "text-slate-950"}`}>{details.title}</p>
+                                      {!isRead && <span className="shrink-0 rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-red-700">New</span>}
+                                    </div>
                                     <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${getOrderStatusClasses(isDelayNotification ? "Delayed" : order.status)}`}>{isDelayNotification ? "Delayed" : getOrderStatusLabel(order.status)}</span>
                                   </div>
                                   <p className={`mt-0.5 text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                                     {details.message}
                                   </p>
-                                  <p className="mt-1 text-xs text-slate-400">
+                                  <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
                                     {product.name || "Project"} · {order.tracking || "Order update"} · <span title={formatDateTimeToMMMDDYYYY(order.notificationDate) || undefined}>{formatTimeAgo(order.notificationDate)}</span>
                                   </p>
                                 </div>
@@ -5556,7 +5643,8 @@ function CustomerDashboard() {
                   return (
                     <div
                       key={orderId}
-                      className={`overflow-hidden rounded-xl border shadow-sm transition hover:shadow-md ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}
+                      data-notification-record-id={orderId}
+                      className={`overflow-hidden rounded-xl border shadow-sm transition hover:shadow-md ${highlightedOrderId === orderId ? "border-amber-500 bg-amber-50 ring-4 ring-amber-300" : darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}
                     >
                       <div className="grid gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-4">
                         <div className="flex min-w-0 items-center gap-3">
@@ -6781,9 +6869,11 @@ function CustomerDashboard() {
                   .sort(sortCustomerNotificationsNewestFirst)
                   .map((order) => {
                     const product = order.items?.[0] || {};
+                    const isRead = readNotificationIds.has(order.notificationId);
                     const status = normalizeOrderStatusKey(order?.status);
                     const contractStatus = normalizeOrderStatusKey(order?.contract_status);
-                    const isPaymentNotification = order.notificationType === "payment";
+                    const isPaymentNotification = ["payment", "payment_confirmed"].includes(order.notificationType);
+                    const isPaymentConfirmationNotification = order.notificationType === "payment_confirmed";
                     const isDelayNotification = order.notificationType === "delay";
                     const isContractReady =
                       status === "contract_sent" ||
@@ -6798,6 +6888,9 @@ function CustomerDashboard() {
                     const notificationMessage = () => {
                       if (isDelayNotification) return getDelayNotificationMessage(order);
                       if (isPaymentNotification) {
+                        if (isPaymentConfirmationNotification) {
+                          return `Your payment of ${formatCurrency(order.payment_proof_amount)} has been confirmed by our team.`;
+                        }
                         return `Your payment proof for ${formatCurrency(order.payment_proof_amount)} has been sent for confirmation.`;
                       }
                       if (isContractReady) {
@@ -6837,7 +6930,11 @@ function CustomerDashboard() {
                     return (
                       <div
                         key={order.notificationId}
-                        className={`rounded-[28px] border p-5 shadow-sm transition hover:shadow-md ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}
+                        className={`rounded-[28px] border p-5 shadow-sm transition-colors ${
+                          isRead
+                            ? darkMode ? "border-slate-700 bg-slate-800/60" : "border-slate-200 bg-white"
+                            : darkMode ? "border-red-400/50 bg-slate-800/90" : "border-red-300/80 bg-red-50/40"
+                        }`}
                       >
                         <div className="flex gap-4">
                           <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${darkMode ? "bg-slate-700" : "bg-slate-100"} ${notificationIcon()}`}>
@@ -6847,8 +6944,11 @@ function CustomerDashboard() {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0 flex-1">
-                                <h3 className={`font-semibold break-words ${darkMode ? "text-white" : "text-slate-950"}`}>{product.name || "Project Update"}</h3>
-                                <p className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{notificationMessage()}</p>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h3 className={`font-semibold break-words ${darkMode ? "text-white" : "text-slate-950"}`}>{product.name || "Project Update"}</h3>
+                                  {!isRead && <span className="rounded-full bg-red-100 px-2 py-0.5 text-[9px] font-bold uppercase text-red-700">New</span>}
+                                </div>
+                                <p className={`mt-1 text-sm ${isRead ? darkMode ? "text-slate-400" : "text-slate-500" : darkMode ? "text-slate-200" : "text-slate-700"}`}>{notificationMessage()}</p>
                                 <p className="mt-2 text-xs text-slate-400">{order.tracking}</p>
                               </div>
                               <span className={`inline-flex shrink-0 items-center rounded-full px-3 py-1 text-xs font-semibold ${getOrderStatusClasses(isDelayNotification ? "Delayed" : order.status)}`}>
@@ -6857,19 +6957,11 @@ function CustomerDashboard() {
                             </div>
 
                             <div className={`mt-3 flex items-center justify-between text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                              <span title={formatDateTimeToMMMDDYYYY(order.notificationDate) || undefined}>
+                              <span className={isRead ? "text-slate-400" : darkMode ? "font-medium text-slate-300" : "font-medium text-slate-600"} title={formatDateTimeToMMMDDYYYY(order.notificationDate) || undefined}>
                                 {formatTimeAgo(order.notificationDate)}
                               </span>
                               <button
-                                onClick={() => {
-                                  markCustomerNotificationRead(order.notificationId);
-                                  if (isPaymentNotification || isContractNotification) {
-                                    openOrderDetailsFromNotification(order);
-                                  } else {
-                                    setSelectedOrderForModal(order);
-                                    setActiveTab("orders");
-                                  }
-                                }}
+                                onClick={() => openOrderDetailsFromNotification(order, order.notificationId)}
                                 className={darkMode ? "text-white hover:text-red-300 font-semibold transition" : "text-slate-950 hover:text-red-600 font-semibold transition"}
                               >
                                 {isContractNotification ? "View Contract" : "View Order"}
@@ -7362,7 +7454,7 @@ function CustomerDashboard() {
                         const statusLabel = isActive ? "Active" : "Expired";
 
                         return (
-                          <tr key={order._id || order.tracking} className={`border-t transition ${darkMode ? "border-slate-700 hover:bg-slate-700/60" : "border-red-100 hover:bg-red-50/70"}`}>
+                          <tr key={order.warranty_record_id || order._id || order.tracking} className={`border-t transition ${darkMode ? "border-slate-700 hover:bg-slate-700/60" : "border-red-100 hover:bg-red-50/70"}`}>
                             <td className="px-6 py-5 align-middle text-sm font-black text-red-700 text-center">{order.tracking || order._id || "—"}</td>
                             <td className={`px-6 py-5 align-middle text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
                               <span className={`font-black ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name || product.product_name || "Product"}</span>
@@ -7401,7 +7493,7 @@ function CustomerDashboard() {
                       : darkMode ? "bg-orange-500/15 text-orange-300" : "bg-orange-100 text-orange-700";
 
                     return (
-                      <article key={order._id || order.tracking} className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+                      <article key={order.warranty_record_id || order._id || order.tracking} className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <h3 className={`break-words text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name || product.product_name || "Product"}</h3>

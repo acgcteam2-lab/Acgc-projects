@@ -60,8 +60,12 @@ export const buildDelayNotifications = (order) => {
 };
 
 export const sortCustomerNotificationsNewestFirst = (first, second) => {
-  const firstDate = new Date(first.notificationDate || 0).getTime();
-  const secondDate = new Date(second.notificationDate || 0).getTime();
+  const toTimestamp = (value) => {
+    const timestamp = value ? new Date(value).getTime() : 0;
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  };
+  const firstDate = toTimestamp(first.notificationDate || first.updatedAt || first.createdAt);
+  const secondDate = toTimestamp(second.notificationDate || second.updatedAt || second.createdAt);
   const dateDifference = secondDate - firstDate;
   if (dateDifference !== 0) return dateDifference;
 
