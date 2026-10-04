@@ -1,3 +1,4 @@
+import process from "node:process";
 import fs from "fs";
 import path from "path";
 import mongoose from "mongoose";
@@ -5,6 +6,7 @@ import Order from "../models/Order.js";
 import Product from "../models/Product.js";
 import User from "../models/User.js";
 import { sendMail } from "../config/mailer.js";
+import { formatOrderEmailDate, sendOrderNotification } from "../services/orderEmails.js";
 import { buildProductPriceSnapshot } from "../../src/lib/productPricing.js";
 
 const isWithinReviewEditWindow = (submittedAt) => {
@@ -247,6 +249,40 @@ const getOrderPaymentStatus = (order) => {
   return "partial";
 };
 
+const getInstallationPlan = (order) => {
+  const stages = Array.isArray(order?.progress_stages) ? order.progress_stages : [];
+  const stage = stages.find((entry) => {
+    const key = `${entry.key || ""} ${entry.name || ""}`.toLowerCase();
+    return key.includes("installation") && (entry.proposedInstallationDate || entry.proposedInstallationTime);
+  });
+  return {
+    date: stage?.proposedInstallationDate || order?.estimated_installation_date || order?.inspection_date || null,
+    time: stage?.proposedInstallationTime || "",
+    status: stage?.status || (stage?.customerResponse === "accepted" ? "Confirmed" : "Scheduled"),
+  };
+};
+
+const getWarrantyEmailLines = (order) => {
+  const items = Array.isArray(order?.items) ? order.items : [];
+  const assignedItems = items.filter((item) => item.warranty_start_date || item.warranty_expiry_date || item.warranty_status);
+  const formatWarranty = (item, name) => {
+    const start = item.warranty_start_date || order.warranty_start_date;
+    const end = item.warranty_expiry_date || order.warranty_expiry_date;
+    const period = item.warranty_period || order.warranty_period || "Warranty coverage";
+    const status = String(item.warranty_status || order.warranty_status || "Active").replace(/_/g, " ");
+    const remainingDays = end ? Math.max(Math.ceil((new Date(end).getTime() - Date.now()) / 86400000), 0) : null;
+    const remaining = remainingDays === null || status === "expired" ? "" : `; ${remainingDays} day${remainingDays === 1 ? "" : "s"} remaining`;
+    return `${name}: ${period}; starts ${formatOrderEmailDate(start) || "not specified"}; ends ${formatOrderEmailDate(end) || "not specified"}; status ${status}${remaining}`;
+  };
+  if (assignedItems.length > 0) {
+    return assignedItems.map((item, index) => formatWarranty(item, item.name || `Product ${index + 1}`));
+  }
+  if (order?.warranty_start_date || order?.warranty_expiry_date || order?.warranty_status) {
+    return [formatWarranty(order, "Order coverage")];
+  }
+  return [];
+};
+
 export const listOrders = async (req, res) => {
   try {
     const filter = {};
@@ -317,6 +353,8 @@ export const createOrder = async (req, res) => {
 
     const order = new Order({
       customer: req.user.id,
+      customer_name: [req.user.first_name, req.user.last_name].filter(Boolean).join(" "),
+      customer_email: req.user.email || "",
       customer_phone: String(customer_phone || req.user.phone || "").trim(),
       items: pricedItems,
       total_amount,
@@ -334,6 +372,7 @@ export const createOrder = async (req, res) => {
     await order.save();
 
     res.status(201).json({ success: true, order });
+    void sendOrderNotification("order_submitted", order, { customerEmail: req.user.email });
   } catch (error) {
     console.error("Create order error:", error);
     res.status(500).json({ success: false, message: "Unable to create order", error: error.message });
@@ -480,6 +519,7 @@ export const createOrderAsAdmin = async (req, res) => {
     await order.save();
 
     res.status(201).json({ success: true, order });
+    void sendOrderNotification(hasSignedWalkInContract ? "contract_accepted" : "order_submitted", order);
   } catch (error) {
     console.error("Create order as admin error:", error);
     res.status(500).json({ success: false, message: "Unable to create order", error: error.message });
@@ -502,6 +542,7 @@ export const trackOrder = async (req, res) => {
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
+
     if (req.query.itemIndex !== undefined) {
       const itemIndex = Number(req.query.itemIndex);
       if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= order.items.length) {
@@ -595,6 +636,7 @@ export const updateOrderStatus = async (req, res) => {
     const {
       status,
       contract_status,
+      items,
       payment_amount,
       amount_paid,
       downpayment_amount,
@@ -629,6 +671,19 @@ export const updateOrderStatus = async (req, res) => {
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
+
+    const previousPaymentStatus = order.payment_status;
+    const previousOrderStatus = String(order.status || "").toLowerCase();
+    const previousPaidAmount = getOrderPaymentAmounts(order).paidAmount;
+    const hadConfirmedPaymentProof = Boolean(order.payment_proof_confirmed_at);
+    const previousContractStatus = String(order.contract_status || "").toLowerCase();
+    const previousWarranty = JSON.stringify({
+      period: order.warranty_period,
+      start: order.warranty_start_date,
+      end: order.warranty_expiry_date,
+      status: order.warranty_status,
+      items: (order.items || []).map((item) => [item.warranty_period, item.warranty_start_date, item.warranty_expiry_date, item.warranty_status]),
+    });
 
     const requestedStatus = String(status || order.status || "").toLowerCase();
     const requestedContractStatus = String(contract_status || order.contract_status || "").toLowerCase();
@@ -730,6 +785,16 @@ export const updateOrderStatus = async (req, res) => {
     }
     if (warranty_status !== undefined) order.warranty_status = warranty_status;
     if (warranty_terms !== undefined) order.warranty_terms = warranty_terms;
+    if (Array.isArray(items)) {
+      items.forEach((incomingItem, index) => {
+        const item = order.items[index];
+        if (!item) return;
+        ["warranty_period", "custom_warranty_days", "warranty_start_date", "warranty_expiry_date", "warranty_status"].forEach((field) => {
+          if (incomingItem[field] !== undefined) item[field] = incomingItem[field];
+        });
+      });
+      order.markModified("items");
+    }
 
     const { requiredAmount, paidAmount } = getOrderPaymentAmounts(order);
     order.downpayment_received = requiredAmount > 0 && paidAmount >= requiredAmount;
@@ -738,6 +803,44 @@ export const updateOrderStatus = async (req, res) => {
     await order.save();
 
     res.json({ success: true, order });
+    const currentPaidAmount = getOrderPaymentAmounts(order).paidAmount;
+    const paymentProofJustConfirmed = Boolean(order.payment_proof_confirmed_at && !hadConfirmedPaymentProof);
+    const confirmedPaymentAmount = Math.max(currentPaidAmount - previousPaidAmount, 0) || Number(order.payment_proof_amount) || 0;
+    if (paymentProofJustConfirmed) {
+      void sendOrderNotification("payment_proof_confirmed", order, {
+        customerEmail: order.customer_email || order.customer?.email,
+        previousStatus: previousPaymentStatus,
+        confirmedAmount: confirmedPaymentAmount,
+      });
+    } else if (currentPaidAmount > previousPaidAmount || previousPaymentStatus !== order.payment_status) {
+      void sendOrderNotification("transaction_update", order, {
+        customerEmail: order.customer_email || order.customer?.email,
+        previousStatus: previousPaymentStatus,
+        confirmedAmount: Math.max(currentPaidAmount - previousPaidAmount, 0),
+      });
+    }
+    if (previousContractStatus !== "accepted" && String(order.contract_status || "").toLowerCase() === "accepted") {
+      void sendOrderNotification("contract_accepted", order);
+    }
+    if (previousOrderStatus !== "cancelled" && String(order.status || "").toLowerCase() === "cancelled") {
+      void sendOrderNotification("order_cancelled", order, {
+        audience: "customer",
+        customerEmail: order.customer_email || order.customer?.email,
+        date: new Date(),
+        reason: req.body?.reason || req.body?.cancellation_reason || "",
+      });
+    }
+    const currentWarranty = JSON.stringify({
+      period: order.warranty_period,
+      start: order.warranty_start_date,
+      end: order.warranty_expiry_date,
+      status: order.warranty_status,
+      items: (order.items || []).map((item) => [item.warranty_period, item.warranty_start_date, item.warranty_expiry_date, item.warranty_status]),
+    });
+    const warrantyLines = getWarrantyEmailLines(order);
+    if (previousWarranty !== currentWarranty && warrantyLines.length > 0) {
+      void sendOrderNotification("warranty_notification", order, { audience: "customer", warrantyLines });
+    }
   } catch (error) {
     console.error("Update order status error:", error);
     res.status(500).json({ success: false, message: "Unable to update order", error: error.message });
@@ -1008,6 +1111,9 @@ export const respondToContract = async (req, res) => {
     await order.save();
 
     res.json({ success: true, order });
+    if (action === "accept") {
+      void sendOrderNotification("contract_accepted", order, { customerEmail: req.user.email });
+    }
   } catch (error) {
     console.error("Respond to contract error:", error);
     res.status(500).json({ success: false, message: "Unable to update contract response", error: error.message });
@@ -1039,6 +1145,7 @@ export const cancelCustomerOrder = async (req, res) => {
       });
     }
 
+    const cancellationReason = String(req.body?.reason || req.body?.cancellation_reason || "").trim();
     order.status = "cancelled";
     if (order.contract_status === "accepted") {
       order.contract_status = "declined";
@@ -1047,6 +1154,11 @@ export const cancelCustomerOrder = async (req, res) => {
     await order.save();
 
     res.json({ success: true, order, message: "Order cancelled successfully." });
+    void sendOrderNotification("order_cancelled", order, {
+      customerEmail: req.user.email || order.customer_email,
+      date: new Date(),
+      reason: cancellationReason,
+    });
   } catch (error) {
     console.error("Cancel customer order error:", error);
     res.status(500).json({ success: false, message: "Unable to cancel order", error: error.message });
@@ -1108,6 +1220,7 @@ export const submitCustomerPaymentProof = async (req, res) => {
       message: "Payment proof submitted successfully.",
       order,
     });
+    void sendOrderNotification("payment_proof_submitted", order, { customerEmail: req.user.email || order.customer_email });
   } catch (error) {
     console.error("Submit customer payment proof error:", error);
     res.status(500).json({ success: false, message: "Unable to submit payment proof", error: error.message });
@@ -1334,6 +1447,10 @@ export const updateOrderInspection = async (req, res) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
+    const previousInstallationDate = order.estimated_installation_date
+      ? new Date(order.estimated_installation_date).getTime()
+      : null;
+
     const registeredCustomer = order.customer?._id ? order.customer : null;
     if (registeredCustomer) {
       const registeredName = `${registeredCustomer.first_name || ""} ${registeredCustomer.last_name || ""}`.trim();
@@ -1387,6 +1504,17 @@ export const updateOrderInspection = async (req, res) => {
     await order.save();
 
     res.json({ success: true, order });
+    const currentInstallationDate = order.estimated_installation_date
+      ? new Date(order.estimated_installation_date).getTime()
+      : null;
+    if (estimated_installation_date !== undefined && currentInstallationDate && currentInstallationDate !== previousInstallationDate) {
+      const plan = getInstallationPlan(order);
+      void sendOrderNotification("installation_date", order, {
+        installationDate: order.estimated_installation_date,
+        installationTime: plan.time,
+        installationStatus: plan.status,
+      });
+    }
   } catch (error) {
     console.error("Update inspection payload:", JSON.stringify(req.body, null, 2));
     console.error("Update inspection data:", JSON.stringify(updateData, null, 2));
@@ -1422,6 +1550,7 @@ export const updateOrderProgress = async (req, res) => {
     const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
 
+    const previousInstallationPlan = getInstallationPlan(order);
     const itemIndex = req.body.itemIndex;
     const isItemProgressUpdate = typeof itemIndex === "number" && Number.isInteger(itemIndex) && order.items.length > 1;
     if (itemIndex !== undefined && (!isItemProgressUpdate || itemIndex < 0 || itemIndex >= order.items.length)) {
@@ -1647,6 +1776,17 @@ export const updateOrderProgress = async (req, res) => {
     }
 
     await order.save();
+
+    const currentInstallationPlan = getInstallationPlan(order);
+    const previousPlanDate = previousInstallationPlan.date ? new Date(previousInstallationPlan.date).getTime() : null;
+    const currentPlanDate = currentInstallationPlan.date ? new Date(currentInstallationPlan.date).getTime() : null;
+    if (currentPlanDate && (previousPlanDate !== currentPlanDate || previousInstallationPlan.time !== currentInstallationPlan.time)) {
+      void sendOrderNotification("installation_date", order, {
+        installationDate: currentInstallationPlan.date,
+        installationTime: currentInstallationPlan.time,
+        installationStatus: currentInstallationPlan.status,
+      });
+    }
 
     if (newDelayEvents.length > 0) {
       const linkedCustomer = order.customer_email

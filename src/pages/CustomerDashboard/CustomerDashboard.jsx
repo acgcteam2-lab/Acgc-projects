@@ -84,6 +84,12 @@ const PRODUCT_IMAGE_PLACEHOLDER =
 
 const CUSTOMER_READ_NOTIFICATIONS_KEY = "acgc-customer-read-notifications";
 const CUSTOMER_DARK_MODE_KEY = "acgc-customer-dark-mode";
+const getOrderSubmissionMessage = (response, action) => {
+  const baseMessage = `${action} successfully. Tracking ID: ${response.order.tracking}`;
+  if (response.notification_email_status === "sent") return `${baseMessage} A confirmation email was sent to your account email.`;
+  if (response.notification_email_status === "missing_recipient") return `${baseMessage} No confirmation email was sent because your account has no email address.`;
+  return `${baseMessage} We couldn't send the confirmation email right now. Please contact support.`;
+};
 const ORDER_REVIEW_TEMPLATES = [
   {
     value: "quality",
@@ -1754,7 +1760,7 @@ function CustomerDashboard() {
           order_type: "online_order",
         });
 
-        setOrderRequestMessage(`Order requested successfully. Tracking ID: ${response.order.tracking}`);
+        setOrderRequestMessage(getOrderSubmissionMessage(response, "Order requested"));
         addCreatedOrderToMyOrders(response.order);
         setOrderSuccessData(response.order);
       }
@@ -2051,7 +2057,7 @@ function CustomerDashboard() {
       order_type: "online_order",
     });
 
-    setOrderRequestMessage(`Order requested successfully. Tracking ID: ${response.order.tracking}`);
+    setOrderRequestMessage(getOrderSubmissionMessage(response, "Order requested"));
     addCreatedOrderToMyOrders(response.order);
     setOrderSuccessData(response.order);
     setOrderReviewAgreed(false);
@@ -2464,7 +2470,7 @@ function CustomerDashboard() {
         customer_phone: batchOrderForm.phone.trim(),
       });
 
-      setCheckoutMessage(`Order placed successfully. Tracking ID: ${response.order.tracking}`);
+      setCheckoutMessage(getOrderSubmissionMessage(response, "Order placed"));
       setCartItems((prev) => prev.filter((item) => !item.selected));
       addCreatedOrderToMyOrders(response.order);
       setShowBatchSuccessModal(true);

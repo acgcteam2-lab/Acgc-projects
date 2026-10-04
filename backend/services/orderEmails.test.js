@@ -1,0 +1,92 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { buildOrderEmail, getOrderEmailPaymentTotals } from "./orderEmails.js";
+
+describe("order email templates", () => {
+  it("includes order details, escapes dynamic data, and omits irrelevant cancellation fields", () => {
+    const email = buildOrderEmail("order_cancelled", {
+      _id: "mongo-id",
+      tracking: "TRK-123",
+      customer_name: "A <Customer>",
+      status: "cancelled",
+      total_amount: 1250,
+      amount_paid: 0,
+      items: [{ name: "<Glass>", quantity: 2 }],
+    }, { date: "2026-10-04T12:00:00.000Z" });
+
+    assert.ok(email.subject.includes("TRK-123"));
+    assert.ok(email.html.includes("Order ID</th>"));
+    assert.ok(email.html.includes("&lt;Glass&gt;"));
+    assert.ok(!email.html.includes("Refund information"));
+    assert.ok(email.text.includes("Current order status: Cancelled"));
+  });
+
+  it("calculates transaction balance from the actual confirmed amount_paid", () => {
+    const order = { total_amount: 1000, required_downpayment_amount: 400, amount_paid: 275, payment_status: "partial" };
+    const totals = getOrderEmailPaymentTotals(order);
+    const email = buildOrderEmail("transaction_update", order, {
+      previousStatus: "pending",
+      confirmedAmount: 275,
+    });
+
+    assert.equal(totals.balance, 725);
+    assert.ok(email.text.includes("Remaining balance: PHP 725.00"));
+    assert.ok(email.text.includes("Total amount paid: PHP 275.00"));
+  });
+
+  it("confirms payment proof and falls back to the submitted proof amount", () => {
+    const email = buildOrderEmail("payment_proof_confirmed", {
+      _id: "mongo-id",
+      tracking: "TRK-123",
+      customer_name: "A Customer",
+      total_amount: 1000,
+      amount_paid: 200,
+      payment_proof_amount: 200,
+      payment_proof_confirmed_at: "2026-10-04T12:00:00.000Z",
+      payment_status: "partial_downpayment",
+    }, { confirmedAmount: 0, previousStatus: "Pending Verification" });
+
+    assert.equal(email.subject, "Payment confirmed - TRK-123");
+    assert.ok(email.text.includes("reviewed and confirmed"));
+    assert.ok(email.text.includes("Confirmed payment amount: PHP 200.00"));
+  });
+
+  it("renders each requested event with an order reference and primary action", () => {
+    const order = {
+      _id: "mongo-id",
+      tracking: "TRK-123",
+      customer_name: "A Customer",
+      createdAt: "2026-10-01T12:00:00.000Z",
+      total_amount: 1000,
+      required_downpayment_amount: 400,
+      amount_paid: 200,
+      payment_status: "partial_downpayment",
+      payment_method: "Cash",
+      payment_proof_amount: 200,
+      payment_proof_submitted_at: "2026-10-02T12:00:00.000Z",
+      payment_proof_file_name: "receipt.png",
+      warranty_start_date: "2026-10-03T00:00:00.000Z",
+      warranty_expiry_date: "2027-10-03T00:00:00.000Z",
+      warranty_status: "active",
+      items: [{ name: "Window", quantity: 1, warranty_period: "1 year", warranty_status: "active" }],
+      shipping_address: "Cebu City",
+    };
+    const events = [
+      ["order_submitted", {}],
+      ["order_cancelled", {}],
+      ["payment_proof_submitted", { audience: "admin" }],
+      ["payment_proof_confirmed", { confirmedAmount: 200, previousStatus: "Pending Verification" }],
+      ["contract_accepted", {}],
+      ["transaction_update", { confirmedAmount: 200 }],
+      ["warranty_notification", { warrantyLines: ["Window: 1 year"] }],
+      ["installation_date", { installationDate: "2026-11-01", installationTime: "9:00 AM" }],
+    ];
+
+    for (const [event, options] of events) {
+      const email = buildOrderEmail(event, order, options);
+      assert.ok(email.subject.includes("TRK-123"));
+      assert.ok(email.html.includes("ORDER ID"));
+      assert.ok(email.html.includes("View") || email.html.includes("Review"));
+    }
+  });
+});
