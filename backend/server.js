@@ -18,18 +18,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, ".env"), quiet: true });
 
 const isVerbose = process.env.DEBUG_API === "true" || process.env.VERBOSE === "true";
-const requiredEnvs = ["JWT_SECRET"];
-for (const envName of requiredEnvs) {
-  if (!process.env[envName]) {
-    console.error(`Missing required environment variable: ${envName}`);
-    process.exit(1);
-  }
-}
-
-if (!process.env.MONGO_URI && isVerbose) {
-  console.warn(
-    "[env] MONGO_URI not set. The backend will attempt to connect to local MongoDB at mongodb://127.0.0.1:27017/reactvite"
-  );
+const requiredEnvs = ["JWT_SECRET", ...(process.env.VERCEL === "1" ? ["MONGO_URI"] : [])];
+const missingEnvs = requiredEnvs.filter((envName) => !process.env[envName]);
+if (missingEnvs.length) {
+  console.error(`[env] Missing required environment variables: ${missingEnvs.join(", ")}`);
 }
 
 const app = express();
@@ -85,6 +77,14 @@ app.get("/api/health", (req, res) => {
 });
 
 app.use("/api", (req, res, next) => {
+  if (missingEnvs.length) {
+    return res.status(503).json({
+      success: false,
+      message: "Backend configuration is incomplete.",
+      missingEnvironmentVariables: missingEnvs,
+    });
+  }
+
   if (mongoose.connection.readyState === 1) {
     return next();
   }
@@ -92,7 +92,7 @@ app.use("/api", (req, res, next) => {
   return res.status(503).json({
     success: false,
     message:
-      "Backend is running, but MongoDB is not connected yet. Start MongoDB and try again.",
+      "Backend is running, but MongoDB is not connected. Verify MONGO_URI and database network access.",
     health: getHealthModel(),
   });
 });
@@ -139,6 +139,10 @@ const shutdown = (reason, error) => {
 };
 
 const connectWithRetry = async (attempt = 1) => {
+  if (process.env.VERCEL === "1" && !process.env.MONGO_URI) {
+    return;
+  }
+
   if (mongoose.connection.readyState === 1 || mongoose.connection.readyState === 2) {
     return;
   }
