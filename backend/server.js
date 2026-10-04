@@ -11,13 +11,16 @@ import path from "path";
 import { fileURLToPath } from "url";
 import orderRoutes from "./routes/orders.js";
 import cartRoutes from "./routes/cart.js";
-import { connectMongo } from "./config/db.js";
+import { connectMongo, getLastMongoError, hasMongoUri } from "./config/db.js";
 import { startSystemBackupScheduler } from "./services/backupService.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, ".env"), quiet: true });
+if (process.env.NODE_ENV !== "production" && process.env.VERCEL !== "1") {
+  dotenv.config({ path: path.resolve(__dirname, ".env"), quiet: true });
+}
 
 const isVerbose = process.env.DEBUG_API === "true" || process.env.VERBOSE === "true";
+const isProduction = process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
 const requiredEnvs = ["JWT_SECRET"];
 for (const envName of requiredEnvs) {
   if (!process.env[envName]) {
@@ -52,6 +55,15 @@ app.use(
 app.use(express.json({ limit: "15mb" }));
 app.use(express.urlencoded({ extended: true }));
 
+app.use(async (req, res, next) => {
+  try {
+    await connectMongo();
+  } catch {
+    return next();
+  }
+  return next();
+});
+
 // Serve uploaded files
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
@@ -68,6 +80,8 @@ const getHealthModel = () => {
   return {
     status: dbConnected ? "online" : "offline",
     dbConnected,
+    hasMongoUri: hasMongoUri(),
+    lastConnectionError: getLastMongoError(),
     databaseState: readyStates[mongoState] || "unknown",
     timestamp: new Date().toISOString(),
     message: dbConnected
@@ -107,6 +121,7 @@ app.use("/api/catalog", catalogRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
+  void next;
   if (err.name === "MulterError") {
     const message =
       err.code === "LIMIT_FILE_SIZE"
@@ -145,25 +160,23 @@ const connectWithRetry = async (attempt = 1) => {
 
   try {
     await connectMongo();
-    if (isVerbose) console.log("Connected to MongoDB");
     if (process.env.VERCEL !== "1") startSystemBackupScheduler();
-  } catch (error) {
+  } catch {
     const delayMs = Math.min(30000, 2000 * attempt);
-    console.error(
-      `MongoDB connection error. Retrying in ${Math.round(delayMs / 1000)}s.`,
-      error.message
-    );
+    console.error(`MongoDB connection retry in ${Math.round(delayMs / 1000)}s.`);
     setTimeout(() => connectWithRetry(attempt + 1), delayMs);
   }
 };
 
-app.listen(PORT, () => {
-  if (isVerbose) {
-    console.log(`Server listening on http://localhost:${PORT}`);
-    console.log(`API base URL: http://localhost:${PORT}/api`);
-  }
-  connectWithRetry();
-});
+if (!isProduction) {
+  app.listen(PORT, () => {
+    if (isVerbose) {
+      console.log(`Server listening on http://localhost:${PORT}`);
+      console.log(`API base URL: http://localhost:${PORT}/api`);
+    }
+    connectWithRetry();
+  });
+}
 
 process.on("uncaughtException", (error) => {
   shutdown("Uncaught exception", error);
@@ -182,3 +195,5 @@ process.on("SIGTERM", () => {
   if (isVerbose) console.log("Received SIGTERM, shutting down gracefully.");
   process.exit(0);
 });
+
+export default app;

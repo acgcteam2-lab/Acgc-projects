@@ -1,6 +1,14 @@
 import mongoose from "mongoose";
+import process from "node:process";
 
 mongoose.set("strictQuery", true);
+
+let connectionPromise;
+let lastConnectionError = null;
+
+export const hasMongoUri = () => Boolean(process.env.MONGO_URI?.trim());
+
+export const getLastMongoError = () => lastConnectionError;
 
 const getCleanMongoUri = (uri) =>
   uri
@@ -14,31 +22,53 @@ const validateMongoUri = (uri) => {
   }
 
   if (!uri.startsWith("mongodb://") && !uri.startsWith("mongodb+srv://")) {
-    throw new Error(
-      `Invalid MONGO_URI scheme. Expected mongodb:// or mongodb+srv://. Loaded: ${uri}`
-    );
+    throw new Error("Invalid MONGO_URI scheme. Expected a MongoDB connection URI.");
   }
 
   return uri;
 };
 
 const getMongoUri = () => {
-  const rawUri = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/reactvite";
-  if (!process.env.MONGO_URI) {
+  const configuredUri = process.env.MONGO_URI?.trim();
+  if (!configuredUri && process.env.VERCEL === "1") {
+    throw new Error("MONGO_URI is not configured.");
+  }
+  if (!configuredUri) {
     console.warn(
       "[db] MONGO_URI not set. Falling back to local MongoDB at mongodb://127.0.0.1:27017/reactvite"
     );
   }
-  return getCleanMongoUri(rawUri);
+  return getCleanMongoUri(configuredUri || "mongodb://127.0.0.1:27017/reactvite");
 };
 
 export async function connectMongo() {
-  const uri = getMongoUri();
-  const validUri = validateMongoUri(uri);
-  if (process.env.DEBUG_DB === "true") {
-    console.info("[db] Connecting to MongoDB using URI:", validUri.replace(/(mongodb\+srv:\/\/[^@]+@)/, "mongodb+srv://***@"));
+  if (mongoose.connection.readyState === 1) {
+    lastConnectionError = null;
+    return mongoose;
   }
-  return mongoose.connect(validUri, {
-    autoIndex: true,
-  });
+
+  if (!connectionPromise) {
+    connectionPromise = Promise.resolve()
+      .then(() => mongoose.connect(validateMongoUri(getMongoUri()), {
+        autoIndex: true,
+        serverSelectionTimeoutMS: 8000,
+      }))
+      .then((connection) => {
+        lastConnectionError = null;
+        console.info("MongoDB connected");
+        return connection;
+      })
+      .catch((error) => {
+        const errorMessage = (error.message || String(error)).replace(
+          /mongodb(?:\+srv)?:\/\/[^\s"'<>]+/gi,
+          "[redacted MongoDB URI]"
+        );
+        lastConnectionError = errorMessage;
+        console.error("MongoDB connection error:", errorMessage);
+        connectionPromise = null;
+        throw error;
+      });
+  }
+
+  return connectionPromise;
 }
