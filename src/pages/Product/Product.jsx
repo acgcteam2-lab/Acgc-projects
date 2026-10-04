@@ -13,6 +13,7 @@ import {
 import toast, { Toaster } from "react-hot-toast";
 import * as catalogApi from '@/api/catalog';
 import { API_BASE } from "@/api/client";
+import { uploadFiles } from "@/api/uploads";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
@@ -1241,6 +1242,30 @@ function Products() {
 
     const fileKeys = Object.keys(newProduct.imageFiles).filter((key) => newProduct.imageFiles[key]);
     if (fileKeys.length === 0) return { success: true, files: [] };
+
+    if (import.meta.env.PROD) {
+      const controller = new AbortController();
+      uploadRequestRef.current = controller;
+      setUploadCanceled(false);
+      setUploading(true);
+      setUploadProgress(fileKeys.reduce((acc, key) => ({ ...acc, [key]: 0 }), {}));
+      try {
+        const result = await uploadFiles(
+          fileKeys.map((key) => newProduct.imageFiles[key]),
+          (percent) => setUploadProgress(Object.fromEntries(fileKeys.map((key) => [key, percent]))),
+          { purpose: "product-images", fieldNames: fileKeys, signal: controller.signal },
+        );
+        setUploadProgress(Object.fromEntries(fileKeys.map((key) => [key, 100])));
+        setTimeout(() => setUploadProgress({}), 700);
+        return result;
+      } catch (error) {
+        if (controller.signal.aborted) return { aborted: true };
+        throw error;
+      } finally {
+        setUploading(false);
+        uploadRequestRef.current = null;
+      }
+    }
 
     setUploadCanceled(false);
     setUploading(true);

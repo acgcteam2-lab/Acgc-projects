@@ -1,6 +1,6 @@
 import express from "express";
 import jwt from "jsonwebtoken";
-import { createHash, randomBytes, randomInt } from "crypto";
+import { createHash, randomBytes, randomInt, timingSafeEqual } from "crypto";
 import { promises as fs } from "node:fs";
 import multer from "multer";
 import User from "../models/User.js";
@@ -13,11 +13,13 @@ import {
   deleteSystemBackup,
   getSystemBackupDownload,
   importSystemBackup,
+  importSystemBackupFromCloudStorage,
+  runScheduledBackup,
   restoreSystemBackup,
 } from "../services/backupService.js";
 
 const backupImportUpload = multer({
-  dest: "backups/incoming",
+  ...(process.env.VERCEL === "1" ? { storage: multer.memoryStorage() } : { dest: "backups/incoming" }),
   limits: { fileSize: 512 * 1024 * 1024 },
   fileFilter: (_req, file, callback) => {
     const filename = file.originalname.toLowerCase();
@@ -155,7 +157,6 @@ const buildAddressFromRequest = (reqBody) => {
 };
 
 const router = express.Router();
-const systemSettingClients = new Set();
 const hashVerificationToken = (token) => createHash("sha256").update(token).digest("hex");
 
 const sendVerificationEmail = async (user, token) => {
@@ -191,28 +192,6 @@ const sendPasswordResetCode = async (account, code) => {
   });
 };
 
-const broadcastSystemSettings = (maintenanceMode) => {
-  const payload = `data: ${JSON.stringify({ maintenance_mode: maintenanceMode === true })}\n\n`;
-  systemSettingClients.forEach((client) => {
-    try {
-      client.write(payload);
-    } catch (error) {
-      systemSettingClients.delete(client);
-    }
-  });
-};
-
-const broadcastSessionInvalidated = () => {
-  const payload = `data: ${JSON.stringify({ session_invalidated: true })}\n\n`;
-  systemSettingClients.forEach((client) => {
-    try {
-      client.write(payload);
-    } catch {
-      systemSettingClients.delete(client);
-    }
-  });
-};
-
 router.get("/system-settings", authMiddleware, async (req, res) => {
   try {
     const settings = await SystemSetting.findOne({ key: "global" }).lean();
@@ -228,32 +207,6 @@ router.get("/system-settings", authMiddleware, async (req, res) => {
   } catch (error) {
     console.error("Get system settings error:", error);
     res.status(500).json({ success: false, message: "Unable to load system settings." });
-  }
-});
-
-router.get("/system-settings/events", async (req, res) => {
-  try {
-    const token = req.query.token;
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "your-secret-key");
-    if (!decoded?.id) return res.status(401).end();
-
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.flushHeaders?.();
-
-    const settings = await SystemSetting.findOne({ key: "global" }).lean();
-    res.write(`data: ${JSON.stringify({ maintenance_mode: settings?.maintenance_mode === true })}\n\n`);
-    systemSettingClients.add(res);
-
-    const heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 25000);
-    req.on("close", () => {
-      clearInterval(heartbeat);
-      systemSettingClients.delete(res);
-      res.end();
-    });
-  } catch (error) {
-    res.status(401).end();
   }
 });
 
@@ -292,7 +245,6 @@ router.patch("/system-settings", authMiddleware, roleMiddleware(["admin", "super
       { $set: update },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     ).lean();
-    broadcastSystemSettings(settings.maintenance_mode);
     res.json({
       success: true,
       maintenance_mode: settings.maintenance_mode === true,
@@ -318,6 +270,23 @@ router.post("/system-settings/backups", authMiddleware, roleMiddleware(["admin",
   }
 });
 
+router.get("/system-settings/cron-backup", async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  const expectedAuthorization = secret ? Buffer.from(`Bearer ${secret}`) : Buffer.alloc(0);
+  const providedAuthorization = Buffer.from(req.get("authorization") || "");
+  if (!secret || expectedAuthorization.length !== providedAuthorization.length || !timingSafeEqual(expectedAuthorization, providedAuthorization)) {
+    return res.status(secret ? 401 : 503).json({ success: false, message: "Scheduled backup authorization is not configured." });
+  }
+
+  try {
+    await runScheduledBackup();
+    return res.json({ success: true, message: "Scheduled backup check completed." });
+  } catch (error) {
+    console.error("Vercel scheduled backup failed:", error);
+    return res.status(500).json({ success: false, message: "Scheduled backup failed." });
+  }
+});
+
 router.post(
   "/system-settings/backups/import",
   authMiddleware,
@@ -335,25 +304,34 @@ router.post(
     }
 
     try {
-      const result = await importSystemBackup(req.file.path);
+      const result = await importSystemBackup(req.file.buffer || req.file.path);
       res.status(201).json({ success: true, ...result });
     } catch (error) {
       console.error("Import system backup error:", error);
       res.status(error.status || 400).json({ success: false, message: error.message || "Unable to import backup." });
     } finally {
-      await fs.rm(req.file.path, { force: true });
+      if (req.file.path) await fs.rm(req.file.path, { force: true });
     }
   }
 );
 
+router.post("/system-settings/backups/import-cloud", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
+  try {
+    const result = await importSystemBackupFromCloudStorage(req.body?.objectKey);
+    res.status(201).json({ success: true, ...result });
+  } catch (error) {
+    console.error("Import Cloud Storage backup error:", error);
+    res.status(error.status || 400).json({ success: false, message: error.message || "Unable to import backup." });
+  }
+});
+
 router.get("/system-settings/backups/:backupId/download", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
   try {
-    const { filePath, filename } = await getSystemBackupDownload(req.params.backupId);
-    res.download(filePath, filename, (error) => {
-      if (error && !res.headersSent) {
-        res.status(error.status || 500).json({ success: false, message: "Unable to download backup." });
-      }
-    });
+    const { buffer, filename, redirectUrl } = await getSystemBackupDownload(req.params.backupId);
+    if (redirectUrl) return res.redirect(302, redirectUrl);
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.send(buffer);
   } catch (error) {
     console.error("Download system backup error:", error);
     res.status(error.status || 500).json({ success: false, message: error.message || "Unable to download backup." });
@@ -363,7 +341,6 @@ router.get("/system-settings/backups/:backupId/download", authMiddleware, roleMi
 router.post("/system-settings/backups/:backupId/restore", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
   try {
     const result = await restoreSystemBackup(req.params.backupId);
-    if (result.logout_required) res.once("finish", broadcastSessionInvalidated);
     res.json({ success: true, ...result });
   } catch (error) {
     console.error("Restore system backup error:", error);

@@ -1,4 +1,5 @@
 import { apiFetch, API_BASE } from "./client";
+import { uploadFiles } from "./uploads";
 
 export const searchCustomers = (query) =>
   apiFetch(`/auth/customers?search=${encodeURIComponent(query)}`);
@@ -32,6 +33,21 @@ export const createSystemBackup = (type) =>
   });
 
 export const uploadSystemBackup = (file) => {
+  if (import.meta.env.PROD) {
+    return uploadFiles([file], undefined, {
+      purpose: "backup-import",
+      access: "private",
+      multipart: file.size > 100 * 1024 * 1024,
+    }).then((result) => {
+      const objectKey = result.files?.[0]?.pathname;
+      if (!objectKey) throw new Error("Backup upload did not return a storage path.");
+      return apiFetch("/auth/system-settings/backups/import-cloud", {
+        method: "POST",
+        body: JSON.stringify({ objectKey }),
+      });
+    });
+  }
+
   const body = new FormData();
   body.append("backupFile", file);
   return apiFetch("/auth/system-settings/backups/import", {
@@ -65,10 +81,4 @@ export const downloadSystemBackup = async (backupId) => {
   const disposition = response.headers.get("content-disposition") || "";
   const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `backup-${backupId}.zip`;
   return { blob: await response.blob(), filename };
-};
-
-export const getSystemSettingsEventsUrl = () => {
-  const token = localStorage.getItem("token");
-  const base = (API_BASE || "").replace(/\/$/, "");
-  return `${base}/auth/system-settings/events?token=${encodeURIComponent(token || "")}`;
 };

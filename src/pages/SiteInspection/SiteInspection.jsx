@@ -1752,7 +1752,7 @@ function SiteInspection() {
     setManualApprovalModal((prev) => ({ ...prev, uploading: true, error: "" }));
 
     try {
-      const uploadResp = await uploadFiles([file]);
+      const uploadResp = await uploadFiles([file], undefined, { purpose: "contracts" });
       const uploadedFileUrl = uploadResp?.success && uploadResp?.files?.length
         ? (typeof uploadResp.files[0] === "string" ? uploadResp.files[0] : uploadResp.files[0]?.url || "")
         : "";

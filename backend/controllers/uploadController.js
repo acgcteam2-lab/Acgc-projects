@@ -1,11 +1,14 @@
 import fs from "fs";
 import path from "path";
 import multer from "multer";
+import process from "node:process";
+import { createCloudUploadUrl } from "../services/cloudStorage.js";
 
 const uploadsDir = path.join(process.cwd(), "uploads");
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+const isVercelRuntime = process.env.VERCEL === "1";
+if (!isVercelRuntime && !fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
-const storage = multer.diskStorage({
+const diskStorage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadsDir),
   filename: (req, file, cb) => {
     const extension = path.extname(file.originalname) || ".png";
@@ -31,7 +34,7 @@ const fileFilter = (req, file, cb) => {
 };
 
 export const uploadMiddleware = multer({
-  storage,
+  storage: isVercelRuntime ? multer.memoryStorage() : diskStorage,
   fileFilter,
   limits: { fileSize: 50 * 1024 * 1024 },
 });
@@ -76,4 +79,35 @@ export const uploadImages = async (req, res) => {
   }
 };
 
-export default { uploadImages, uploadMiddleware };
+export const createCloudUploadUrlHandler = async (req, res) => {
+  try {
+    const { fileName, contentType, purpose = "uploads", size } = req.body || {};
+    const user = req.user;
+    if (!fileName || !contentType || !user?.id) {
+      return res.status(400).json({ success: false, message: "File name and content type are required." });
+    }
+    if (!["uploads", "review-photos", "payment-proofs", "product-images", "progress-media", "contracts", "backup-import"].includes(purpose)) {
+      return res.status(400).json({ success: false, message: "Upload purpose is invalid." });
+    }
+    if (purpose === "backup-import" && !["admin", "super_admin"].includes(user.role)) {
+      return res.status(403).json({ success: false, message: "Only administrators can import backups." });
+    }
+    if (["product-images", "progress-media", "contracts"].includes(purpose) && !["admin", "super_admin", "skilled_worker"].includes(user.role)) {
+      return res.status(403).json({ success: false, message: "You are not authorized to upload this file type." });
+    }
+    if (purpose === "backup-import" && Number(size) > 512 * 1024 * 1024) {
+      return res.status(413).json({ success: false, message: "Backup files cannot exceed 512 MB." });
+    }
+    if (purpose !== "backup-import" && !allowedMimeTypes.includes(contentType)) {
+      return res.status(400).json({ success: false, message: "This file type is not allowed." });
+    }
+
+    const result = await createCloudUploadUrl({ purpose, fileName, contentType, userId: user.id });
+    res.status(200).json(result);
+  } catch (error) {
+    console.error("Create Cloud Storage upload URL error:", error.message);
+    res.status(error.status || 503).json({ success: false, message: error.message || "Unable to authorize file upload." });
+  }
+};
+
+export default { uploadImages, createCloudUploadUrlHandler, uploadMiddleware };

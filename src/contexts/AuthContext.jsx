@@ -8,7 +8,6 @@ import {
   createAdmin as createAdminApi,
   updateProfile as updateProfileApi,
 } from "@/api/auth";
-import { getSystemSettingsEventsUrl } from "@/api/users";
 import { normalizeUserProfile } from "@/lib/userProfile";
 import { recordActivity } from "@/lib/activityLog";
 
@@ -71,19 +70,10 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     if (!accountId || !localStorage.getItem("token")) return undefined;
 
-    const events = new EventSource(getSystemSettingsEventsUrl());
-    events.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.session_invalidated === true) {
-          window.dispatchEvent(new Event("auth:session-revoked"));
-        }
-      } catch (error) {
-        console.error("Unable to read system session event:", error);
-      }
-    };
-
-    return () => events.close();
+    const sessionCheck = window.setInterval(() => {
+      getMe().catch(() => {});
+    }, 60_000);
+    return () => window.clearInterval(sessionCheck);
   }, [accountId]);
 
   const normalizeAndPersistUser = (userData) => {

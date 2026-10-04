@@ -71,7 +71,7 @@ import { buildOrderTimelineStages, calculateStageProgressPercent } from "@/lib/o
 import { getProgressColor } from "@/lib/utils";
 import { paginateItems } from "@/lib/pagination";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import { getSystemSettings, getSystemSettingsEventsUrl } from "@/api/users";
+import { getSystemSettings } from "@/api/users";
 import { getCart, saveCart } from "@/api/cart";
 import { formatDateToMMMDDYYYY, formatDateTimeToMMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
 import { buildDelayNotifications, sortCustomerNotificationsNewestFirst } from "@/lib/delayNotifications";
@@ -564,24 +564,26 @@ function CustomerDashboard() {
 
   useEffect(() => {
     if (!user) return undefined;
-    const events = new EventSource(getSystemSettingsEventsUrl());
-    events.onmessage = (event) => {
+
+    let active = true;
+    const checkMaintenanceMode = async () => {
       try {
-        const enabled = JSON.parse(event.data).maintenance_mode === true;
+        const response = await getSystemSettings();
+        if (!active) return;
+        const enabled = response.maintenance_mode === true;
         setMaintenanceMode(enabled);
         if (enabled) {
           showPermissionNotice("The system is under maintenance. Please log out and try again later.", { maintenance: true });
         } else {
           setPermissionNotice((current) => (current?.maintenance ? null : current));
         }
-      } catch (error) {
-        console.error("Unable to process maintenance mode update", error);
-      }
+      } catch {}
     };
-    events.onerror = () => {
-      // EventSource automatically retries while the customer remains signed in.
+    const interval = window.setInterval(checkMaintenanceMode, 30_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
     };
-    return () => events.close();
   }, [user?.id]);
 
   const showPermissionNotice = (message, options = {}) => {
@@ -974,7 +976,7 @@ function CustomerDashboard() {
       setReviewFormError("You may upload up to 5 photos.");
       return;
     }
-    const uploads = await uploadFiles(files);
+    const uploads = await uploadFiles(files, undefined, { purpose: "review-photos" });
     if (!uploads.success) {
       setReviewFormError(uploads.message || "Unable to upload photos.");
       return;
@@ -2344,7 +2346,7 @@ function CustomerDashboard() {
       let uploadedFileUrl = "";
 
       if (paymentProofForm.file) {
-        const uploadResult = await uploadFiles([paymentProofForm.file]);
+        const uploadResult = await uploadFiles([paymentProofForm.file], undefined, { purpose: "payment-proofs" });
         const uploadedFile = uploadResult?.files?.[0];
         uploadedFileName = uploadedFile?.originalName || uploadedFile?.filename || paymentProofForm.fileName || "";
         uploadedFileUrl = uploadedFile?.url || "";

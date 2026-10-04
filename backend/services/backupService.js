@@ -6,6 +6,15 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { gzip, gunzip } from "node:zlib";
 import mongoose from "mongoose";
+import {
+  deletePrivateBackup,
+  getPrivateBackupDownloadUrl,
+  getPublicMediaFiles,
+  isCloudStorageEnabled,
+  readPrivateBackup,
+  restorePublicMediaFiles,
+  savePrivateBackup,
+} from "./cloudStorage.js";
 import SystemSetting from "../models/SystemSetting.js";
 import { createTransactionWorkbookBuffer } from "./transactionWorkbook.js";
 import {
@@ -25,6 +34,8 @@ let scheduledBackupTimer;
 
 const getBackupDirectory = () => path.join(process.cwd(), "backups");
 const getUploadsDirectory = () => path.resolve(process.cwd(), "uploads");
+const isVercelRuntime = () => process.env.VERCEL === "1";
+const usesCloudStorage = () => isVercelRuntime() || isCloudStorageEnabled();
 
 const backupError = (message, status = 400) => Object.assign(new Error(message), { status });
 
@@ -35,6 +46,11 @@ const assertBackupId = (backupId) => {
 };
 
 const readUploadFiles = async (directory, root = directory) => {
+  if (usesCloudStorage()) {
+    if (directory !== getUploadsDirectory() || root !== directory) return [];
+    return getPublicMediaFiles();
+  }
+
   let entries;
   try {
     entries = await fs.readdir(directory, { withFileTypes: true });
@@ -146,6 +162,11 @@ const copyDirectoryContents = async (source, destination) => {
 };
 
 const restoreUploadFiles = async (files) => {
+  if (usesCloudStorage()) {
+    await restorePublicMediaFiles(files);
+    return;
+  }
+
   const uploadsDirectory = getUploadsDirectory();
   const stagingDirectory = `${uploadsDirectory}.restore-${randomUUID()}`;
   const previousDirectory = `${uploadsDirectory}.previous-${randomUUID()}`;
@@ -225,21 +246,51 @@ const findBackupRecord = async (backupId) => {
 const getBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backupId}.zip`);
 const getLegacyEncryptedBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backupId}.json.gz.enc`);
 const getLegacyBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backupId}.json.gz`);
+const getBackupObjectKey = (backupId) => `backups/${backupId}.zip`;
 
-const findStoredBackupFilePath = async (backupId) => {
+const getStoredBackupBuffer = async (backupId) => {
+  if (usesCloudStorage()) {
+    return readPrivateBackup(getBackupObjectKey(backupId));
+  }
+
   for (const filePath of [
     getBackupFilePath(backupId),
     getLegacyEncryptedBackupFilePath(backupId),
     getLegacyBackupFilePath(backupId),
   ]) {
     try {
-      await fs.access(filePath);
-      return filePath;
+      return await fs.readFile(filePath);
     } catch {
       continue;
     }
   }
   throw backupError("Backup file is not available.", 404);
+};
+
+const storeBackupBuffer = async (backupId, buffer) => {
+  if (usesCloudStorage()) {
+    await savePrivateBackup(getBackupObjectKey(backupId), buffer);
+    return;
+  }
+
+  const backupDirectory = getBackupDirectory();
+  const filePath = getBackupFilePath(backupId);
+  const temporaryPath = `${filePath}.tmp`;
+  await fs.mkdir(backupDirectory, { recursive: true });
+  await fs.writeFile(temporaryPath, buffer, { flag: "wx" });
+  await fs.rename(temporaryPath, filePath);
+};
+
+const deleteStoredBackup = async (backupId) => {
+  if (usesCloudStorage()) {
+    await deletePrivateBackup(getBackupObjectKey(backupId));
+    return;
+  }
+  await Promise.all([
+    fs.rm(getBackupFilePath(backupId), { force: true }),
+    fs.rm(getLegacyEncryptedBackupFilePath(backupId), { force: true }),
+    fs.rm(getLegacyBackupFilePath(backupId), { force: true }),
+  ]);
 };
 
 export const createSystemBackup = async (type) => {
@@ -250,12 +301,6 @@ export const createSystemBackup = async (type) => {
   const snapshot = await createSnapshotBuffer();
   const transactionWorkbook = await createTransactionWorkbookBuffer(snapshot.orders, snapshot.users);
   const backupBuffer = await encryptZipBackupBuffer(snapshot.buffer, transactionWorkbook);
-  const backupDirectory = getBackupDirectory();
-  const filePath = getBackupFilePath(id);
-  const temporaryPath = `${filePath}.tmp`;
-  await fs.mkdir(backupDirectory, { recursive: true });
-  await fs.writeFile(temporaryPath, backupBuffer, { flag: "wx" });
-
   const backup = {
     id,
     name: `${type.toUpperCase().replace(/\s+/g, "_")}_BACKUP_${now.toISOString().slice(0, 10)}`,
@@ -266,7 +311,7 @@ export const createSystemBackup = async (type) => {
   };
 
   try {
-    await fs.rename(temporaryPath, filePath);
+    await storeBackupBuffer(id, backupBuffer);
     const settings = await SystemSetting.findOneAndUpdate(
       { key: "global" },
       {
@@ -283,14 +328,13 @@ export const createSystemBackup = async (type) => {
       backup_history: settings.backup_history || [backup],
     };
   } catch (error) {
-    await fs.rm(temporaryPath, { force: true });
-    await fs.rm(filePath, { force: true });
+    await deleteStoredBackup(id).catch(() => {});
     throw error;
   }
 };
 
-export const importSystemBackup = async (sourcePath) => {
-  const uploadedBuffer = await fs.readFile(sourcePath);
+export const importSystemBackup = async (source) => {
+  const uploadedBuffer = Buffer.isBuffer(source) ? source : await fs.readFile(source);
   await parseSnapshot(uploadedBuffer);
   const backupBuffer = isZipBackup(uploadedBuffer)
     ? uploadedBuffer
@@ -299,9 +343,6 @@ export const importSystemBackup = async (sourcePath) => {
   const id = randomUUID();
   const now = new Date();
   const type = "Imported";
-  const backupDirectory = getBackupDirectory();
-  const filePath = getBackupFilePath(id);
-  const temporaryPath = `${filePath}.tmp`;
   const backup = {
     id,
     name: `IMPORTED_BACKUP_${now.toISOString().slice(0, 10)}`,
@@ -311,10 +352,8 @@ export const importSystemBackup = async (sourcePath) => {
     status: "Success",
   };
 
-  await fs.mkdir(backupDirectory, { recursive: true });
-  await fs.writeFile(temporaryPath, backupBuffer, { flag: "wx" });
   try {
-    await fs.rename(temporaryPath, filePath);
+    await storeBackupBuffer(id, backupBuffer);
     const settings = await SystemSetting.findOneAndUpdate(
       { key: "global" },
       {
@@ -331,37 +370,58 @@ export const importSystemBackup = async (sourcePath) => {
       backup_history: settings.backup_history || [backup],
     };
   } catch (error) {
-    await fs.rm(temporaryPath, { force: true });
-    await fs.rm(filePath, { force: true });
+    await deleteStoredBackup(id).catch(() => {});
     throw error;
+  }
+};
+
+export const importSystemBackupFromCloudStorage = async (objectKey) => {
+  const normalizedPath = String(objectKey || "").replaceAll("\\", "/");
+  if (!normalizedPath.startsWith("imports/") || normalizedPath.split("/").includes("..")) {
+    throw backupError("Backup import file is invalid.", 400);
+  }
+
+  try {
+    const buffer = await readPrivateBackup(normalizedPath);
+    return await importSystemBackup(buffer);
+  } finally {
+    await deletePrivateBackup(normalizedPath).catch((error) => {
+      console.error("Unable to remove temporary backup import from Cloud Storage:", error.message);
+    });
   }
 };
 
 export const getSystemBackupDownload = async (backupId) => {
   const { backup } = await findBackupRecord(backupId);
-  let filePath;
+  if (usesCloudStorage()) {
+    return {
+      redirectUrl: await getPrivateBackupDownloadUrl(getBackupObjectKey(backupId)),
+      filename: `${backup.name}.zip`,
+    };
+  }
+
+  let buffer;
   try {
-    filePath = await findStoredBackupFilePath(backupId);
+    buffer = await getStoredBackupBuffer(backupId);
   } catch {
     throw backupError("Backup file is not available for download.", 404);
   }
-  const extension = filePath.endsWith(".zip") ? ".zip" : filePath.endsWith(".enc") ? ".json.gz.enc" : ".json.gz";
-  return { filePath, filename: `${backup.name}${extension}` };
+  return { buffer, filename: `${backup.name}.zip` };
 };
 
 export const restoreSystemBackup = async (backupId) => {
   const { settings, backup } = await findBackupRecord(backupId);
   let backupBuffer;
   try {
-    backupBuffer = await fs.readFile(await findStoredBackupFilePath(backupId));
+    backupBuffer = await getStoredBackupBuffer(backupId);
   } catch {
     throw backupError("Backup file is not available for restore.", 404);
   }
 
   const snapshot = await parseSnapshot(backupBuffer);
   const recoveryBackupResult = await createSystemBackup("Pre-Restore");
-  const recoveryBackupPath = getBackupFilePath(recoveryBackupResult.backup.id);
-  const recoveryBuffer = await fs.readFile(recoveryBackupPath);
+  const recoveryBackupPath = usesCloudStorage() ? getBackupObjectKey(recoveryBackupResult.backup.id) : getBackupFilePath(recoveryBackupResult.backup.id);
+  const recoveryBuffer = await getStoredBackupBuffer(recoveryBackupResult.backup.id);
   const rollbackSnapshot = await parseSnapshot(recoveryBuffer);
   try {
     await applySnapshot(snapshot);
@@ -453,9 +513,7 @@ export const deleteSystemBackup = async (backupId) => {
   const { settings, backup } = await findBackupRecord(backupId);
   const backupHistory = (settings.backup_history || []).filter((item) => item.id !== backupId);
   const remainingLatestDate = backupHistory[0]?.date || null;
-  await fs.rm(getBackupFilePath(backupId), { force: true });
-  await fs.rm(getLegacyEncryptedBackupFilePath(backupId), { force: true });
-  await fs.rm(getLegacyBackupFilePath(backupId), { force: true });
+  await deleteStoredBackup(backupId);
 
   const updatedSettings = await SystemSetting.findOneAndUpdate(
     { key: "global" },
@@ -490,7 +548,7 @@ const isScheduledBackupDue = (schedule, date) => {
   return false;
 };
 
-const runScheduledBackup = async () => {
+export const runScheduledBackup = async () => {
   if (mongoose.connection.readyState !== 1) return;
 
   const now = new Date();

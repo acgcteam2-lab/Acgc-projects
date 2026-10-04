@@ -146,7 +146,7 @@ const connectWithRetry = async (attempt = 1) => {
   try {
     await connectMongo();
     if (isVerbose) console.log("Connected to MongoDB");
-    startSystemBackupScheduler();
+    if (process.env.VERCEL !== "1") startSystemBackupScheduler();
   } catch (error) {
     const delayMs = Math.min(30000, 2000 * attempt);
     console.error(

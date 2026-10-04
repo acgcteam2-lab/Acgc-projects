@@ -360,7 +360,7 @@ function ProgressMonitor() {
     try {
       if (fileContexts && fileContexts.length > 0) {
         const files = fileContexts.map((ctx) => ctx.file);
-        const res = await uploadFiles(files, onUploadProgress);
+        const res = await uploadFiles(files, onUploadProgress, { purpose: "progress-media" });
         const uploadedUrls = (res.files || []).map((f) => f.url).filter(Boolean);
 
         uploadedUrls.forEach((url, index) => {
