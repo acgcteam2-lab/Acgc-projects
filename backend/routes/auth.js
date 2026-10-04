@@ -13,7 +13,7 @@ import {
   deleteSystemBackup,
   getSystemBackupDownload,
   importSystemBackup,
-  importSystemBackupFromCloudStorage,
+  importSystemBackupFromBlob,
   runScheduledBackup,
   restoreSystemBackup,
 } from "../services/backupService.js";
@@ -315,12 +315,12 @@ router.post(
   }
 );
 
-router.post("/system-settings/backups/import-cloud", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
+router.post("/system-settings/backups/import-blob", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
   try {
-    const result = await importSystemBackupFromCloudStorage(req.body?.objectKey);
+    const result = await importSystemBackupFromBlob(req.body?.pathname);
     res.status(201).json({ success: true, ...result });
   } catch (error) {
-    console.error("Import Cloud Storage backup error:", error);
+    console.error("Import Blob backup error:", error);
     res.status(error.status || 400).json({ success: false, message: error.message || "Unable to import backup." });
   }
 });

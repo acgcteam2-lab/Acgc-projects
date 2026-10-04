@@ -15,24 +15,27 @@ export const uploadFiles = async (files = [], onProgress, options = {}) => {
   if (import.meta.env.PROD) {
     const purpose = options.purpose || "uploads";
     const fieldNames = options.fieldNames || [];
+    const { upload } = await import("@vercel/blob/client");
     const uploadedFiles = await Promise.all(Array.from(files).map(async (file, index) => {
-      const signedUpload = await apiFetch("/uploads/signed-url", {
-        method: "POST",
-        body: JSON.stringify({
-          fileName: file.name,
-          contentType: file.type || "application/octet-stream",
-          purpose,
-          size: file.size,
-        }),
+      const blob = await upload(`${purpose}/${file.name}`, file, {
+        access: options.access === "private" ? "private" : "public",
+        handleUploadUrl: `${API_BASE}/uploads/${options.access === "private" ? "backup-token" : "token"}`,
+        clientPayload: JSON.stringify({ authToken: localStorage.getItem("token"), purpose }),
+        abortSignal: options.signal,
+        multipart: options.multipart,
+        onUploadProgress: (event) => {
+          if (event.total > 0 && typeof onProgress === "function") {
+            onProgress(Math.round((event.loaded / event.total) * 100));
+          }
+        },
       });
-      await uploadToSignedUrl(file, signedUpload, onProgress, options.signal);
 
       return {
         key: fieldNames[index] || "files",
-        url: signedUpload.publicUrl || signedUpload.objectKey,
-        filename: signedUpload.objectKey.split("/").pop(),
+        url: blob.url,
+        filename: blob.pathname.split("/").pop(),
         originalName: file.name,
-        pathname: signedUpload.objectKey,
+        pathname: blob.pathname,
       };
     }));
 
@@ -74,30 +77,5 @@ export const uploadFiles = async (files = [], onProgress, options = {}) => {
 
   return apiFetch(`/uploads`, { method: "POST", body: fd });
 };
-
-const uploadToSignedUrl = (file, signedUpload, onProgress, signal) => new Promise((resolve, reject) => {
-  const xhr = new XMLHttpRequest();
-  xhr.open("PUT", signedUpload.uploadUrl);
-  xhr.setRequestHeader("Content-Type", signedUpload.contentType || file.type || "application/octet-stream");
-  xhr.upload.onprogress = (event) => {
-    if (event.lengthComputable && typeof onProgress === "function") {
-      onProgress(Math.round((event.loaded / event.total) * 100));
-    }
-  };
-  xhr.onload = () => {
-    if (xhr.status >= 200 && xhr.status < 300) resolve();
-    else reject(new Error(`Cloud Storage upload failed with status ${xhr.status}.`));
-  };
-  xhr.onerror = () => reject(new Error("Network error while uploading to Cloud Storage."));
-  xhr.onabort = () => reject(new Error("Cloud Storage upload was canceled."));
-  if (signal) {
-    if (signal.aborted) {
-      xhr.abort();
-      return;
-    }
-    signal.addEventListener("abort", () => xhr.abort(), { once: true });
-  }
-  xhr.send(file);
-});
 
 export default { uploadFiles };

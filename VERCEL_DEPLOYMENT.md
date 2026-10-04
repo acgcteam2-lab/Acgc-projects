@@ -9,16 +9,16 @@ Import the repository as a Vercel project and group the detected applications as
 
 The frontend uses the same-origin `/api` base by default, so `VITE_API_BASE_URL` is not needed when both services share this routing.
 
-## Google Cloud Storage
+## Vercel Blob
 
-Create two buckets in Google Cloud Storage, preferably in a region eligible for the Cloud Storage free tier:
+Create two Vercel Blob stores and connect both to the backend service:
 
-- `GCS_MEDIA_BUCKET`: product photos, progress photos, review photos, and uploaded documents. Make objects publicly readable to preserve existing direct image/document URLs.
-- `GCS_BACKUP_BUCKET`: encrypted backup archives and temporary backup imports. Keep this bucket private; downloads use short-lived signed URLs.
+- A **public** store for product photos, progress photos, review photos, and uploaded documents. Its `BLOB_READ_WRITE_TOKEN` authorizes browser uploads directly to Blob.
+- A **private** store for encrypted backup archives and temporary backup imports. Configure its read-write token prefix as `BLOB_PRIVATE_READ_WRITE_TOKEN`; backup downloads use short-lived signed URLs.
 
-Create a service account with object create, read, list, and delete permissions on both buckets. Generate a JSON key and add the complete JSON as the Vercel secret `GOOGLE_CLOUD_CREDENTIALS_JSON`; add `GOOGLE_CLOUD_PROJECT_ID`, `GCS_MEDIA_BUCKET`, and `GCS_BACKUP_BUCKET`. Do not commit the service-account key.
+Vercel Blob is available on Hobby. Current Hobby included usage is 1 GB storage/month, 10,000 simple operations, 2,000 advanced operations, and 10 GB transfer. Hobby overages are not charged, but Blob access pauses when a limit is exceeded. See [current Blob pricing and quotas](https://vercel.com/docs/vercel-blob/usage-and-pricing).
 
-Configure the media bucket's CORS policy to allow your Vercel site origin, `PUT`, and the `Content-Type` header. The media bucket is public: payment proofs and signed contracts will also be readable by anyone with their URL. For production privacy, move those purposes to a private bucket and add authenticated file-serving before accepting real customer documents.
+The media store is public to preserve existing direct URLs, so payment proofs and signed contracts will also be readable by anyone with their URL. Do not use it for real customer documents until private document delivery is implemented.
 
 ## Backend Environment Variables
 
@@ -28,10 +28,8 @@ Set these in the backend service's Vercel environment settings:
 - `JWT_SECRET`
 - `BACKUP_ENCRYPTION_KEY` (the existing key is required to read old encrypted backups)
 - `CRON_SECRET` (a newly generated long random secret)
-- `GOOGLE_CLOUD_PROJECT_ID`
-- `GOOGLE_CLOUD_CREDENTIALS_JSON`
-- `GCS_MEDIA_BUCKET`
-- `GCS_BACKUP_BUCKET`
+- `BLOB_READ_WRITE_TOKEN` (provided by the public media store)
+- `BLOB_PRIVATE_READ_WRITE_TOKEN` (the private backup store token)
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`
 - `ADMIN_EMAIL`
 - `FRONTEND_URL` (the production Vercel site URL)
@@ -42,6 +40,6 @@ Do not set `PORT`; Vercel supplies it. The Vercel Cron job calls `/api/auth/syst
 
 ## Before Production
 
-- Migrate existing database file URLs that point to `localhost:5000/uploads/...`; those files are not automatically copied to Google Cloud Storage.
+- Migrate existing database file URLs that point to `localhost:5000/uploads/...`; those files are not automatically copied to Blob.
 - Test login, refreshes on nested routes, new uploads, email delivery, backup creation/download/restore, and scheduled backups in a Vercel Preview deployment first.
 - Restrict CORS to the deployed site if you later serve the API from a different origin.

@@ -39,11 +39,11 @@ export const uploadSystemBackup = (file) => {
       access: "private",
       multipart: file.size > 100 * 1024 * 1024,
     }).then((result) => {
-      const objectKey = result.files?.[0]?.pathname;
-      if (!objectKey) throw new Error("Backup upload did not return a storage path.");
-      return apiFetch("/auth/system-settings/backups/import-cloud", {
+      const pathname = result.files?.[0]?.pathname;
+      if (!pathname) throw new Error("Backup upload did not return a storage path.");
+      return apiFetch("/auth/system-settings/backups/import-blob", {
         method: "POST",
-        body: JSON.stringify({ objectKey }),
+        body: JSON.stringify({ pathname }),
       });
     });
   }

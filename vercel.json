@@ -23,5 +23,11 @@
         "service": "app"
       }
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/auth/system-settings/cron-backup",
+      "schedule": "0 6 * * *"
+    }
   ]
 }

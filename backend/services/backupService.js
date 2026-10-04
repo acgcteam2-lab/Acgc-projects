@@ -7,14 +7,13 @@ import { promisify } from "node:util";
 import { gzip, gunzip } from "node:zlib";
 import mongoose from "mongoose";
 import {
-  deletePrivateBackup,
-  getPrivateBackupDownloadUrl,
-  getPublicMediaFiles,
-  isCloudStorageEnabled,
-  readPrivateBackup,
-  restorePublicMediaFiles,
-  savePrivateBackup,
-} from "./cloudStorage.js";
+  del as deleteBlob,
+  get as getBlob,
+  issueSignedToken,
+  list as listBlobs,
+  presignUrl,
+  put as putBlob,
+} from "@vercel/blob";
 import SystemSetting from "../models/SystemSetting.js";
 import { createTransactionWorkbookBuffer } from "./transactionWorkbook.js";
 import {
@@ -35,7 +34,7 @@ let scheduledBackupTimer;
 const getBackupDirectory = () => path.join(process.cwd(), "backups");
 const getUploadsDirectory = () => path.resolve(process.cwd(), "uploads");
 const isVercelRuntime = () => process.env.VERCEL === "1";
-const usesCloudStorage = () => isVercelRuntime() || isCloudStorageEnabled();
+const usesBlobStorage = () => isVercelRuntime();
 
 const backupError = (message, status = 400) => Object.assign(new Error(message), { status });
 
@@ -46,9 +45,21 @@ const assertBackupId = (backupId) => {
 };
 
 const readUploadFiles = async (directory, root = directory) => {
-  if (usesCloudStorage()) {
+  if (usesBlobStorage()) {
     if (directory !== getUploadsDirectory() || root !== directory) return [];
-    return getPublicMediaFiles();
+    const files = [];
+    let cursor;
+    do {
+      const page = await listBlobs({ prefix: "", cursor, limit: 1000, token: process.env.BLOB_READ_WRITE_TOKEN });
+      for (const blob of page.blobs) {
+        const result = await getBlob(blob.url, { access: "public", token: process.env.BLOB_READ_WRITE_TOKEN });
+        if (!result?.stream) continue;
+        const content = Buffer.from(await new Response(result.stream).arrayBuffer());
+        files.push({ path: blob.pathname, content: content.toString("base64") });
+      }
+      cursor = page.hasMore ? page.cursor : undefined;
+    } while (cursor);
+    return files;
   }
 
   let entries;
@@ -162,8 +173,24 @@ const copyDirectoryContents = async (source, destination) => {
 };
 
 const restoreUploadFiles = async (files) => {
-  if (usesCloudStorage()) {
-    await restorePublicMediaFiles(files);
+  if (usesBlobStorage()) {
+    const token = process.env.BLOB_READ_WRITE_TOKEN;
+    if (!token) throw backupError("Connect a public Vercel Blob store before restoring uploads.", 503);
+    let cursor;
+    do {
+      const page = await listBlobs({ prefix: "", cursor, limit: 1000, token });
+      if (page.blobs.length) await deleteBlob(page.blobs.map((blob) => blob.url), { token });
+      cursor = page.hasMore ? page.cursor : undefined;
+    } while (cursor);
+    for (const entry of files) {
+      const pathname = getSafeBlobPath(entry.path);
+      await putBlob(pathname, Buffer.from(entry.content, "base64"), {
+        access: "public",
+        token,
+        allowOverwrite: true,
+        addRandomSuffix: false,
+      });
+    }
     return;
   }
 
@@ -246,11 +273,13 @@ const findBackupRecord = async (backupId) => {
 const getBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backupId}.zip`);
 const getLegacyEncryptedBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backupId}.json.gz.enc`);
 const getLegacyBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backupId}.json.gz`);
-const getBackupObjectKey = (backupId) => `backups/${backupId}.zip`;
+const getBackupBlobPath = (backupId) => `backups/${backupId}.zip`;
 
 const getStoredBackupBuffer = async (backupId) => {
-  if (usesCloudStorage()) {
-    return readPrivateBackup(getBackupObjectKey(backupId));
+  if (usesBlobStorage()) {
+    const result = await getBlob(getBackupBlobPath(backupId), { access: "private", token: process.env.BLOB_PRIVATE_READ_WRITE_TOKEN });
+    if (!result?.stream) throw backupError("Backup file is not available.", 404);
+    return Buffer.from(await new Response(result.stream).arrayBuffer());
   }
 
   for (const filePath of [
@@ -268,8 +297,12 @@ const getStoredBackupBuffer = async (backupId) => {
 };
 
 const storeBackupBuffer = async (backupId, buffer) => {
-  if (usesCloudStorage()) {
-    await savePrivateBackup(getBackupObjectKey(backupId), buffer);
+  if (usesBlobStorage()) {
+    if (!process.env.BLOB_PRIVATE_READ_WRITE_TOKEN) throw backupError("Set BLOB_PRIVATE_READ_WRITE_TOKEN for private backups.", 503);
+    await putBlob(getBackupBlobPath(backupId), buffer, {
+      access: "private",
+      token: process.env.BLOB_PRIVATE_READ_WRITE_TOKEN,
+    });
     return;
   }
 
@@ -282,8 +315,8 @@ const storeBackupBuffer = async (backupId, buffer) => {
 };
 
 const deleteStoredBackup = async (backupId) => {
-  if (usesCloudStorage()) {
-    await deletePrivateBackup(getBackupObjectKey(backupId));
+  if (usesBlobStorage()) {
+    await deleteBlob(getBackupBlobPath(backupId), { token: process.env.BLOB_PRIVATE_READ_WRITE_TOKEN });
     return;
   }
   await Promise.all([
@@ -375,27 +408,33 @@ export const importSystemBackup = async (source) => {
   }
 };
 
-export const importSystemBackupFromCloudStorage = async (objectKey) => {
-  const normalizedPath = String(objectKey || "").replaceAll("\\", "/");
-  if (!normalizedPath.startsWith("imports/") || normalizedPath.split("/").includes("..")) {
+export const importSystemBackupFromBlob = async (pathname) => {
+  const normalizedPath = String(pathname || "").replaceAll("\\", "/");
+  if (!normalizedPath.startsWith("backup-import/") || normalizedPath.split("/").includes("..")) {
     throw backupError("Backup import file is invalid.", 400);
   }
 
   try {
-    const buffer = await readPrivateBackup(normalizedPath);
+    const result = await getBlob(normalizedPath, { access: "private", token: process.env.BLOB_PRIVATE_READ_WRITE_TOKEN });
+    if (!result?.stream) throw backupError("Backup import file is not available.", 404);
+    const buffer = Buffer.from(await new Response(result.stream).arrayBuffer());
     return await importSystemBackup(buffer);
   } finally {
-    await deletePrivateBackup(normalizedPath).catch((error) => {
-      console.error("Unable to remove temporary backup import from Cloud Storage:", error.message);
+    await deleteBlob(normalizedPath, { token: process.env.BLOB_PRIVATE_READ_WRITE_TOKEN }).catch((error) => {
+      console.error("Unable to remove temporary backup import from Blob:", error.message);
     });
   }
 };
 
 export const getSystemBackupDownload = async (backupId) => {
   const { backup } = await findBackupRecord(backupId);
-  if (usesCloudStorage()) {
+  if (usesBlobStorage()) {
+    const pathname = getBackupBlobPath(backupId);
+    const validUntil = Date.now() + 5 * 60 * 1000;
+    const token = await issueSignedToken({ pathname, operations: ["get"], validUntil, token: process.env.BLOB_PRIVATE_READ_WRITE_TOKEN });
+    const { presignedUrl } = await presignUrl(token, { operation: "get", pathname, access: "private", validUntil });
     return {
-      redirectUrl: await getPrivateBackupDownloadUrl(getBackupObjectKey(backupId)),
+      redirectUrl: presignedUrl,
       filename: `${backup.name}.zip`,
     };
   }
@@ -420,7 +459,7 @@ export const restoreSystemBackup = async (backupId) => {
 
   const snapshot = await parseSnapshot(backupBuffer);
   const recoveryBackupResult = await createSystemBackup("Pre-Restore");
-  const recoveryBackupPath = usesCloudStorage() ? getBackupObjectKey(recoveryBackupResult.backup.id) : getBackupFilePath(recoveryBackupResult.backup.id);
+  const recoveryBackupPath = usesBlobStorage() ? getBackupBlobPath(recoveryBackupResult.backup.id) : getBackupFilePath(recoveryBackupResult.backup.id);
   const recoveryBuffer = await getStoredBackupBuffer(recoveryBackupResult.backup.id);
   const rollbackSnapshot = await parseSnapshot(recoveryBuffer);
   try {
