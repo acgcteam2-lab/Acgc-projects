@@ -176,10 +176,13 @@ export const uploadProductImages = async (req, res) => {
     });
 
     const isDisabledApiKey = upstreamStatus === 401 && /disabled api[_ ]key/i.test(upstreamMessage);
+    const isCloudNameMismatch = upstreamStatus === 401 && /cloud_name mismatch/i.test(upstreamMessage);
     const message = error.status === 503
       ? error.message
       : isDisabledApiKey
       ? "Cloudinary says the configured API key is disabled. Create or copy an active API key from the same Cloudinary account, update the backend environment variables, then redeploy."
+      : isCloudNameMismatch
+      ? "Cloudinary cloud name does not match the configured API key and secret. Use the cloud name and credentials from the same Cloudinary account, then redeploy."
       : upstreamStatus === 401
       ? "Cloudinary rejected the API credentials. Verify that CLOUDINARY_URL or the split Cloudinary variables contain the matching active credentials from the same Cloudinary account, then redeploy the backend."
       : upstreamStatus === 400
@@ -218,10 +221,13 @@ export const uploadPaymentProof = async (req, res) => {
   } catch (error) {
     const upstreamStatus = Number(error.http_code || error.status) || null;
     const isDisabledApiKey = upstreamStatus === 401 && /disabled api[_ ]key/i.test(error.message || "");
+    const isCloudNameMismatch = upstreamStatus === 401 && /cloud_name mismatch/i.test(error.message || "");
     const message = error.status === 503
       ? error.message
       : isDisabledApiKey
       ? "Cloudinary rejected the configured API key. Update the backend with an active key and redeploy."
+      : isCloudNameMismatch
+      ? "Cloudinary cloud name does not match the configured API key and secret. Use the cloud name and credentials from the same Cloudinary account, then redeploy."
       : upstreamStatus === 401
       ? "Cloudinary rejected the configured credentials. Verify the active key and matching API secret."
       : "Payment proof upload failed. Check the backend Cloudinary configuration.";
