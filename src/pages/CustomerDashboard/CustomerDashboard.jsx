@@ -1071,6 +1071,8 @@ function CustomerDashboard() {
   };
 
   useEffect(() => {
+    if (loading || !user || !localStorage.getItem("token")) return undefined;
+
     let active = true;
 
     const fetchFeaturedProducts = async () => {
@@ -1167,13 +1169,15 @@ function CustomerDashboard() {
     return () => {
       active = false;
     };
-  }, [canUploadFeedback]);
+  }, [canUploadFeedback, loading, user?.id]);
 
   useEffect(() => {
     setProductPage(1);
   }, [searchQuery, categoryFilter, productsPerPage]);
 
   useEffect(() => {
+    if (loading || !user || !localStorage.getItem("token")) return undefined;
+
     let active = true;
 
     const fetchProducts = async () => {
@@ -1236,7 +1240,7 @@ function CustomerDashboard() {
     return () => {
       active = false;
     };
-  }, [searchQuery, categoryFilter, canUploadFeedback]);
+  }, [searchQuery, categoryFilter, canUploadFeedback, loading, user?.id]);
 
   const paginatedProducts = paginateItems(products, productPage, productsPerPage);
   const displayedProducts = isMobile ? products : paginatedProducts.items;
@@ -1282,7 +1286,7 @@ function CustomerDashboard() {
   }, [location.pathname, location.search, navigate, orders, ordersLoading]);
 
   useEffect(() => {
-    if (!selectedProduct?._id || !canUploadFeedback) {
+    if (!selectedProduct?._id || !canUploadFeedback || loading || !user || !localStorage.getItem("token")) {
       setProductReviews([]);
       return;
     }
@@ -1307,7 +1311,7 @@ function CustomerDashboard() {
     return () => {
       active = false;
     };
-  }, [selectedProduct, canUploadFeedback]);
+  }, [selectedProduct, canUploadFeedback, loading, user?.id]);
 
   const generateCartId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 

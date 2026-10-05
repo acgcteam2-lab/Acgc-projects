@@ -33,10 +33,18 @@ self.addEventListener('fetch', (event) => {
 			fetch(event.request)
 				.then((response) => {
 					const responseCopy = response.clone()
-					caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', responseCopy))
+					caches.open(CACHE_NAME)
+						.then((cache) => cache.put('./index.html', responseCopy))
+						.catch(() => {})
 					return response
 				})
-				.catch(() => caches.match('./index.html')),
+				.catch(async () => {
+					const cachedShell = await caches.match('./index.html')
+					return cachedShell || new Response('The app is offline and no cached page is available.', {
+						status: 503,
+						headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+					})
+				}),
 		)
 		return
 	}
