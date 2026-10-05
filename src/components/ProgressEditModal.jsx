@@ -21,12 +21,12 @@ const PARENT_STAGE_DEFINITIONS = [
 const VALID_STAGE_STATUSES = ["pending", "in_progress", "done", "delayed", "on_hold"];
 
 
-const normalizeStage = (source = {}, key, name) => {
+const normalizeStage = (source = {}, key, name, defaultStatus = "pending") => {
   const status = source.status && VALID_STAGE_STATUSES.includes(source.status)
     ? source.status
     : source.completed
     ? "done"
-    : "pending";
+    : defaultStatus;
 
   const acceptedSchedule = source.customerResponse === "accepted";
   const effectiveStatus = acceptedSchedule ? "done" : status;
@@ -41,6 +41,7 @@ const normalizeStage = (source = {}, key, name) => {
     previousStatus: null,
     date: source.date ? new Date(source.date) : null,
     images: Array.isArray(source.images) ? source.images : [],
+    image_uploads: Array.isArray(source.image_uploads) ? source.image_uploads : [],
     newFiles: [],
     imagePreviews: Array.isArray(source.images) ? source.images : [],
     delayReason: source.delayReason || "",
@@ -59,24 +60,7 @@ const normalizeStage = (source = {}, key, name) => {
           resolvedAt: entry.resolvedAt ? new Date(entry.resolvedAt) : null,
         }))
       : [],
-    subStages: Array.isArray(source.subStages)
-      ? source.subStages.map((sub) => ({
-          name: sub.name || "",
-          description: sub.description || "",
-          status: sub.status && VALID_STAGE_STATUSES.includes(sub.status)
-            ? sub.status
-            : sub.completed
-            ? "done"
-            : "pending",
-          completed: !!sub.completed || sub.status === "done",
-          saved: !!sub.completed,
-          previousStatus: null,
-          date: sub.date ? new Date(sub.date) : null,
-          images: Array.isArray(sub.images) ? sub.images : [],
-          newFiles: [],
-          imagePreviews: Array.isArray(sub.images) ? sub.images : [],
-        }))
-      : [],
+    subStages: [],
     proposedInstallationDate: source.proposedInstallationDate ? new Date(source.proposedInstallationDate) : null,
     proposedInstallationTime: source.proposedInstallationTime || "",
     contactMethods: Array.isArray(source.contactMethods) ? source.contactMethods : [],
@@ -92,14 +76,16 @@ const normalizeStage = (source = {}, key, name) => {
 };
 
 const findStageSource = (stageRows = []) => {
-  const result = {};
+  const result = { custom: [] };
   stageRows.forEach((stage) => {
     const candidate = (stage.key || stage.name || "").toString().toLowerCase();
-    if (candidate.includes("cutting")) result.cutting = stage;
-    if (candidate.includes("assembly")) result.assembly = stage;
-    if (candidate.includes("fabrication") || candidate.includes("processing")) result.fabrication = stage;
-    if (candidate.includes("installation_scheduling") || candidate.includes("installation scheduled") || candidate.includes("installation scheduling")) result.installation_scheduling = stage;
-    if (candidate.includes("installation") || candidate.includes("site_inspection")) result.installation = stage;
+    if (candidate.includes("installation_scheduling") || candidate.includes("installation scheduled") || candidate.includes("installation scheduling")) {
+      result.custom.push(stage);
+    } else if (candidate.includes("cutting")) result.cutting = stage;
+    else if (candidate.includes("assembly")) result.assembly = stage;
+    else if (candidate.includes("fabrication") || candidate.includes("processing")) result.fabrication = stage;
+    else if (candidate.includes("installation") || candidate.includes("site_inspection")) result.installation = stage;
+    else result.custom.push(stage);
   });
   return result;
 };
@@ -118,6 +104,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
   const [modalErrorMessage, setModalErrorMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [newSubStageName, setNewSubStageName] = useState("");
+  const [newMainStageName, setNewMainStageName] = useState("");
   const [newSubStageDescription, setNewSubStageDescription] = useState("");
   const [newSubStageStatus, setNewSubStageStatus] = useState("pending");
   const [newSubStageFiles, setNewSubStageFiles] = useState([]);
@@ -142,11 +129,17 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
   useEffect(() => {
     const projectStages = project.stages || project.progress_stages || [];
     const sourceMap = findStageSource(projectStages);
-    const mapped = PARENT_STAGE_DEFINITIONS.map(({ key, name }) =>
-      normalizeStage(sourceMap[key], key, name)
+    const mapped = PARENT_STAGE_DEFINITIONS.map(({ key, name }, index) =>
+      normalizeStage(sourceMap[key], key, name, index === 0 ? "in_progress" : "pending")
     );
+    const customStages = (sourceMap.custom || []).map((source, index) => {
+      const name = String(source.name || "New Stage").trim();
+      const generatedKey = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+      const key = String(source.key || generatedKey || `custom_stage_${index + 1}`);
+      return normalizeStage(source, key, name, "in_progress");
+    });
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setStages(mapped);
+    setStages([...mapped, ...customStages]);
   }, [project.stages, project.progress_stages]);
 
   useEffect(() => {
@@ -211,6 +204,22 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
   const isStageEditable = (index) => {
     const stage = stages[index];
     return index === activeStageIndex && !(stage?.completed && stage?.saved && !stage?.canUndoCompletion);
+  };
+
+  const addMainStage = () => {
+    const name = newMainStageName.trim();
+    if (!name) {
+      setErrorMessage("Enter a title for the new stage.");
+      return;
+    }
+    const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    if (!key || stages.some((stage) => stage.key === key || stage.name.toLowerCase() === name.toLowerCase())) {
+      setErrorMessage("A stage with that name already exists.");
+      return;
+    }
+    setStages((current) => [...current, normalizeStage({ status: "in_progress" }, key, name, "in_progress")]);
+    setNewMainStageName("");
+    setErrorMessage("");
   };
 
   const canManageSubStages = (index) => {
@@ -673,10 +682,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
   };
 
   const canMarkStageDone = (stage, stageIndex) => {
-    const allSubStagesComplete =
-      stage.subStages.length === 0 ||
-      stage.subStages.every((sub) => sub.completed);
-    return isStageEditable(stageIndex) && !stage.completed && allSubStagesComplete;
+    return isStageEditable(stageIndex) && !stage.completed;
   };
 
   const handleMarkSubStageDone = (stageIndex, subIndex) => {
@@ -697,9 +703,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
   const handleMarkStageDone = (stageIndex) => {
     const stage = stages[stageIndex];
     if (!canMarkStageDone(stage, stageIndex)) {
-      setErrorMessage(
-        "A stage can only be completed after all its sub-stages are done."
-      );
+      setErrorMessage("Only the current active stage can be marked as done.");
       return;
     }
     updateStage(stageIndex, {
@@ -751,6 +755,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
         completed: stage.completed,
         date: stage.date ? stage.date.toISOString() : null,
         images: stage.images,
+        image_uploads: stage.image_uploads || [],
         delayReason: stage.delayReason || "",
         delayExpectedResolution: stage.delayExpectedResolution ? stage.delayExpectedResolution.toISOString() : null,
         delayNotes: stage.delayNotes || "",
@@ -784,14 +789,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
         customerPreferredInstallationDate: stage.customerPreferredInstallationDate ? stage.customerPreferredInstallationDate.toISOString() : null,
         customerPreferredInstallationTime: stage.customerPreferredInstallationTime || "",
         customerRescheduleNotes: stage.customerRescheduleNotes || "",
-        subStages: stage.subStages.map((sub) => ({
-          name: sub.name,
-          description: sub.description,
-          status: sub.status,
-          completed: sub.completed,
-          date: sub.date ? sub.date.toISOString() : null,
-          images: sub.images,
-        })),
+        subStages: [],
       };
     });
   };
@@ -902,7 +900,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
               Edit Progress — {project.client}
             </h3>
             <p id="progress-edit-description" className="text-sm text-gray-500">
-              Track parent stages, sub-stages, photos, and completion history.
+              Manage main stages, proof photos, and completion history.
             </p>
           </div>
           <button
@@ -923,7 +921,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
             <div className="h-2 overflow-hidden rounded-full bg-slate-200" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.max(0, Math.min(progress, 100)))}>
               <div className="h-full rounded-full bg-emerald-600 transition-[width] duration-300" style={{ width: `${Math.max(0, Math.min(progress, 100))}%` }} />
             </div>
-            <p className="mt-2 text-xs text-slate-500">Automatically calculated from stage and sub-stage completion.</p>
+            <p className="mt-2 text-xs text-slate-500">Automatically calculated from completed stages.</p>
           </div>
         </div>
 
@@ -934,6 +932,24 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
               No progress stages have been added yet.
             </div>
           )}
+
+          <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 sm:flex-row">
+            <label className="sr-only" htmlFor="new-main-stage-name">New main stage name</label>
+            <input
+              id="new-main-stage-name"
+              value={newMainStageName}
+              onChange={(event) => setNewMainStageName(event.target.value)}
+              placeholder="New main stage name"
+              className="min-h-10 min-w-0 flex-1 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            />
+            <button
+              type="button"
+              onClick={addMainStage}
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 text-sm font-semibold text-white hover:bg-blue-800"
+            >
+              <Plus size={16} aria-hidden="true" /> Add Main Stage
+            </button>
+          </div>
 
           {stages.map((stage, stageIndex) => {
             const stageLocked = isStageLocked(stageIndex);
@@ -988,7 +1004,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                         ? "This stage is delayed. Update the status once it resumes."
                         : stageLocked
                         ? "This stage is locked because the project has moved to the next phase."
-                        : "Active stage. Complete sub-stages first."}
+                        : "Active stage. Update its state or mark it as done when work is complete."}
                     </span>
                     {stage.completed && !stage.saved && (
                       <span className="mt-2 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">
@@ -1020,16 +1036,21 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                 <div className="mt-4 grid gap-3 min-[480px]:grid-cols-2">
                   <label className="block text-sm text-gray-600">
                     Stage State
-                    <select
-                      className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus-visible:ring-2 focus-visible:ring-blue-500"
-                      value={stage.status}
-                      disabled={!stageEditable}
-                      onChange={(e) => handleStageStatusChange(stageIndex, e.target.value)}
-                    >
-                      <option value="in_progress">In Progress</option>
-                      <option value="delayed">Delayed</option>
-                      <option value="done">Done</option>
-                    </select>
+                    {stage.completed ? (
+                      <div className="mt-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">Completed</div>
+                    ) : (
+                      <select
+                        className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 focus-visible:ring-2 focus-visible:ring-blue-500"
+                        value={stage.status}
+                        disabled={!stageEditable}
+                        onChange={(e) => handleStageStatusChange(stageIndex, e.target.value)}
+                      >
+                        <option value="pending">Pending</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="delayed">Delayed</option>
+                        <option value="on_hold">On Hold</option>
+                      </select>
+                    )}
                   </label>
 
                     <div className="rounded-xl border border-dashed border-slate-300 bg-white p-3">
@@ -1043,7 +1064,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                           type="file"
                           accept="image/*"
                           multiple
-                          disabled={!stageEditable}
+                          disabled={!stageEditable && !stage.completed}
                           onChange={(e) => handleStageFiles(stageIndex, e)}
                           aria-label={`Upload proof images for ${stage.name}`}
                           id={`parent-stage-files-${stage.key}`}
@@ -1051,7 +1072,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                         />
                         <label
                           htmlFor={`parent-stage-files-${stage.key}`}
-                          className={`cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-blue-500 ${!stageEditable ? "pointer-events-none opacity-50" : ""}`}
+                          className={`cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-blue-500 ${!stageEditable && !stage.completed ? "pointer-events-none opacity-50" : ""}`}
                         >
                           Choose Files
                         </label>
@@ -1071,7 +1092,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                               alt={`${stage.name} preview ${i + 1}`}
                               className="h-20 w-full object-cover rounded-lg"
                             />
-                            {stageEditable && (
+                            {(stageEditable || stage.completed) && (
                               <button
                                 type="button"
                                 onClick={() => removeStagePreview(stageIndex, i)}
@@ -1138,7 +1159,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                       </div>
                     )}
 
-                    <div className="mt-5">
+                    <div className="mt-5 hidden">
                       <div className="flex items-center justify-between gap-4 mb-4">
                         <div>
                           <p className="text-sm font-semibold">Sub-stages</p>

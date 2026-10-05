@@ -37,6 +37,18 @@ const isVercelRuntime = () => process.env.VERCEL === "1";
 const usesBlobStorage = () => isVercelRuntime();
 
 const backupError = (message, status = 400) => Object.assign(new Error(message), { status });
+const getPublicBlobToken = () => {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    throw backupError("Set BLOB_READ_WRITE_TOKEN on the backend to include and restore legacy media in backups.", 503);
+  }
+  return process.env.BLOB_READ_WRITE_TOKEN;
+};
+const getPrivateBlobToken = () => {
+  if (!process.env.BLOB_PRIVATE_READ_WRITE_TOKEN) {
+    throw backupError("Set BLOB_PRIVATE_READ_WRITE_TOKEN on the backend to store and restore backup archives.", 503);
+  }
+  return process.env.BLOB_PRIVATE_READ_WRITE_TOKEN;
+};
 
 const assertBackupId = (backupId) => {
   if (!/^[A-Za-z0-9_-]{1,100}$/.test(backupId || "")) {
@@ -47,12 +59,13 @@ const assertBackupId = (backupId) => {
 const readUploadFiles = async (directory, root = directory) => {
   if (usesBlobStorage()) {
     if (directory !== getUploadsDirectory() || root !== directory) return [];
+    const token = getPublicBlobToken();
     const files = [];
     let cursor;
     do {
-      const page = await listBlobs({ prefix: "", cursor, limit: 1000, token: process.env.BLOB_READ_WRITE_TOKEN });
+      const page = await listBlobs({ prefix: "", cursor, limit: 1000, token });
       for (const blob of page.blobs) {
-        const result = await getBlob(blob.url, { access: "public", token: process.env.BLOB_READ_WRITE_TOKEN });
+        const result = await getBlob(blob.url, { access: "public", token });
         if (!result?.stream) continue;
         const content = Buffer.from(await new Response(result.stream).arrayBuffer());
         files.push({ path: blob.pathname, content: content.toString("base64") });
@@ -174,8 +187,7 @@ const copyDirectoryContents = async (source, destination) => {
 
 const restoreUploadFiles = async (files) => {
   if (usesBlobStorage()) {
-    const token = process.env.BLOB_READ_WRITE_TOKEN;
-    if (!token) throw backupError("Connect a public Vercel Blob store before restoring uploads.", 503);
+    const token = getPublicBlobToken();
     let cursor;
     do {
       const page = await listBlobs({ prefix: "", cursor, limit: 1000, token });
@@ -277,7 +289,7 @@ const getBackupBlobPath = (backupId) => `backups/${backupId}.zip`;
 
 const getStoredBackupBuffer = async (backupId) => {
   if (usesBlobStorage()) {
-    const result = await getBlob(getBackupBlobPath(backupId), { access: "private", token: process.env.BLOB_PRIVATE_READ_WRITE_TOKEN });
+    const result = await getBlob(getBackupBlobPath(backupId), { access: "private", token: getPrivateBlobToken() });
     if (!result?.stream) throw backupError("Backup file is not available.", 404);
     return Buffer.from(await new Response(result.stream).arrayBuffer());
   }
@@ -298,10 +310,10 @@ const getStoredBackupBuffer = async (backupId) => {
 
 const storeBackupBuffer = async (backupId, buffer) => {
   if (usesBlobStorage()) {
-    if (!process.env.BLOB_PRIVATE_READ_WRITE_TOKEN) throw backupError("Set BLOB_PRIVATE_READ_WRITE_TOKEN for private backups.", 503);
+    const token = getPrivateBlobToken();
     await putBlob(getBackupBlobPath(backupId), buffer, {
       access: "private",
-      token: process.env.BLOB_PRIVATE_READ_WRITE_TOKEN,
+      token,
     });
     return;
   }
@@ -316,7 +328,7 @@ const storeBackupBuffer = async (backupId, buffer) => {
 
 const deleteStoredBackup = async (backupId) => {
   if (usesBlobStorage()) {
-    await deleteBlob(getBackupBlobPath(backupId), { token: process.env.BLOB_PRIVATE_READ_WRITE_TOKEN });
+    await deleteBlob(getBackupBlobPath(backupId), { token: getPrivateBlobToken() });
     return;
   }
   await Promise.all([
@@ -415,7 +427,8 @@ export const importSystemBackupFromBlob = async (pathname) => {
   }
 
   try {
-    const result = await getBlob(normalizedPath, { access: "private", token: process.env.BLOB_PRIVATE_READ_WRITE_TOKEN });
+    const token = getPrivateBlobToken();
+    const result = await getBlob(normalizedPath, { access: "private", token });
     if (!result?.stream) throw backupError("Backup import file is not available.", 404);
     const buffer = Buffer.from(await new Response(result.stream).arrayBuffer());
     return await importSystemBackup(buffer);
@@ -429,10 +442,11 @@ export const importSystemBackupFromBlob = async (pathname) => {
 export const getSystemBackupDownload = async (backupId) => {
   const { backup } = await findBackupRecord(backupId);
   if (usesBlobStorage()) {
+    const token = getPrivateBlobToken();
     const pathname = getBackupBlobPath(backupId);
     const validUntil = Date.now() + 5 * 60 * 1000;
-    const token = await issueSignedToken({ pathname, operations: ["get"], validUntil, token: process.env.BLOB_PRIVATE_READ_WRITE_TOKEN });
-    const { presignedUrl } = await presignUrl(token, { operation: "get", pathname, access: "private", validUntil });
+    const signedToken = await issueSignedToken({ pathname, operations: ["get"], validUntil, token });
+    const { presignedUrl } = await presignUrl(signedToken, { operation: "get", pathname, access: "private", validUntil });
     return {
       redirectUrl: presignedUrl,
       filename: `${backup.name}.zip`,

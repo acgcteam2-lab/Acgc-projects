@@ -19,39 +19,26 @@ describe("ProgressEditModal", () => {
     expect(screen.getByRole("button", { name: "Save Changes" })).toBeTruthy();
   });
 
-  it("shows add sub-stage only for the latest completed parent stage", () => {
-    const project = {
-      id: "order-123",
-      client: "Acme Corp",
-      stages: [
-        { name: "Cutting", completed: true, status: "done", date: "2025-01-01", images: [] },
-        { name: "Fabrication", completed: false, status: "pending", date: null, images: [] },
-      ],
-    };
+  it("uses In Progress by default and removes sub-stage controls and Done from Stage State", () => {
+    const project = { id: "order-123", client: "Acme Corp", stages: [] };
     render(<ProgressEditModal project={project} onSave={vi.fn()} onClose={vi.fn()} />);
 
     const dialog = screen.getByRole("dialog", { name: /Edit Progress/ });
     expect(dialog.className).toContain("h-[100dvh]");
     expect(dialog.className).toContain("lg:max-w-[600px]");
-
-    const buttons = screen.getAllByRole("button", { name: /Add Sub-Stage/i });
-    expect(buttons).toHaveLength(1);
-    expect(buttons[0].textContent).toContain("Add Sub-Stage");
+    expect(screen.queryByRole("button", { name: /Add Sub-Stage/i })).toBeNull();
+    expect(screen.getAllByLabelText("Stage State")[0].value).toBe("in_progress");
+    expect(screen.queryByRole("option", { name: "Done" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Mark Cutting Done" })).toBeTruthy();
   });
 
-  it("hides add sub-stage when the next parent stage has started", () => {
-    const project = {
-      id: "order-123",
-      client: "Acme Corp",
-      stages: [
-        { name: "Cutting", completed: true, status: "done", date: "2025-01-01", images: [] },
-        { name: "Fabrication", completed: false, status: "in_progress", date: null, images: [] },
-      ],
-    };
+  it("allows admins to add a new main stage", () => {
+    const project = { id: "order-123", client: "Acme Corp", stages: [] };
     render(<ProgressEditModal project={project} onSave={vi.fn()} onClose={vi.fn()} />);
 
-    const addButtons = screen.queryAllByRole("button", { name: /Add Sub-Stage/i });
-    expect(addButtons).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText("New main stage name"), { target: { value: "Quality Check" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add Main Stage" }));
+    expect(screen.getByText("Quality Check")).toBeTruthy();
   });
 
   it("calls onSave and closes when save changes is clicked", async () => {
@@ -116,7 +103,7 @@ describe("ProgressEditModal", () => {
     });
   });
 
-  it("allows completed parent stage sub-stages to be marked done and undone before save", () => {
+  it("allows proof photos to be added after a stage is completed", () => {
     const project = {
       id: "order-123",
       client: "Acme Corp",
@@ -136,11 +123,18 @@ describe("ProgressEditModal", () => {
     };
     render(<ProgressEditModal project={project} onSave={vi.fn()} onClose={vi.fn()} />);
 
-    const markDoneButton = screen.getByRole("button", { name: /Mark as Done/i });
-    expect(markDoneButton).toBeTruthy();
-
-    fireEvent.click(markDoneButton);
-
-    expect(screen.getByRole("button", { name: /Undo Completion/i })).toBeTruthy();
+    const imageInput = screen.getByLabelText("Upload proof images for Cutting");
+    expect(imageInput.disabled).toBe(false);
+    const originalCreateObjectURL = URL.createObjectURL;
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => "blob:completed-stage-proof" });
+    fireEvent.change(imageInput, {
+      target: { files: [new File(["proof"], "after-install.jpg", { type: "image/jpeg" })] },
+    });
+    expect(screen.getByText("after-install.jpg")).toBeTruthy();
+    if (originalCreateObjectURL) {
+      Object.defineProperty(URL, "createObjectURL", { configurable: true, value: originalCreateObjectURL });
+    } else {
+      delete URL.createObjectURL;
+    }
   });
 });

@@ -121,9 +121,9 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
             )}
             {onDownloadPNG && <button type="button" onClick={onDownloadPNG} className={buttonShellClass}>Download PNG</button>}
             {onPrint && <button type="button" onClick={onPrint} className={buttonShellClass}>Print Contract</button>}
-            {onSendToCustomer && (
-              <button type="button" onClick={onSendToCustomer} disabled={isSendingToCustomer || isAccepted} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60">
-                {isSendingToCustomer ? "Sending..." : isAwaitingCustomerResponse ? "Resend Contract to Customer" : "Send Contract to Customer"}
+            {onSendToCustomer && !isAccepted && (
+              <button type="button" onClick={onSendToCustomer} disabled={isSendingToCustomer || isAwaitingCustomerResponse} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60">
+                {isSendingToCustomer ? "Sending..." : isAwaitingCustomerResponse ? "Sent" : "Send Contract to Customer"}
               </button>
             )}
             {isAccepted && <span className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700">✓ Contract Accepted &amp; Signed</span>}

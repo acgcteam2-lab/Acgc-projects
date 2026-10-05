@@ -151,12 +151,14 @@ function NotificationMenu() {
             date: order.createdAt,
           })),
           ...(inspections.orders || [])
-            .filter((order) => !["sent", "declined"].includes(String(order.contract_status || "").toLowerCase()))
+            .filter((order) => !["sent", "declined"].includes(String(order.contract_status || "").toLowerCase()) && order.inspection_status !== "completed")
             .map((order) => ({
             id: getAdminNotificationId("inspection", order),
             recordId: String(order._id || order.id || order.tracking),
-            title: "Inspection needs attention",
-            message: `${order.tracking || "A project"} is ready for site inspection.`,
+            title: order.inspection_date && order.inspection_status === "scheduled" ? "Inspection scheduled" : "Inspection needs scheduling",
+            message: order.inspection_date && order.inspection_status === "scheduled"
+              ? `Site inspection for ${order.tracking || "a project"} is scheduled for ${new Date(order.inspection_date).toLocaleDateString()}.`
+              : `${order.tracking || "A project"} needs a site inspection date.`,
             icon: ClipboardCheck,
             color: "text-amber-600",
             category: "inspections",
