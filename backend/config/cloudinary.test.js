@@ -64,7 +64,6 @@ describe("getCloudinaryConfig", () => {
   it("uploads private backup archives with the available chunked stream API", async () => {
     const cloudinary = cloudinaryPackage.v2;
     const originalChunkedStream = cloudinary.uploader.upload_chunked_stream;
-    const originalLargeStream = cloudinary.uploader.upload_large_stream;
     const originalConfig = cloudinary.config;
     const previousEnv = {
       CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
@@ -80,7 +79,6 @@ describe("getCloudinaryConfig", () => {
 
     let receivedOptions;
     cloudinary.config = () => undefined;
-    cloudinary.uploader.upload_large_stream = undefined;
     cloudinary.uploader.upload_chunked_stream = (options, callback) => {
       receivedOptions = options;
       return {
@@ -103,7 +101,6 @@ describe("getCloudinaryConfig", () => {
       assert.equal(receivedOptions.unique_filename, false);
     } finally {
       cloudinary.uploader.upload_chunked_stream = originalChunkedStream;
-      cloudinary.uploader.upload_large_stream = originalLargeStream;
       cloudinary.config = originalConfig;
       for (const [key, value] of Object.entries(previousEnv)) {
         if (value === undefined) delete process.env[key];
