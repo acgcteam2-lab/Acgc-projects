@@ -152,8 +152,11 @@ export const uploadProductImages = async (req, res) => {
       message: upstreamMessage,
     });
 
+    const isDisabledApiKey = upstreamStatus === 401 && /disabled api[_ ]key/i.test(upstreamMessage);
     const message = error.status === 503
       ? error.message
+      : isDisabledApiKey
+      ? "Cloudinary says the configured API key is disabled. Create or copy an active API key from the same Cloudinary account, update the backend environment variables, then redeploy."
       : upstreamStatus === 401
       ? "Cloudinary rejected the API credentials. Verify that CLOUDINARY_URL or the split Cloudinary variables contain the matching active credentials from the same Cloudinary account, then redeploy the backend."
       : upstreamStatus === 400
