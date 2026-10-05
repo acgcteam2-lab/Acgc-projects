@@ -4,6 +4,14 @@ import process from "node:process";
 const cloudinary = cloudinaryPackage.v2;
 
 export const getCloudinaryConfig = (env = process.env) => {
+  const splitConfig = {
+    cloud_name: env.CLOUDINARY_CLOUD_NAME?.trim(),
+    api_key: env.CLOUDINARY_API_KEY?.trim(),
+    api_secret: env.CLOUDINARY_API_SECRET?.trim(),
+  };
+
+  if (Object.values(splitConfig).every(Boolean)) return splitConfig;
+
   const cloudinaryUrl = env.CLOUDINARY_URL?.trim();
 
   if (cloudinaryUrl) {
@@ -27,19 +35,9 @@ export const getCloudinaryConfig = (env = process.env) => {
     }
   }
 
-  const config = {
-    cloud_name: env.CLOUDINARY_CLOUD_NAME?.trim(),
-    api_key: env.CLOUDINARY_API_KEY?.trim(),
-    api_secret: env.CLOUDINARY_API_SECRET?.trim(),
-  };
-
-  if (Object.values(config).some((value) => !value)) {
-    const error = new Error("Set CLOUDINARY_URL or all three CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET variables.");
-    error.status = 503;
-    throw error;
-  }
-
-  return config;
+  const error = new Error("Set CLOUDINARY_URL or all three CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET variables.");
+  error.status = 503;
+  throw error;
 };
 
 export const createCloudinaryUploadSignature = ({ folder, publicId, resourceType = "auto", type = "upload" }) => {
