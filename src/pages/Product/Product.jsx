@@ -1349,7 +1349,7 @@ function Products() {
         unit_price: Number(newProduct.estimated_price_override) || Number(newProduct.estimated_price) || Number(newProduct.base_price) || Number(newProduct.price_per_sqft) || 0,
         unit: pricingMethod === "sqft" ? "per_sqft" : "per_piece",
         measurement_unit: newProduct.unit || "in",
-        image_url: finalImages?.main || "",
+        image_url: finalImages?.main || editingProduct?.image_url || "",
         product_type: newProduct.product_type,
         product_name: newProduct.product_name || productName,
         pricing_method: pricingMethod,
