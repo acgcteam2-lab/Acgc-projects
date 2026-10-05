@@ -76,6 +76,22 @@ export const uploadImageBuffer = (buffer, { folder }) => {
   });
 };
 
+export const uploadMediaBuffer = (buffer, { folder }) => {
+  cloudinary.config(getCloudinaryConfig());
+
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      { folder, resource_type: "auto", unique_filename: true },
+      (error, result) => {
+        if (error) return reject(error);
+        if (!result?.secure_url) return reject(new Error("Cloudinary did not return an uploaded file URL."));
+        return resolve(result);
+      }
+    );
+    uploadStream.end(buffer);
+  });
+};
+
 export const uploadPrivateRawBuffer = (buffer, publicId) => {
   cloudinary.config(getCloudinaryConfig());
 

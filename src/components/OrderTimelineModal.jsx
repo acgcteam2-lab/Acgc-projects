@@ -236,7 +236,7 @@ export default function OrderTimelineModal({
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-stretch justify-center bg-black/45 p-0 lg:items-center lg:p-4"
+      className="mobile-fullscreen-overlay fixed inset-0 z-[70] flex items-stretch justify-center bg-black/45 p-0 lg:items-center lg:p-4"
       role="presentation"
       onClick={(event) => event.target === event.currentTarget && onClose()}
     >
@@ -246,7 +246,7 @@ export default function OrderTimelineModal({
         aria-modal="true"
         aria-labelledby="order-timeline-title"
         onKeyDown={handleDialogKeyDown}
-        className={`flex h-[100dvh] max-h-[100dvh] w-full max-w-none flex-col overflow-hidden rounded-none border shadow-2xl lg:h-auto lg:max-h-[90vh] lg:max-w-[560px] lg:rounded-2xl ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+        className={`mobile-fullscreen-dialog flex h-[100dvh] max-h-[100dvh] w-full max-w-none flex-col overflow-hidden rounded-none border shadow-2xl lg:h-auto lg:max-h-[90vh] lg:max-w-[560px] lg:rounded-2xl ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
       >
         <header className={`grid shrink-0 grid-cols-[minmax(0,1fr)_2.25rem] items-start gap-x-3 gap-y-2 border-b px-4 py-3.5 sm:px-5 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
           <div className="min-w-0">

@@ -367,12 +367,12 @@ function ProductFormModal({
     : Number(newProduct.estimated_price || 0);
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-2 backdrop-blur-sm sm:p-4">
+    <div className="mobile-fullscreen-overlay fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-2 backdrop-blur-sm sm:p-4">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="product-form-title"
-        className={`flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border shadow-[0_24px_80px_rgba(15,23,42,0.28)] ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-rose-100 bg-white"}`}
+        className={`mobile-fullscreen-dialog flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border shadow-[0_24px_80px_rgba(15,23,42,0.28)] ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-rose-100 bg-white"}`}
       >
         <header className={`flex shrink-0 items-start justify-between gap-4 border-b px-5 py-4 sm:px-7 ${darkMode ? "border-slate-700 bg-slate-800" : "border-rose-100 bg-[#fff8f7]"}`}>
           <div>

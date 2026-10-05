@@ -17,6 +17,31 @@ body::-webkit-scrollbar,
   display: none;
 }
 
+body:has(.mobile-fullscreen-overlay) .admin-mobile-navigation,
+body:has(.mobile-fullscreen-overlay) .customer-mobile-navigation {
+  display: none !important;
+}
+
+@media (max-width: 639px) {
+  .mobile-fullscreen-overlay {
+    align-items: stretch !important;
+    justify-content: stretch !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+  }
+
+  .mobile-fullscreen-dialog {
+    width: 100% !important;
+    max-width: none !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    min-height: 0 !important;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    border-radius: 0 !important;
+  }
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -1371,7 +1396,7 @@ body::-webkit-scrollbar,
     padding-bottom: calc(6rem + env(safe-area-inset-bottom)) !important;
   }
 
-  body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0 {
+  body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0:not(.mobile-fullscreen-overlay) {
     box-sizing: border-box;
     overflow-x: hidden;
     overflow-y: auto;
@@ -1379,23 +1404,23 @@ body::-webkit-scrollbar,
     padding: max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left)) !important;
   }
 
-  body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0.z-40,
-  body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0.z-50 {
+  body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0:not(.mobile-fullscreen-overlay).z-40,
+  body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0:not(.mobile-fullscreen-overlay).z-50 {
     z-index: 70 !important;
   }
 
-  body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0 > :not(.absolute) {
+  body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0:not(.mobile-fullscreen-overlay) > :not(.absolute) {
     max-width: calc(100vw - 1.5rem - env(safe-area-inset-left) - env(safe-area-inset-right)) !important;
     max-height: calc(100dvh - 1.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
     min-height: 0;
   }
 
-  body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0 > :not(.absolute):not([class*="overflow-hidden"]) {
+  body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0:not(.mobile-fullscreen-overlay) > :not(.absolute):not([class*="overflow-hidden"]) {
     overflow-y: auto;
     overscroll-behavior: contain;
   }
 
-  body:has(.admin-mobile-navigation) .fixed.inset-0 {
+  body:has(.admin-mobile-navigation) .fixed.inset-0:not(.mobile-fullscreen-overlay) {
     box-sizing: border-box;
     overflow-x: hidden;
     overflow-y: auto;
@@ -1403,13 +1428,13 @@ body::-webkit-scrollbar,
     padding: max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left)) !important;
   }
 
-  body:has(.admin-mobile-navigation) .fixed.inset-0 > :not(.absolute) {
+  body:has(.admin-mobile-navigation) .fixed.inset-0:not(.mobile-fullscreen-overlay) > :not(.absolute) {
     max-width: calc(100vw - 1.5rem - env(safe-area-inset-left) - env(safe-area-inset-right)) !important;
     max-height: calc(100dvh - 1.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
     min-height: 0;
   }
 
-  body:has(.admin-mobile-navigation) .fixed.inset-0 > :not(.absolute):not([class*="overflow-hidden"]) {
+  body:has(.admin-mobile-navigation) .fixed.inset-0:not(.mobile-fullscreen-overlay) > :not(.absolute):not([class*="overflow-hidden"]) {
     overflow-y: auto;
     overscroll-behavior: contain;
   }

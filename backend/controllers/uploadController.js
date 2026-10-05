@@ -3,7 +3,7 @@ import path from "path";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
 import process from "node:process";
-import { createCloudinaryUploadSignature as signCloudinaryUpload, uploadImageBuffer } from "../config/cloudinary.js";
+import { createCloudinaryUploadSignature as signCloudinaryUpload, uploadImageBuffer, uploadMediaBuffer } from "../config/cloudinary.js";
 
 const uploadsDir = path.join(process.cwd(), "uploads");
 const isVercelRuntime = process.env.VERCEL === "1";
@@ -72,6 +72,30 @@ export const productImageUploadMiddleware = (req, res, next) => {
       return res.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400).json({ success: false, message });
     }
     return res.status(error.status || 400).json({ success: false, message: error.message });
+  });
+};
+
+const paymentProofUploadParser = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (_req, file, callback) => {
+    if (["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"].includes(file.mimetype)) {
+      return callback(null, true);
+    }
+    const error = new Error("Payment proof must be a JPEG, PNG, WEBP, GIF, or PDF file.");
+    error.status = 400;
+    return callback(error);
+  },
+  limits: { fileSize: 4 * 1024 * 1024, files: 1 },
+}).single("file");
+
+export const paymentProofUploadMiddleware = (req, res, next) => {
+  paymentProofUploadParser(req, res, (error) => {
+    if (!error) return next();
+    const status = error.code === "LIMIT_FILE_SIZE" ? 413 : error.status || 400;
+    const message = error.code === "LIMIT_FILE_SIZE"
+      ? "Payment proof must be 4 MB or smaller."
+      : error.message || "Unable to process payment proof.";
+    return res.status(status).json({ success: false, message });
   });
 };
 
@@ -170,6 +194,41 @@ export const uploadProductImages = async (req, res) => {
   }
 };
 
+export const uploadPaymentProof = async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: "Select a payment proof file to upload." });
+  }
+
+  try {
+    const result = req.file.mimetype === "application/pdf"
+      ? await uploadMediaBuffer(req.file.buffer, { folder: "acgc/payment-proofs" })
+      : await uploadImageBuffer(req.file.buffer, { folder: "acgc/payment-proofs" });
+    return res.status(201).json({
+      success: true,
+      files: [{
+        key: "file",
+        url: result.secure_url,
+        filename: result.public_id,
+        originalName: req.file.originalname,
+        public_id: result.public_id,
+        resource_type: result.resource_type,
+        format: result.format,
+      }],
+    });
+  } catch (error) {
+    const upstreamStatus = Number(error.http_code || error.status) || null;
+    const isDisabledApiKey = upstreamStatus === 401 && /disabled api[_ ]key/i.test(error.message || "");
+    const message = error.status === 503
+      ? error.message
+      : isDisabledApiKey
+      ? "Cloudinary rejected the configured API key. Update the backend with an active key and redeploy."
+      : upstreamStatus === 401
+      ? "Cloudinary rejected the configured credentials. Verify the active key and matching API secret."
+      : "Payment proof upload failed. Check the backend Cloudinary configuration.";
+    return res.status(error.status || 502).json({ success: false, message });
+  }
+};
+
 const SIGNED_UPLOAD_PURPOSES = {
   uploads: { roles: ["customer", "admin", "super_admin", "skilled_worker"], resourceType: "auto" },
   "review-photos": { roles: ["customer", "admin", "super_admin"], resourceType: "image" },
@@ -209,6 +268,7 @@ export const createCloudinaryUploadSignature = (req, res) => {
 export default {
   uploadImages,
   uploadProductImages,
+  uploadPaymentProof,
   createCloudinaryUploadSignature,
   uploadMiddleware,
 };

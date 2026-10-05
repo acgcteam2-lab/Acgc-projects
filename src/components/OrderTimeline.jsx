@@ -659,12 +659,12 @@ export default function OrderTimeline({ order, onOrderChange, audience = "custom
       {/* Photo Gallery Modal */}
       {photoGallery && (
         <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          className="mobile-fullscreen-overlay fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
           onClick={() => setPhotoGallery(null)}
           role="presentation"
         >
           <div
-            className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-auto"
+            className="mobile-fullscreen-dialog bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-auto"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"

@@ -2441,7 +2441,14 @@ function CustomerDashboard() {
     setCheckoutError("");
     setCheckoutMessage("");
     setBatchOrderAgreed(false);
+    setShowBatchOrderModal(false);
     setShowBatchOrderConfirmModal(true);
+  };
+
+  const handleCancelBatchOrderConfirm = () => {
+    setShowBatchOrderConfirmModal(false);
+    setBatchOrderAgreed(false);
+    setShowBatchOrderModal(true);
   };
 
   const handleConfirmBatchOrder = async () => {
@@ -3611,7 +3618,7 @@ function CustomerDashboard() {
 
       <nav
         aria-label="Customer navigation"
-        className={`fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-[60] flex items-center justify-around rounded-[22px] border px-2 py-2 shadow-lg backdrop-blur-xl lg:hidden ${darkMode ? "border-slate-700 bg-slate-900/95 shadow-black/30" : "border-slate-200 bg-white/95 shadow-slate-900/15"}`}
+        className={`customer-mobile-navigation fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-[60] flex items-center justify-around rounded-[22px] border px-2 py-2 shadow-lg backdrop-blur-xl lg:hidden ${darkMode ? "border-slate-700 bg-slate-900/95 shadow-black/30" : "border-slate-200 bg-white/95 shadow-slate-900/15"}`}
       >
         {[
           { label: "Home", tab: "home", Icon: Home },
@@ -4041,8 +4048,8 @@ function CustomerDashboard() {
             </div>
 
             {selectedProduct && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 sm:p-4">
-                <div className={`order-flow-modal relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ${darkMode ? "order-flow-modal-dark" : ""}`}>
+              <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 sm:p-4">
+                <div className={`mobile-fullscreen-dialog order-flow-modal relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   {/* Header with cleaner elevated styling */}
                   {!isProductModalReadOnly && (
                     <div className="flex-shrink-0 border-b border-red-500/30 bg-gradient-to-r from-red-600 via-red-600 to-red-700 px-5 py-4 shadow-[0_12px_24px_rgba(220,38,38,0.18)] sm:px-6">
@@ -4397,8 +4404,8 @@ function CustomerDashboard() {
             )}
 
             {showCartDecisionModal && canRequestOrders && cartDecisionProduct && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4">
-                <div className={`order-flow-modal w-full max-h-[95vh] max-w-4xl rounded-3xl bg-white shadow-2xl overflow-hidden flex flex-col ${darkMode ? "order-flow-modal-dark" : ""}`}>
+              <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4">
+                <div className={`mobile-fullscreen-dialog order-flow-modal w-full max-h-[95vh] max-w-4xl rounded-3xl bg-white shadow-2xl overflow-hidden flex flex-col ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   {/* Sticky Header with Gradient */}
                   <div className="flex-shrink-0 bg-gradient-to-r from-red-600 to-red-700 px-6 py-5">
                     <div className="flex items-center justify-between gap-4">
@@ -4713,8 +4720,8 @@ function CustomerDashboard() {
             )}
 
             {showDeliveryConfirmModal && canRequestOrders && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 backdrop-blur-sm sm:p-4">
-                <div className={`order-flow-modal flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-3xl shadow-2xl sm:max-h-[88vh] ${darkMode ? "order-flow-modal-dark bg-slate-900" : "bg-white"}`}>
+              <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 backdrop-blur-sm sm:p-4">
+                <div className={`mobile-fullscreen-dialog order-flow-modal flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-3xl shadow-2xl sm:max-h-[88vh] ${darkMode ? "order-flow-modal-dark bg-slate-900" : "bg-white"}`}>
                   <div className={`flex-shrink-0 border-b px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
                     <div className="flex items-center justify-between gap-4">
                       <button
@@ -4740,7 +4747,7 @@ function CustomerDashboard() {
                     </div>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto">
+                  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
                     <div className={`grid gap-5 p-5 min-h-0 lg:grid-cols-[1.2fr_0.9fr] ${darkMode ? "bg-slate-950" : "bg-slate-50"}`}>
                       <div className={`space-y-4 rounded-3xl border p-5 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900" : "border-gray-200 bg-white"}`}>
                         <div className="flex items-center justify-between gap-4">
@@ -4891,8 +4898,8 @@ function CustomerDashboard() {
             )}
 
             {showOrderNowModal && canRequestOrders && orderNowProduct && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-                <div className={`order-flow-modal w-full max-w-3xl rounded-3xl bg-white shadow-2xl overflow-hidden ${darkMode ? "order-flow-modal-dark" : ""}`}>
+              <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+                <div className={`mobile-fullscreen-dialog order-flow-modal flex w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   <div className="border-b px-6 py-5 bg-red-600 text-white">
                     <div className="flex flex-col gap-1">
                       <h3 className="text-xl font-bold">Place Order</h3>
@@ -4900,7 +4907,7 @@ function CustomerDashboard() {
                     </div>
                   </div>
 
-                  <div className="grid gap-6 p-6 lg:grid-cols-[1.4fr_0.8fr]">
+                  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain grid gap-6 p-6 lg:grid-cols-[1.4fr_0.8fr]">
                     <div className="space-y-6 rounded-[32px] border border-gray-200 bg-gray-50 p-6 shadow-sm">
                       <div className="flex flex-col gap-4 rounded-3xl bg-white p-4 shadow-sm border border-gray-200">
                         <div className="flex items-center gap-4">
@@ -5020,8 +5027,8 @@ function CustomerDashboard() {
             )}
 
             {showBatchOrderModal && canRequestOrders && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 backdrop-blur-sm sm:p-4">
-                <div className={`order-flow-modal flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-3xl shadow-2xl sm:max-h-[88vh] ${darkMode ? "order-flow-modal-dark bg-slate-900" : "bg-white"}`}>
+              <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 backdrop-blur-sm sm:p-4">
+                <div className={`mobile-fullscreen-dialog order-flow-modal flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-3xl shadow-2xl sm:max-h-[88vh] ${darkMode ? "order-flow-modal-dark bg-slate-900" : "bg-white"}`}>
                   <div className={`flex-shrink-0 border-b px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
                     <div className="flex items-center justify-between gap-4">
                       <button
@@ -5193,8 +5200,8 @@ function CustomerDashboard() {
             )}
 
             {showBatchOrderConfirmModal && canRequestOrders && (
-              <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-                <div className={`w-full max-w-xl overflow-hidden rounded-2xl shadow-2xl ${darkMode ? "bg-slate-900" : "bg-white"}`}>
+              <div className="mobile-fullscreen-overlay fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto overscroll-contain bg-black/60 px-3 py-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))] backdrop-blur-sm sm:items-center sm:p-4">
+                <div className={`mobile-fullscreen-dialog flex max-h-[calc(100dvh-1rem)] min-h-0 w-full max-w-xl flex-col overflow-hidden rounded-2xl shadow-2xl ${darkMode ? "bg-slate-900" : "bg-white"}`}>
                   <div className={`flex items-center gap-3 border-b px-5 py-4 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                     <CheckCircle size={20} className="text-red-600" />
                     <h3 className={`text-lg font-bold ${darkMode ? "text-white" : "text-slate-800"}`}>
@@ -5202,7 +5209,7 @@ function CustomerDashboard() {
                     </h3>
                   </div>
 
-                  <div className={`max-h-[calc(100vh-190px)] space-y-5 overflow-y-auto px-5 py-4 text-sm ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
+                  <div className={`min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-4 text-sm sm:px-5 ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
                     <section>
                       <h4 className="border-b border-red-100 pb-2 text-xs font-bold uppercase tracking-wide text-red-700">Customer Information</h4>
                       <div className="mt-3 space-y-3">
@@ -5271,15 +5278,12 @@ function CustomerDashboard() {
                     )}
                   </div>
 
-                  <div className={`flex justify-end gap-2 border-t px-5 py-3 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200"}`}>
+                  <div className={`flex shrink-0 flex-col-reverse gap-2 border-t px-4 py-3 sm:flex-row sm:justify-end sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200"}`}>
                     <button
                       type="button"
-                      onClick={() => {
-                        setShowBatchOrderConfirmModal(false);
-                        setBatchOrderAgreed(false);
-                      }}
+                      onClick={handleCancelBatchOrderConfirm}
                       disabled={checkoutLoading}
-                      className={`rounded-lg border px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                      className={`w-full rounded-lg border px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
                     >
                       Cancel
                     </button>
@@ -5287,7 +5291,7 @@ function CustomerDashboard() {
                       type="button"
                       onClick={handleConfirmBatchOrder}
                       disabled={checkoutLoading || !batchOrderAgreed}
-                      className="inline-flex items-center gap-2 rounded-lg bg-red-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-red-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                     >
                       <CheckCircle size={16} />
                       {checkoutLoading ? "Submitting..." : "Proceed"}
@@ -5342,8 +5346,8 @@ function CustomerDashboard() {
             )}
 
             {showOrderReviewModal && canRequestOrders && (cartDecisionProduct || orderNowProduct) && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-                <div className={`w-full max-w-xl overflow-hidden rounded-2xl shadow-2xl ${darkMode ? "bg-slate-900" : "bg-white"}`}>
+              <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/60 px-3 py-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))] backdrop-blur-sm sm:items-center sm:p-4">
+                <div className={`mobile-fullscreen-dialog flex max-h-[calc(100dvh-1rem)] min-h-0 w-full max-w-xl flex-col overflow-hidden rounded-2xl shadow-2xl ${darkMode ? "bg-slate-900" : "bg-white"}`}>
                   <div className={`flex items-center gap-3 border-b px-5 py-4 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                     <CheckCircle size={20} className="text-red-600" />
                     <h3 className={`text-lg font-bold ${darkMode ? "text-white" : "text-slate-800"}`}>
@@ -5351,7 +5355,7 @@ function CustomerDashboard() {
                     </h3>
                   </div>
 
-                  <div className={`max-h-[calc(100vh-190px)] space-y-5 overflow-y-auto px-5 py-4 text-sm ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
+                  <div className={`min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-4 text-sm sm:px-5 ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
                     <section>
                       <h4 className="border-b border-red-100 pb-2 text-xs font-bold uppercase tracking-wide text-red-700">Customer Information</h4>
                       <div className="mt-3 space-y-3">
@@ -5465,14 +5469,14 @@ function CustomerDashboard() {
                     )}
                   </div>
 
-                  <div className={`flex justify-end gap-2 border-t px-5 py-3 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-slate-50"}`}>
+                  <div className={`flex shrink-0 flex-col-reverse gap-2 border-t px-4 py-3 sm:flex-row sm:justify-end sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-slate-50"}`}>
                     <button
                       type="button"
                       onClick={() => {
                         setShowOrderReviewModal(false);
                         setCartActionError("");
                       }}
-                      className={`rounded-lg border px-4 py-2.5 text-sm font-semibold transition ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}`}
+                      className={`w-full rounded-lg border px-4 py-2.5 text-sm font-semibold transition sm:w-auto ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}`}
                     >
                       Cancel
                     </button>
@@ -5480,7 +5484,7 @@ function CustomerDashboard() {
                       type="button"
                       onClick={handleSubmitOrderRequest}
                       disabled={!orderReviewAgreed || orderRequestLoading}
-                      className="inline-flex items-center gap-2 rounded-lg bg-red-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-red-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                     >
                       <CheckCircle size={16} />
                       {orderRequestLoading ? "Submitting..." : "Proceed"}
@@ -6137,12 +6141,12 @@ function CustomerDashboard() {
         )}
 
         {reviewDetailsOrder && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+          <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
             <section
               role="dialog"
               aria-modal="true"
               aria-labelledby="customer-review-details-title"
-              className={`flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border shadow-2xl ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+              className={`mobile-fullscreen-dialog flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border shadow-2xl ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
             >
               <header className={`flex items-start justify-between gap-4 border-b px-5 py-4 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                 <div className="min-w-0">
@@ -6227,13 +6231,13 @@ function CustomerDashboard() {
         )}
 
         {showCustomerReviewModal && canUploadFeedback && selectedReviewOrder && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 backdrop-blur-sm">
+          <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 backdrop-blur-sm">
             <div
               key={`${selectedReviewOrder._id || selectedReviewOrder.id}-${selectedReviewOrder.reviewItemIndex ?? "order"}`}
               role="dialog"
               aria-modal="true"
               aria-labelledby="customer-review-title"
-              className={`flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl shadow-2xl ${darkMode ? "bg-slate-900" : "bg-white"}`}
+              className={`mobile-fullscreen-dialog flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl shadow-2xl ${darkMode ? "bg-slate-900" : "bg-white"}`}
             >
               <div className={`flex items-center justify-between border-b px-5 py-3.5 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                 <div>
@@ -6405,12 +6409,12 @@ function CustomerDashboard() {
         )}
 
         {showProductReviewModal && canUploadFeedback && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+          <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
             <div
               role="dialog"
               aria-modal="true"
               aria-labelledby="product-reviews-title"
-              className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200"
+              className="mobile-fullscreen-dialog flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200"
             >
               <div className="flex flex-col gap-3 border-b border-slate-200 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
                 <div>
@@ -7061,8 +7065,8 @@ function CustomerDashboard() {
 
           {profileEditing && (
           createPortal(
-          <div className="fixed inset-0 z-[90] overflow-y-auto bg-slate-950/55 px-3 py-4 backdrop-blur-sm sm:px-6 sm:py-8">
-          <div role="dialog" aria-modal="true" aria-labelledby="customer-profile-settings-title" className="mx-auto max-h-[calc(100dvh-1.5rem)] w-full max-w-3xl overflow-y-auto overscroll-contain">
+          <div className="mobile-fullscreen-overlay fixed inset-0 z-[90] overflow-y-auto bg-slate-950/55 px-3 py-4 backdrop-blur-sm sm:px-6 sm:py-8">
+          <div role="dialog" aria-modal="true" aria-labelledby="customer-profile-settings-title" className="mobile-fullscreen-dialog mx-auto max-h-[calc(100dvh-1.5rem)] w-full max-w-3xl overflow-y-auto overscroll-contain">
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
             <div className={`rounded-2xl shadow p-4 sm:p-5 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
               <div className="flex flex-col items-center">

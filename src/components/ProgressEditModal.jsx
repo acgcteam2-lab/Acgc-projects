@@ -870,7 +870,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-stretch justify-center bg-black/50 p-0 lg:items-center lg:p-4"
+      className="mobile-fullscreen-overlay fixed inset-0 z-[70] flex items-stretch justify-center bg-black/50 p-0 lg:items-center lg:p-4"
       onClick={handleOverlayClick}
       role="presentation"
     >
@@ -887,7 +887,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
         }
       `}</style>
       <div
-        className="progress-edit-dialog flex h-[100dvh] max-h-[100dvh] w-full max-w-none flex-col overflow-hidden rounded-none border border-slate-200 bg-white lg:h-auto lg:max-h-[90vh] lg:max-w-[600px] lg:rounded-2xl"
+        className="mobile-fullscreen-dialog progress-edit-dialog flex h-[100dvh] max-h-[100dvh] w-full max-w-none flex-col overflow-hidden rounded-none border border-slate-200 bg-white lg:h-auto lg:max-h-[90vh] lg:max-w-[600px] lg:rounded-2xl"
         role="dialog"
         aria-modal="true"
         aria-labelledby="progress-edit-title"
@@ -1048,7 +1048,6 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                         <option value="pending">Pending</option>
                         <option value="in_progress">In Progress</option>
                         <option value="delayed">Delayed</option>
-                        <option value="on_hold">On Hold</option>
                       </select>
                     )}
                   </label>
@@ -1282,7 +1281,6 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                                               <option value="in_progress">In Progress</option>
                                               <option value="done">Done</option>
                                               <option value="delayed">Delayed</option>
-                                              <option value="on_hold">On Hold</option>
                                             </select>
                                           </label>
                                         </div>

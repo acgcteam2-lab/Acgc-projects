@@ -2649,9 +2649,9 @@ function SiteInspection() {
           {/* MODAL */}
 
           {showModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5">
-              <div className={`flex max-h-[calc(100dvh-1.5rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl sm:max-h-[88dvh] sm:rounded-3xl ${modalShellClass}`}>
-                <div className={`flex shrink-0 items-start justify-between gap-4 px-5 py-4 sm:px-7 sm:py-5 ${modalHeaderClass}`}>
+            <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex h-[100dvh] min-h-0 items-stretch justify-center overflow-hidden overscroll-contain bg-slate-950/60 p-0 backdrop-blur-sm sm:h-auto sm:min-h-screen sm:items-center sm:overflow-y-auto sm:p-5">
+              <div className={`mobile-fullscreen-dialog flex h-full max-h-full min-h-0 w-full max-w-none flex-col overflow-hidden rounded-none sm:h-auto sm:max-h-[88dvh] sm:max-w-4xl sm:rounded-3xl ${modalShellClass}`}>
+                <div className={`flex shrink-0 items-start justify-between gap-4 px-4 py-4 sm:px-7 sm:py-5 ${modalHeaderClass}`}>
                   <div className="flex min-w-0 items-start gap-3">
                     <span className={`mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-red-500/15 text-red-300" : "bg-red-50 text-red-600"}`}>
                       <ClipboardList size={20} aria-hidden="true" />
@@ -2672,7 +2672,7 @@ function SiteInspection() {
                   </button>
                 </div>
 
-                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:space-y-5 sm:px-6 sm:py-5">
+                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:space-y-5 sm:px-6 sm:py-5">
                   <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
                     <h3 className={modalSectionTitleClass}>Client Information</h3>
 
@@ -3265,18 +3265,18 @@ function SiteInspection() {
                   </section>
                 </div>
 
-                <div className={`sticky bottom-0 z-10 flex shrink-0 justify-end gap-3 px-5 py-4 sm:px-7 ${footerClass}`}>
+                <div className={`sticky bottom-0 z-10 flex shrink-0 flex-col-reverse gap-2 px-4 py-3 sm:flex-row sm:justify-end sm:gap-3 sm:px-7 sm:py-4 ${footerClass}`}>
                   <button
                     type="button"
                     onClick={() => setShowModal(false)}
-                    className={secondaryButtonClass}
+                    className={`${secondaryButtonClass} w-full sm:w-auto`}
                   >
                     Cancel
                   </button>
                   <button
                     type="button"
                     onClick={submitNewInspection}
-                    className={primaryButtonClass}
+                    className={`${primaryButtonClass} w-full sm:w-auto`}
                     disabled={submitting}
                   >
                     {submitting ? "Creating..." : "Create Inspection"}
@@ -3384,10 +3384,10 @@ function SiteInspection() {
             const measurementLabelClass = `text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`;
 
             return (
-              <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/45 pt-6">
+              <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/45 px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:items-center sm:p-5">
                 <div
                   data-notification-record-id={String(orderId || "")}
-                  className={`flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-[18px] border transition-shadow ${modalShellClass} ${highlightedNotificationRecordId === String(orderId || "") ? "ring-4 ring-amber-400" : ""}`}
+                  className={`mobile-fullscreen-dialog flex max-h-[calc(100dvh-1.5rem)] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-[18px] border transition-shadow ${modalShellClass} ${highlightedNotificationRecordId === String(orderId || "") ? "ring-4 ring-amber-400" : ""}`}
                 >
                   <div className={`flex shrink-0 flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-4 ${darkMode ? "border-b border-slate-700 bg-[#0b2338]" : "border-b border-slate-200 bg-white"}`}>
                     <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-4">
@@ -3428,7 +3428,7 @@ function SiteInspection() {
                     </div>
                   )}
 
-                  <div className={`flex-1 space-y-5 overflow-y-auto px-5 py-5 ${darkMode ? "bg-[#0d1b2a]" : "bg-[#f4f3f1]"}`}>
+                  <div className={`min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5 sm:py-5 ${darkMode ? "bg-[#0d1b2a]" : "bg-[#f4f3f1]"}`}>
                     <div className={`rounded-[16px] border p-5 ${darkMode ? "border-slate-700 bg-[#122d42]" : "border-slate-200 bg-[#f9f9f9]"}`}>
                       <div className="mb-4 flex items-center justify-between gap-3">
                         <div className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Client Information</div>
@@ -3636,9 +3636,9 @@ function SiteInspection() {
 
           {/* EDIT INSPECTION MODAL */}
           {editInspection && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5">
-              <div className={`flex max-h-[calc(100dvh-1.5rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl sm:max-h-[88dvh] sm:rounded-3xl ${modalShellClass}`}>
-                <div className={`flex shrink-0 items-start justify-between gap-4 px-5 py-4 sm:px-7 sm:py-5 ${modalHeaderClass}`}>
+            <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex h-[100dvh] min-h-0 items-stretch justify-center overflow-hidden overscroll-contain bg-slate-950/60 p-0 backdrop-blur-sm sm:h-auto sm:min-h-screen sm:items-center sm:overflow-y-auto sm:p-5">
+              <div className={`mobile-fullscreen-dialog flex h-full max-h-full min-h-0 w-full max-w-none flex-col overflow-hidden rounded-none sm:h-auto sm:max-h-[88dvh] sm:max-w-4xl sm:rounded-3xl ${modalShellClass}`}>
+                <div className={`flex shrink-0 items-start justify-between gap-4 px-4 py-4 sm:px-7 sm:py-5 ${modalHeaderClass}`}>
                   <div className="flex min-w-0 items-start gap-3">
                     <span className={`mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-red-500/15 text-red-300" : "bg-red-50 text-red-600"}`}>
                       <Pencil size={19} aria-hidden="true" />
@@ -3663,7 +3663,7 @@ function SiteInspection() {
                   </button>
                 </div>
 
-                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:space-y-5 sm:px-6 sm:py-5">
+                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:space-y-5 sm:px-6 sm:py-5">
                   <section className={`rounded-2xl p-5 ${modalSectionClass}`}>
                     <h3 className={`mb-5 text-[13px] font-black uppercase tracking-[0.16em] ${darkMode ? "text-red-400" : "text-red-600"}`}>
                       Client Information
@@ -4299,11 +4299,11 @@ function SiteInspection() {
                   </section>
                 </div>
 
-                <div className={`sticky bottom-0 z-10 flex shrink-0 justify-end gap-3 px-5 py-4 sm:px-7 ${footerClass}`}>
+                <div className={`sticky bottom-0 z-10 flex shrink-0 flex-col-reverse gap-2 px-4 py-3 sm:flex-row sm:justify-end sm:gap-3 sm:px-7 sm:py-4 ${footerClass}`}>
                   <button
                     type="button"
                     onClick={() => setEditInspection(null)}
-                    className={secondaryButtonClass}
+                    className={`${secondaryButtonClass} w-full sm:w-auto`}
                     disabled={savingEdit}
                   >
                     Cancel
@@ -4311,7 +4311,7 @@ function SiteInspection() {
                   <button
                     type="button"
                     onClick={saveEdit}
-                    className={primaryButtonClass}
+                    className={`${primaryButtonClass} w-full sm:w-auto`}
                     disabled={savingEdit}
                   >
                     {savingEdit ? "Saving..." : "Save Changes"}

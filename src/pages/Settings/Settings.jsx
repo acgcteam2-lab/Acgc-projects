@@ -1266,8 +1266,8 @@ function Settings() {
               </footer>
             </section>
           </div>}
-          {staffAccount && staffDraft && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) { setStaffAccount(null); setStaffDraft(null); } }}>
-            <section role="dialog" aria-modal="true" aria-labelledby="staff-access-title" className={`flex max-h-[92vh] w-full max-w-[620px] flex-col overflow-hidden rounded-xl border shadow-2xl ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+          {staffAccount && staffDraft && <div className="mobile-fullscreen-overlay fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) { setStaffAccount(null); setStaffDraft(null); } }}>
+            <section role="dialog" aria-modal="true" aria-labelledby="staff-access-title" className={`mobile-fullscreen-dialog flex max-h-[92vh] w-full max-w-[620px] flex-col overflow-hidden rounded-xl border shadow-2xl ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
               <header className={`flex items-center justify-between border-b px-5 py-4 ${darkMode ? "border-slate-800" : "border-slate-100"}`}>
                 <div><h2 id="staff-access-title" className={`text-base font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Staff Access Control</h2><p className={`mt-1 text-xs font-mono ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{`${staffAccount.first_name || "Staff"} ${staffAccount.last_name || ""}`.trim()} · Permission Matrix</p></div>
                 <button type="button" onClick={() => { setStaffAccount(null); setStaffDraft(null); }} aria-label="Close staff access settings" className={`rounded-full p-2 ${darkMode ? "text-slate-400 hover:bg-slate-800" : "text-slate-500 hover:bg-slate-100"}`}><X size={16} /></button>

@@ -994,9 +994,9 @@ function Dashboard() {
 
       {/* Order Detail Modal */}
       {selectedOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/40" onClick={() => setSelectedOrder(null)} />
-          <div className="relative bg-white rounded-3xl shadow-lg p-8 w-full max-w-2xl max-h-120 overflow-y-auto">
+          <div className="mobile-fullscreen-dialog relative bg-white rounded-3xl shadow-lg p-8 w-full max-w-2xl max-h-120 overflow-y-auto">
             <button
               onClick={() => setSelectedOrder(null)}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-2xl"

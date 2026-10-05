@@ -360,12 +360,12 @@ export default function OrderProgressTimeline({
       })}
       {photoGallery && (
         <div
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4"
+          className="mobile-fullscreen-overlay fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4"
           onClick={() => setPhotoGallery(null)}
           role="presentation"
         >
           <div
-            className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-xl border border-border bg-card"
+            className="mobile-fullscreen-dialog max-h-[90vh] w-full max-w-3xl overflow-auto rounded-xl border border-border bg-card"
             onClick={(event) => event.stopPropagation()}
             role="dialog"
             aria-modal="true"

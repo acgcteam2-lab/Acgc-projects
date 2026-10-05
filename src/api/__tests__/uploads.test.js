@@ -106,6 +106,35 @@ describe("uploadFiles", () => {
     expect(result.files.every(({ url }) => url.includes("res.cloudinary.com"))).toBe(true);
   });
 
+  it("uploads payment proofs through the authenticated backend Cloudinary endpoint", async () => {
+    let sentFormData;
+    let requestUrl;
+
+    function FakeXHR() {
+      this.upload = {};
+      this.open = vi.fn((_method, url) => { requestUrl = url; });
+      this.setRequestHeader = vi.fn();
+      this.send = (formData) => {
+        sentFormData = formData;
+        this.status = 201;
+        this.responseText = JSON.stringify({
+          success: true,
+          files: [{ key: "file", url: "https://res.cloudinary.com/demo/image/upload/proof.jpg", originalName: "proof.jpg" }],
+        });
+        this.onload();
+      };
+    }
+
+    globalThis.XMLHttpRequest = FakeXHR;
+
+    const proof = new File(["payment proof"], "proof.jpg", { type: "image/jpeg" });
+    const result = await uploadFiles([proof], undefined, { purpose: "payment-proofs" });
+
+    expect(requestUrl).toMatch(/\/api\/uploads\/payment-proofs$/);
+    expect(sentFormData.get("file").name).toBe(proof.name);
+    expect(result.files[0].url).toContain("res.cloudinary.com");
+  });
+
   it("rejects product photo uploads larger than 4 MB before sending", async () => {
     vi.stubEnv("PROD", false);
     const oversizedImage = new File([new Uint8Array(4 * 1024 * 1024 + 1)], "large.jpg", { type: "image/jpeg" });

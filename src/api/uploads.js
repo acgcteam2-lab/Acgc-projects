@@ -19,12 +19,19 @@ export const uploadFiles = async (files = [], onProgress, options = {}) => {
     }
   }
 
-  if (options.purpose === "product-images") {
+  if (options.purpose === "payment-proofs" && Array.from(files).some((file) => file.size > 4 * 1024 * 1024)) {
+    throw new Error("Payment proof must be 4 MB or smaller.");
+  }
+
+  if (["product-images", "payment-proofs"].includes(options.purpose)) {
     const fieldNames = options.fieldNames || [];
     const formData = new FormData();
     Array.from(files).forEach((file, index) => {
-      formData.append(fieldNames[index] || "files", file, file.name);
+      const fieldName = options.purpose === "payment-proofs" ? "file" : fieldNames[index] || "files";
+      formData.append(fieldName, file, file.name);
     });
+    const uploadPath = options.purpose === "payment-proofs" ? "/uploads/payment-proofs" : "/uploads/product-images";
+    const uploadLabel = options.purpose === "payment-proofs" ? "payment proof" : "product photos";
 
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
@@ -38,7 +45,7 @@ export const uploadFiles = async (files = [], onProgress, options = {}) => {
         return;
       }
 
-      xhr.open("POST", `${API_BASE}/uploads/product-images`);
+      xhr.open("POST", `${API_BASE}${uploadPath}`);
       Object.entries(headers).forEach(([key, value]) => xhr.setRequestHeader(key, value));
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable && typeof onProgress === "function") {
@@ -63,7 +70,7 @@ export const uploadFiles = async (files = [], onProgress, options = {}) => {
       };
       xhr.onerror = () => {
         removeAbortListener();
-        reject(new Error("Network error while uploading product photos."));
+        reject(new Error(`Network error while uploading ${uploadLabel}.`));
       };
       xhr.onabort = () => {
         removeAbortListener();

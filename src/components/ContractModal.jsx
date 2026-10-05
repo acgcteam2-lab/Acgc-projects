@@ -14,8 +14,8 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
   }).format(Number(value) || 0);
 
   const shellClass = darkMode
-    ? "flex max-h-[94vh] w-[min(100%,900px)] flex-col overflow-hidden rounded-2xl border border-slate-600 bg-[#0d1f2f] shadow-2xl"
-    : "flex max-h-[94vh] w-[min(100%,900px)] flex-col overflow-hidden rounded-2xl bg-slate-100 shadow-2xl";
+    ? "mobile-fullscreen-dialog flex max-h-[94vh] w-[min(100%,900px)] flex-col overflow-hidden rounded-2xl border border-slate-600 bg-[#0d1f2f] shadow-2xl"
+    : "mobile-fullscreen-dialog flex max-h-[94vh] w-[min(100%,900px)] flex-col overflow-hidden rounded-2xl bg-slate-100 shadow-2xl";
   const headerClass = darkMode ? "sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-slate-600 bg-[#11293a] px-4 py-3" : "sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3";
   const titleClass = darkMode ? "text-xl font-bold text-slate-100" : "text-xl font-bold text-slate-900";
   const buttonShellClass = darkMode ? "rounded-lg border border-slate-600 bg-[#1b3045] px-3 py-2 text-sm text-slate-100 hover:bg-[#233d57]" : "rounded-lg border bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50";
@@ -105,7 +105,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
   const agreedPaymentDate = contractData.agreedPaymentDate || formatDate(inspection.agreed_payment_date, null);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-1.5">
+    <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-1.5">
       <div className={shellClass}>
         <div className={headerClass}>
           <div>
