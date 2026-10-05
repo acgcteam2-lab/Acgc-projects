@@ -616,6 +616,32 @@ function Products() {
     );
   };
 
+  const hasUsableProductImage = (product = {}) => {
+    if (product.image_url && !isLocalBlobOrFile(product.image_url)) return true;
+    const images = product.images;
+    if (typeof images === "string") return Boolean(images.trim()) && !isLocalBlobOrFile(images);
+    if (Array.isArray(images)) {
+      return images.some((image) => {
+        const imageUrl = typeof image === "string" ? image : image?.url;
+        return Boolean(imageUrl) && !isLocalBlobOrFile(imageUrl);
+      });
+    }
+    if (images && typeof images === "object") {
+      return Object.values(images).some((imageUrl) => (
+        typeof imageUrl === "string" && imageUrl.trim() && !isLocalBlobOrFile(imageUrl)
+      ));
+    }
+    return false;
+  };
+
+  const isRenderableProduct = (product = {}) => (
+    Boolean(product.id || product._id) &&
+    Boolean(String(product.product_name || product.name || "").trim()) &&
+    Boolean(String(product.product_type || product.type || "").trim()) &&
+    Boolean(String(product.category || "").trim()) &&
+    hasUsableProductImage(product)
+  );
+
   const ensureAbsoluteUrl = (url) => {
     if (!url) return PRODUCT_IMAGE_PLACEHOLDER;
     if (isLocalBlobOrFile(url)) return PRODUCT_IMAGE_PLACEHOLDER;
@@ -1186,7 +1212,9 @@ function Products() {
     const loadProducts = async () => {
       try {
         const data = await getProducts({ adminOnly: isAdmin });
-        const loadedProducts = (data.products || []).map((product) => normalizeProductForState(product));
+        const loadedProducts = (data.products || [])
+          .map((product) => normalizeProductForState(product))
+          .filter(isRenderableProduct);
         setProducts(loadedProducts);
       } catch (error) {
         console.error("Failed to load products", error);
@@ -1294,6 +1322,10 @@ function Products() {
 
     const productName = newProduct.product_name.trim() || "Unnamed Product";
     const variant = newProduct.variant.trim();
+    const selectedProductType = newProduct.product_type.trim();
+    const selectedCategory = newProduct.category.trim();
+    const existingImages = normalizeImageMap(newProduct.images);
+    const hasMainImage = Boolean(existingImages.main || newProduct.imageFiles?.main);
     const pricingMethod = newProduct.pricing_method || (
       Number(newProduct.price_per_sqft) > 0
         ? "sqft"
@@ -1303,6 +1335,31 @@ function Products() {
         ? "fixed"
         : ""
     );
+
+    if (!selectedProductType) {
+      setModalError("Product type is required.");
+      return;
+    }
+
+    if (!newProduct.product_name.trim()) {
+      setModalError("Product name is required.");
+      return;
+    }
+
+    if (!selectedCategory) {
+      setModalError("Category is required.");
+      return;
+    }
+
+    if (!hasMainImage) {
+      setModalError("Main product photo is required.");
+      return;
+    }
+
+    if (!pricingMethod) {
+      setModalError("Enter valid pricing details before saving.");
+      return;
+    }
 
     if (pricingMethod === "sqft") {
       const w = parseFloat(newProduct.width);
@@ -1344,7 +1401,7 @@ function Products() {
 
     try {
       // If there are local files, upload them and replace previews with server URLs
-      let finalImages = normalizeImageMap(newProduct.images);
+      let finalImages = existingImages;
       if (newProduct.imageFiles && Object.keys(newProduct.imageFiles).length > 0) {
         const uploaded = await uploadImages();
         if (uploaded && uploaded.aborted) {
@@ -1366,10 +1423,10 @@ function Products() {
         unit: pricingMethod === "sqft" ? "per_sqft" : "per_piece",
         measurement_unit: newProduct.unit || "in",
         image_url: finalImages.main || "",
-        product_type: newProduct.product_type,
+        product_type: selectedProductType,
         product_name: newProduct.product_name || productName,
         pricing_method: pricingMethod,
-        category: newProduct.category || DEFAULT_CATEGORY,
+        category: selectedCategory || DEFAULT_CATEGORY,
         variant,
         base_price: numberIfEntered(newProduct.base_price),
         price_per_sqft: numberIfEntered(newProduct.price_per_sqft),

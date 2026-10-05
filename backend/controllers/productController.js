@@ -1,5 +1,63 @@
 import Product from "../models/Product.js";
 
+const trimText = (value) => String(value ?? "").trim();
+const toNonNegativeNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+};
+const hasProductImage = ({ image_url, images } = {}) => {
+  if (trimText(image_url)) return true;
+  if (typeof images === "string") return Boolean(trimText(images));
+  if (Array.isArray(images)) {
+    return images.some((image) => trimText(typeof image === "string" ? image : image?.url));
+  }
+  if (images && typeof images === "object") {
+    return Object.values(images).some((image) => trimText(image));
+  }
+  return false;
+};
+const validateProductPayload = (payload, existingProduct = null) => {
+  const merged = existingProduct ? { ...existingProduct.toObject(), ...payload } : payload;
+  const productName = trimText(merged.product_name || merged.name);
+  const productType = trimText(merged.product_type);
+  const category = trimText(merged.category);
+  const pricingMethod = trimText(merged.pricing_method);
+  const image_url = payload.image_url !== undefined ? payload.image_url : merged.image_url;
+  const images = payload.images !== undefined ? payload.images : merged.images;
+
+  if (!productName) return "Product name is required.";
+  if (!productType) return "Product type is required.";
+  if (!category) return "Category is required.";
+  if (!hasProductImage({ image_url, images })) return "Main product photo is required.";
+  if (!["sqft", "blade", "fixed", "per_piece"].includes(pricingMethod)) {
+    return "A valid pricing method is required.";
+  }
+
+  if (pricingMethod === "sqft") {
+    if (toNonNegativeNumber(merged.width) <= 0 || toNonNegativeNumber(merged.height) <= 0) {
+      return "Width and height must be greater than 0.";
+    }
+    if (toNonNegativeNumber(merged.price_per_sqft) <= 0) {
+      return "Price per sq ft is required.";
+    }
+  }
+
+  if (pricingMethod === "blade") {
+    if (toNonNegativeNumber(merged.blade_count) <= 0) {
+      return "Blade count must be greater than 0.";
+    }
+    if (toNonNegativeNumber(merged.price_per_blade) <= 0) {
+      return "Price per blade is required.";
+    }
+  }
+
+  if ((pricingMethod === "fixed" || pricingMethod === "per_piece") && toNonNegativeNumber(merged.base_price || merged.unit_price) <= 0) {
+    return "Base price is required for fixed price products.";
+  }
+
+  return "";
+};
+
 export const listProducts = async (req, res) => {
   try {
     const { search, category, adminOnly, featured } = req.query;
@@ -75,14 +133,16 @@ export const createProduct = async (req, res) => {
       images,
     } = req.body;
 
-    if (!name || !category) {
-      return res.status(400).json({ success: false, message: "Name and category are required" });
+    const validationError = validateProductPayload(req.body);
+    if (validationError) {
+      return res.status(400).json({ success: false, message: validationError });
     }
 
     const categoryValue = String(category || "other").trim().toLowerCase();
+    const productNameValue = trimText(product_name || name);
 
     const product = new Product({
-      name,
+      name: productNameValue,
       sku: sku || "",
       category: categoryValue,
       description: description || "",
@@ -94,8 +154,8 @@ export const createProduct = async (req, res) => {
       image_url: image_url || "",
       created_by: req.user?.id || undefined,
       // ERP fields
-      product_type: product_type || "",
-      product_name: product_name || name || "",
+      product_type: trimText(product_type),
+      product_name: productNameValue,
       pricing_method: pricing_method || "",
       variant: variant || "",
       base_price: Number(base_price) || 0,
@@ -128,8 +188,14 @@ export const updateProduct = async (req, res) => {
       return res.status(404).json({ success: false, message: "Product not found" });
     }
 
+    const validationError = validateProductPayload(req.body, product);
+    if (validationError) {
+      return res.status(400).json({ success: false, message: validationError });
+    }
+
+    const updatedName = trimText(req.body.product_name ?? req.body.name ?? product.product_name ?? product.name);
     const updates = {
-      name: req.body.name ?? product.name,
+      name: updatedName,
       sku: req.body.sku ?? product.sku,
       category: String(req.body.category ?? product.category ?? "other").trim().toLowerCase(),
       description: req.body.description ?? product.description,
@@ -140,8 +206,8 @@ export const updateProduct = async (req, res) => {
       is_featured: req.body.is_featured != null ? Boolean(req.body.is_featured) : product.is_featured,
       image_url: req.body.image_url ?? product.image_url,
       // ERP fields
-      product_type: req.body.product_type ?? product.product_type,
-      product_name: req.body.product_name ?? product.product_name,
+      product_type: trimText(req.body.product_type ?? product.product_type),
+      product_name: updatedName,
       pricing_method: req.body.pricing_method ?? product.pricing_method,
       variant: req.body.variant ?? product.variant,
       base_price: req.body.base_price != null ? Number(req.body.base_price) : product.base_price,
