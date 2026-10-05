@@ -52,6 +52,7 @@ import logo from "../../assets/images/ACGCLOGO1.png";
 import { useAuth } from "@/contexts/AuthContext";
 import { getProducts } from "@/api/products";
 import { API_BASE, apiFetch } from "@/api/client";
+import { resolveBackendImageUrl } from "@/lib/resolveBackendImageUrl";
 import {
   createOrder,
   getOrders,
@@ -203,6 +204,7 @@ function CustomerDashboard() {
   const ensureAbsoluteUrl = (url) => {
     if (!url) return PRODUCT_IMAGE_PLACEHOLDER;
     if (isLocalBlobOrFile(url)) return PRODUCT_IMAGE_PLACEHOLDER;
+    url = resolveBackendImageUrl(url);
     if (/^https?:\/\//i.test(url)) return url;
     if (url.startsWith("/")) return API_HOST ? `${API_HOST}${url}` : url;
     if (url.startsWith("uploads/")) return API_HOST ? `${API_HOST}/${url}` : `/${url}`;

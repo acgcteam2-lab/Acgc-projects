@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Search, Star, StarHalf } from "lucide-react";
 import { getProducts } from "../../api/products";
 import { getProductReviews } from "../../api/orders";
 import logo from "../../assets/images/ACGCLOGO1.png";
+import { resolveBackendImageUrl } from "../../lib/resolveBackendImageUrl";
 
 const getImage = (product) => {
   const candidates = [
@@ -11,7 +12,8 @@ const getImage = (product) => {
     product?.image,
     ...(Array.isArray(product?.images) ? product.images : []),
   ];
-  return candidates.find((value) => typeof value === "string" && value.trim() && !value.startsWith("blob:") && !value.startsWith("file:")) || "";
+  const imageUrl = candidates.find((value) => typeof value === "string" && value.trim() && !value.startsWith("blob:") && !value.startsWith("file:")) || "";
+  return resolveBackendImageUrl(imageUrl);
 };
 
 const getPrice = (product) => {

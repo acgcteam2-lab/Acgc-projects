@@ -143,10 +143,27 @@ export const uploadProductImages = async (req, res) => {
 
     return res.status(201).json({ success: true, files: saved });
   } catch (error) {
-    console.error("Product image Cloudinary upload failed:", error.message);
+    const upstreamStatus = Number(error.http_code || error.status) || null;
+    const upstreamMessage = (error.message || "Cloudinary upload failed")
+      .replace(process.env.CLOUDINARY_API_KEY || "\u0000", "[redacted]")
+      .replace(process.env.CLOUDINARY_API_SECRET || "\u0000", "[redacted]");
+    console.error("Product image Cloudinary upload failed:", {
+      status: upstreamStatus,
+      message: upstreamMessage,
+    });
+
+    const message = error.status === 503
+      ? error.message
+      : upstreamStatus === 401
+      ? "Cloudinary rejected the API credentials. Check that CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET are a matching active pair on the backend, then redeploy."
+      : upstreamStatus === 400
+      ? "Cloudinary rejected the image data. Try a valid JPEG, PNG, WEBP, or GIF under 4 MB."
+      : "Cloudinary upload failed. Check the backend function logs for the upstream error.";
+
     return res.status(error.status || 502).json({
       success: false,
-      message: error.status ? error.message : "Unable to upload product photos to Cloudinary.",
+      message,
+      ...(upstreamStatus ? { upstreamStatus } : {}),
     });
   }
 };

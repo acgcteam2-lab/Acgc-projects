@@ -26,6 +26,7 @@ import { getPaymentSummary } from "@/pages/Transactions/paymentProofUtils";
 import { getProducts } from "../../api/products";
 import { getProductReviews, trackOrder } from "../../api/orders";
 import logo from "../../assets/images/ACGCLOGO1.png";
+import { resolveBackendImageUrl } from "../../lib/resolveBackendImageUrl";
 
 function LandingPage() {
 
@@ -158,7 +159,7 @@ function LandingPage() {
     for (const candidate of imageCandidates) {
       if (typeof candidate === "string" && candidate.trim()) {
         if (!isLocalBlobOrFile(candidate)) {
-          return candidate;
+          return resolveBackendImageUrl(candidate);
         }
       }
     }
