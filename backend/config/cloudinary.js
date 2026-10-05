@@ -42,6 +42,24 @@ export const getCloudinaryConfig = (env = process.env) => {
   return config;
 };
 
+export const createCloudinaryUploadSignature = ({ folder, publicId, resourceType = "auto", type = "upload" }) => {
+  const config = getCloudinaryConfig();
+  const timestamp = Math.floor(Date.now() / 1000);
+  const params = { folder, public_id: publicId, timestamp };
+  if (type !== "upload") params.type = type;
+
+  return {
+    apiKey: config.api_key,
+    cloudName: config.cloud_name,
+    folder,
+    publicId,
+    resourceType,
+    timestamp,
+    type,
+    signature: cloudinary.utils.api_sign_request(params, config.api_secret),
+  };
+};
+
 export const uploadImageBuffer = (buffer, { folder }) => {
   cloudinary.config(getCloudinaryConfig());
 
@@ -55,5 +73,46 @@ export const uploadImageBuffer = (buffer, { folder }) => {
       }
     );
     uploadStream.end(buffer);
+  });
+};
+
+export const uploadPrivateRawBuffer = (buffer, publicId) => {
+  cloudinary.config(getCloudinaryConfig());
+
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_large_stream(
+      {
+        public_id: publicId,
+        resource_type: "raw",
+        type: "authenticated",
+        overwrite: true,
+        unique_filename: false,
+        chunk_size: 20_000_000,
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        if (!result?.public_id) return reject(new Error("Cloudinary did not return an archive ID."));
+        return resolve(result);
+      }
+    );
+    uploadStream.end(buffer);
+  });
+};
+
+export const getPrivateRawDownloadUrl = (publicId, format) => {
+  cloudinary.config(getCloudinaryConfig());
+  return cloudinary.utils.private_download_url(publicId, format, {
+    resource_type: "raw",
+    type: "authenticated",
+    attachment: true,
+  });
+};
+
+export const deletePrivateRawAsset = (publicId) => {
+  cloudinary.config(getCloudinaryConfig());
+  return cloudinary.uploader.destroy(publicId, {
+    resource_type: "raw",
+    type: "authenticated",
+    invalidate: true,
   });
 };

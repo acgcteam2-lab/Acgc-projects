@@ -11,7 +11,6 @@ const buildAuthHeaders = () => {
 
 export const uploadFiles = async (files = [], onProgress, options = {}) => {
   if (!files || files.length === 0) return { success: false, files: [] };
-  const useBlobUploads = options.useBlobUploads ?? import.meta.env.PROD;
 
   if (options.purpose === "product-images") {
     const totalSize = Array.from(files).reduce((size, file) => size + file.size, 0);
@@ -20,7 +19,7 @@ export const uploadFiles = async (files = [], onProgress, options = {}) => {
     }
   }
 
-  if (options.purpose === "product-images" && !useBlobUploads) {
+  if (options.purpose === "product-images") {
     const fieldNames = options.fieldNames || [];
     const formData = new FormData();
     Array.from(files).forEach((file, index) => {
@@ -75,70 +74,85 @@ export const uploadFiles = async (files = [], onProgress, options = {}) => {
     });
   }
 
-  if (useBlobUploads) {
-    const purpose = options.purpose || "uploads";
-    const fieldNames = options.fieldNames || [];
-    const { upload } = await import("@vercel/blob/client");
-    const uploadedFiles = await Promise.all(Array.from(files).map(async (file, index) => {
-      const blob = await upload(`${purpose}/${file.name}`, file, {
-        access: options.access === "private" ? "private" : "public",
-        handleUploadUrl: `${API_BASE}/uploads/${options.access === "private" ? "backup-token" : "token"}`,
-        clientPayload: JSON.stringify({ authToken: localStorage.getItem("token"), purpose }),
-        abortSignal: options.signal,
-        multipart: options.multipart,
-        onUploadProgress: (event) => {
-          if (event.total > 0 && typeof onProgress === "function") {
-            onProgress(Math.round((event.loaded / event.total) * 100));
-          }
-        },
-      });
+  const purpose = options.purpose || "uploads";
+  const totalBytes = Array.from(files).reduce((total, file) => total + file.size, 0);
+  const uploadedBytes = Array.from(files, () => 0);
+  const reportProgress = () => {
+    if (typeof onProgress !== "function" || totalBytes === 0) return;
+    onProgress(Math.round((uploadedBytes.reduce((total, loaded) => total + loaded, 0) / totalBytes) * 100));
+  };
 
-      return {
-        key: fieldNames[index] || "files",
-        url: blob.url,
-        filename: blob.pathname.split("/").pop(),
-        originalName: file.name,
-        pathname: blob.pathname,
-      };
-    }));
+  const uploadedFiles = await Promise.all(Array.from(files).map(async (file, index) => {
+    const signature = await apiFetch("/uploads/cloudinary-signature", {
+      method: "POST",
+      body: JSON.stringify({ purpose, filename: file.name }),
+    });
+    const body = new FormData();
+    body.append("file", file);
+    body.append("api_key", signature.apiKey);
+    body.append("timestamp", String(signature.timestamp));
+    body.append("signature", signature.signature);
+    body.append("folder", signature.folder);
+    body.append("public_id", signature.publicId);
+    if (signature.type !== "upload") body.append("type", signature.type);
 
-    return { success: true, files: uploadedFiles };
-  }
-
-  const fd = new FormData();
-  Array.from(files).forEach((file) => fd.append("files", file));
-  const headers = buildAuthHeaders();
-
-  if (typeof onProgress === "function") {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", `${API_BASE}/uploads`);
-      Object.entries(headers).forEach(([key, value]) => xhr.setRequestHeader(key, value));
+      const signal = options.signal;
+      const abortUpload = () => xhr.abort();
+      const removeAbortListener = () => signal?.removeEventListener("abort", abortUpload);
+
+      if (signal?.aborted) {
+        reject(new DOMException("Upload aborted.", "AbortError"));
+        return;
+      }
+
+      xhr.open("POST", `https://api.cloudinary.com/v1_1/${signature.cloudName}/${signature.resourceType}/upload`);
       xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          onProgress(Math.round((event.loaded / event.total) * 100));
-        }
+        if (!event.lengthComputable) return;
+        uploadedBytes[index] = Math.min(event.loaded, file.size);
+        reportProgress();
       };
       xhr.onload = () => {
+        removeAbortListener();
         try {
-          const response = JSON.parse(xhr.responseText || "{}");
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve(response);
-          } else {
-            const error = new Error(response.message || `Upload failed with status ${xhr.status}`);
-            error.response = response;
-            reject(error);
+          const result = JSON.parse(xhr.responseText || "{}");
+          if (xhr.status >= 200 && xhr.status < 300 && result.secure_url) {
+            uploadedBytes[index] = file.size;
+            reportProgress();
+            resolve({
+              key: options.fieldNames?.[index] || "files",
+              url: result.secure_url,
+              filename: result.public_id,
+              originalName: file.name,
+              public_id: result.public_id,
+              resource_type: result.resource_type,
+              format: result.format,
+              pathname: result.public_id,
+            });
+            return;
           }
-        } catch (err) {
-          reject(err);
+          const error = new Error(result.error?.message || `Upload failed with status ${xhr.status}`);
+          error.response = result;
+          reject(error);
+        } catch (error) {
+          reject(error);
         }
       };
-      xhr.onerror = () => reject(new Error("Network error while uploading files."));
-      xhr.send(fd);
+      xhr.onerror = () => {
+        removeAbortListener();
+        reject(new Error("Network error while uploading files to Cloudinary."));
+      };
+      xhr.onabort = () => {
+        removeAbortListener();
+        reject(new DOMException("Upload aborted.", "AbortError"));
+      };
+      signal?.addEventListener("abort", abortUpload, { once: true });
+      xhr.send(body);
     });
-  }
+  }));
 
-  return apiFetch(`/uploads`, { method: "POST", body: fd });
+  return { success: true, files: uploadedFiles };
 };
 
 export default { uploadFiles };

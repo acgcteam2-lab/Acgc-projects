@@ -1,12 +1,22 @@
 import { uploadFiles } from "../uploads";
 import { describe, it, expect, vi, afterEach } from "vitest";
 
-vi.mock("@vercel/blob/client", () => ({
-  upload: vi.fn(async (pathname) => ({
-    url: `https://blob.vercel-storage.com/${pathname}`,
-    pathname,
-  })),
-}));
+vi.mock("../client", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    apiFetch: vi.fn(async () => ({
+      apiKey: "cloudinary-key",
+      cloudName: "demo",
+      folder: "acgc/uploads",
+      publicId: "upload-id",
+      resourceType: "auto",
+      timestamp: 1234567890,
+      type: "upload",
+      signature: "signed-request",
+    })),
+  };
+});
 
 describe("uploadFiles", () => {
   const originalXHR = globalThis.XMLHttpRequest;
@@ -19,19 +29,21 @@ describe("uploadFiles", () => {
 
   it("uploads files and reports progress with onProgress callback", async () => {
     const progressEvents = [];
-    const fakeResponse = { files: [{ url: "http://example.com/proof.png" }] };
-
     function FakeXHR() {
       this.upload = {};
       this.open = vi.fn();
-      this.setRequestHeader = vi.fn();
       this.send = () => {
         setTimeout(() => {
           if (typeof this.upload.onprogress === "function") {
             this.upload.onprogress({ lengthComputable: true, loaded: 100, total: 100 });
           }
           this.status = 200;
-          this.responseText = JSON.stringify(fakeResponse);
+          this.responseText = JSON.stringify({
+            secure_url: "https://res.cloudinary.com/demo/image/upload/proof.png",
+            public_id: "acgc/uploads/upload-id",
+            resource_type: "image",
+            format: "png",
+          });
           if (typeof this.onload === "function") {
             this.onload();
           }
@@ -48,11 +60,15 @@ describe("uploadFiles", () => {
     });
 
     expect(progressEvents).toContain(100);
-    expect(result).toEqual(fakeResponse);
+    expect(result.files[0]).toEqual(expect.objectContaining({
+      url: "https://res.cloudinary.com/demo/image/upload/proof.png",
+      public_id: "acgc/uploads/upload-id",
+      originalName: "proof.png",
+    }));
   });
 
-  it("sends product photos to the backend image endpoint in development", async () => {
-    vi.stubEnv("PROD", false);
+  it.each([false, true])("sends product photos to the Cloudinary endpoint (PROD=%s)", async (isProduction) => {
+    vi.stubEnv("PROD", isProduction);
     let sentFormData;
     let requestUrl;
 
@@ -81,41 +97,21 @@ describe("uploadFiles", () => {
     const result = await uploadFiles([mainImage, leftImage], undefined, {
       purpose: "product-images",
       fieldNames: ["main", "left"],
-      useBlobUploads: false,
     });
 
     expect(requestUrl).toMatch(/\/api\/uploads\/product-images$/);
     expect(sentFormData.get("main").name).toBe(mainImage.name);
     expect(sentFormData.get("left").name).toBe(leftImage.name);
     expect(result.files.map(({ key }) => key)).toEqual(["main", "left"]);
+    expect(result.files.every(({ url }) => url.includes("res.cloudinary.com"))).toBe(true);
   });
 
-  it("uploads product photos to Blob in production", async () => {
-    vi.stubEnv("PROD", true);
-    const { upload } = await import("@vercel/blob/client");
+  it("rejects product photo uploads larger than 4 MB before sending", async () => {
+    vi.stubEnv("PROD", false);
+    const oversizedImage = new File([new Uint8Array(4 * 1024 * 1024 + 1)], "large.jpg", { type: "image/jpeg" });
 
-    const mainImage = new File(["main image"], "main.jpg", { type: "image/jpeg" });
-    const leftImage = new File(["left image"], "left.jpg", { type: "image/jpeg" });
-    const result = await uploadFiles([mainImage, leftImage], undefined, {
-      purpose: "product-images",
-      fieldNames: ["main", "left"],
-      useBlobUploads: true,
-    });
-
-    expect(upload).toHaveBeenCalledTimes(2);
-    expect(upload).toHaveBeenNthCalledWith(
-      1,
-      "product-images/main.jpg",
-      mainImage,
-      expect.objectContaining({
-        access: "public",
-        handleUploadUrl: expect.stringMatching(/\/api\/uploads\/token$/),
-      }),
-    );
-    expect(result.files).toEqual([
-      expect.objectContaining({ key: "main", url: "https://blob.vercel-storage.com/product-images/main.jpg" }),
-      expect.objectContaining({ key: "left", url: "https://blob.vercel-storage.com/product-images/left.jpg" }),
-    ]);
+    await expect(uploadFiles([oversizedImage], undefined, { purpose: "product-images" }))
+      .rejects.toThrow("Product photos must total 4 MB or less per upload.");
   });
 
 });

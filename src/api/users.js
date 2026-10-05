@@ -39,11 +39,11 @@ export const uploadSystemBackup = (file) => {
       access: "private",
       multipart: file.size > 100 * 1024 * 1024,
     }).then((result) => {
-      const pathname = result.files?.[0]?.pathname;
-      if (!pathname) throw new Error("Backup upload did not return a storage path.");
-      return apiFetch("/auth/system-settings/backups/import-blob", {
+      const uploaded = result.files?.[0];
+      if (!uploaded?.public_id || !uploaded?.format) throw new Error("Backup upload did not return a Cloudinary asset ID.");
+      return apiFetch("/auth/system-settings/backups/import-cloudinary", {
         method: "POST",
-        body: JSON.stringify({ pathname }),
+        body: JSON.stringify({ public_id: uploaded.public_id, format: uploaded.format }),
       });
     });
   }

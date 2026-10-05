@@ -1,10 +1,9 @@
 import fs from "fs";
 import path from "path";
 import multer from "multer";
-import jwt from "jsonwebtoken";
+import { randomUUID } from "node:crypto";
 import process from "node:process";
-import { handleUpload } from "@vercel/blob/client";
-import { uploadImageBuffer } from "../config/cloudinary.js";
+import { createCloudinaryUploadSignature as signCloudinaryUpload, uploadImageBuffer } from "../config/cloudinary.js";
 
 const uploadsDir = path.join(process.cwd(), "uploads");
 const isVercelRuntime = process.env.VERCEL === "1";
@@ -171,76 +170,45 @@ export const uploadProductImages = async (req, res) => {
   }
 };
 
-const createBlobUploadTokenForStore = async (req, res, privateBackupStore = false) => {
-  try {
-    const token = privateBackupStore ? process.env.BLOB_PRIVATE_READ_WRITE_TOKEN : process.env.BLOB_READ_WRITE_TOKEN;
-    if (!token) throw Object.assign(new Error(privateBackupStore ? "Private Blob backup storage is not configured." : "Blob media storage is not configured."), { status: 503 });
-
-    const result = await handleUpload({
-      request: req,
-      body: req.body,
-      token,
-      onBeforeGenerateToken: async (pathname, clientPayload) => {
-        let payload;
-        try {
-          payload = JSON.parse(clientPayload || "{}");
-        } catch {
-          throw Object.assign(new Error("Invalid upload authorization."), { status: 401 });
-        }
-
-        let user;
-        try {
-          user = jwt.verify(payload.authToken, process.env.JWT_SECRET || "your-secret-key");
-        } catch {
-          throw Object.assign(new Error("A valid sign-in is required to upload files."), { status: 401 });
-        }
-
-        if (!user?.id || !["customer", "admin", "super_admin", "skilled_worker"].includes(user.role)) {
-          throw Object.assign(new Error("You are not authorized to upload files."), { status: 403 });
-        }
-        if (pathname.startsWith("/") || pathname.split("/").some((part) => !part || part === "." || part === "..")) {
-          throw Object.assign(new Error("Invalid upload path."), { status: 400 });
-        }
-
-        const allowedPurposes = ["uploads", "review-photos", "payment-proofs", "product-images", "progress-media", "contracts", "backup-import"];
-        if (!allowedPurposes.includes(payload.purpose) || privateBackupStore !== (payload.purpose === "backup-import")) {
-          throw Object.assign(new Error("Upload purpose does not match its storage."), { status: 400 });
-        }
-        if (["product-images", "progress-media", "contracts"].includes(payload.purpose) && !["admin", "super_admin", "skilled_worker"].includes(user.role)) {
-          throw Object.assign(new Error("You are not authorized to upload this file type."), { status: 403 });
-        }
-        if (privateBackupStore && !["admin", "super_admin"].includes(user.role)) {
-          throw Object.assign(new Error("Only administrators can import backups."), { status: 403 });
-        }
-
-        return {
-          allowedContentTypes: privateBackupStore
-            ? [...allowedMimeTypes, "application/zip", "application/x-gzip", "application/gzip", "application/octet-stream"]
-            : allowedMimeTypes,
-          maximumSizeInBytes: privateBackupStore ? 512 * 1024 * 1024 : 50 * 1024 * 1024,
-          addRandomSuffix: true,
-          tokenPayload: JSON.stringify({ userId: user.id }),
-        };
-      },
-      onUploadCompleted: async ({ blob, tokenPayload }) => {
-        if (!blob?.url || !tokenPayload) throw new Error("Uploaded file metadata is incomplete.");
-      },
-    });
-
-    res.status(200).json(result);
-  } catch (error) {
-    console.error("Create Blob upload token error:", error.message);
-    res.status(error.status || 400).json({ success: false, message: error.message || "Unable to authorize file upload." });
-  }
+const SIGNED_UPLOAD_PURPOSES = {
+  uploads: { roles: ["customer", "admin", "super_admin", "skilled_worker"], resourceType: "auto" },
+  "review-photos": { roles: ["customer", "admin", "super_admin"], resourceType: "image" },
+  "payment-proofs": { roles: ["customer", "admin", "super_admin"], resourceType: "image" },
+  "progress-media": { roles: ["admin", "super_admin", "skilled_worker"], resourceType: "auto" },
+  contracts: { roles: ["admin", "super_admin", "skilled_worker"], resourceType: "auto" },
+  "backup-import": { roles: ["admin", "super_admin"], resourceType: "raw", type: "authenticated" },
 };
 
-export const createBlobUploadToken = (req, res) => createBlobUploadTokenForStore(req, res);
-export const createPrivateBackupUploadToken = (req, res) => createBlobUploadTokenForStore(req, res, true);
+export const createCloudinaryUploadSignature = (req, res) => {
+  const purpose = req.body?.purpose;
+  const uploadConfig = SIGNED_UPLOAD_PURPOSES[purpose];
+  if (!uploadConfig) {
+    return res.status(400).json({ success: false, message: "Upload purpose is not supported." });
+  }
+  if (!uploadConfig.roles.includes(req.user?.role)) {
+    return res.status(403).json({ success: false, message: "You are not authorized to upload this file type." });
+  }
+
+  try {
+    const extension = path.extname(String(req.body?.filename || "")).toLowerCase();
+    if (purpose === "backup-import" && ![".zip", ".gz", ".enc"].includes(extension)) {
+      return res.status(400).json({ success: false, message: "Upload an encrypted .zip backup, or a legacy .json.gz backup file." });
+    }
+    const signature = signCloudinaryUpload({
+      folder: `acgc/${purpose}`,
+      publicId: `${randomUUID()}${purpose === "backup-import" ? extension : ""}`,
+      resourceType: uploadConfig.resourceType,
+      type: uploadConfig.type || "upload",
+    });
+    return res.json({ success: true, ...signature });
+  } catch (error) {
+    return res.status(error.status || 503).json({ success: false, message: error.message || "Cloudinary is not configured." });
+  }
+};
 
 export default {
   uploadImages,
   uploadProductImages,
-  createBlobUploadToken,
-  createPrivateBackupUploadToken,
+  createCloudinaryUploadSignature,
   uploadMiddleware,
 };
