@@ -1245,92 +1245,27 @@ function Products() {
     const fileKeys = Object.keys(newProduct.imageFiles).filter((key) => newProduct.imageFiles[key]);
     if (fileKeys.length === 0) return { success: true, files: [] };
 
-    if (import.meta.env.PROD) {
-      const controller = new AbortController();
-      uploadRequestRef.current = controller;
-      setUploadCanceled(false);
-      setUploading(true);
-      setUploadProgress(fileKeys.reduce((acc, key) => ({ ...acc, [key]: 0 }), {}));
-      try {
-        const result = await uploadFiles(
-          fileKeys.map((key) => newProduct.imageFiles[key]),
-          (percent) => setUploadProgress(Object.fromEntries(fileKeys.map((key) => [key, percent]))),
-          { purpose: "product-images", fieldNames: fileKeys, signal: controller.signal },
-        );
-        setUploadProgress(Object.fromEntries(fileKeys.map((key) => [key, 100])));
-        setTimeout(() => setUploadProgress({}), 700);
-        return result;
-      } catch (error) {
-        if (controller.signal.aborted) return { aborted: true };
-        throw error;
-      } finally {
-        setUploading(false);
-        uploadRequestRef.current = null;
-      }
-    }
-
+    const controller = new AbortController();
+    uploadRequestRef.current = controller;
     setUploadCanceled(false);
     setUploading(true);
-    const progressInitial = fileKeys.reduce((acc, key) => ({ ...acc, [key]: 0 }), {});
-    setUploadProgress(progressInitial);
-
-    const formData = new FormData();
-    fileKeys.forEach((key) => {
-      const file = newProduct.imageFiles[key];
-      formData.append(key, file, file.name);
-    });
-
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      uploadRequestRef.current = xhr;
-
-      xhr.upload.onprogress = (event) => {
-        if (!event.lengthComputable) return;
-        const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
-        setUploadProgress((prev) => {
-          const next = { ...prev };
-          fileKeys.forEach((key) => (next[key] = percent));
-          return next;
-        });
-      };
-
-      xhr.onload = () => {
-        setUploading(false);
-        uploadRequestRef.current = null;
-        try {
-          const json = JSON.parse(xhr.responseText || "{}");
-          if (xhr.status >= 200 && xhr.status < 300 && json.success) {
-            setUploadProgress((prev) => {
-              const next = { ...prev };
-              fileKeys.forEach((key) => (next[key] = 100));
-              return next;
-            });
-            setTimeout(() => setUploadProgress({}), 700);
-            resolve(json);
-          } else {
-            reject(json);
-          }
-        } catch (err) {
-          reject(err);
-        }
-      };
-
-      xhr.onerror = () => {
-        setUploading(false);
-        uploadRequestRef.current = null;
-        reject(new Error("Upload failed"));
-      };
-
-      xhr.onabort = () => {
-        setUploading(false);
-        uploadRequestRef.current = null;
-        setUploadCanceled(true);
-        resolve({ aborted: true });
-      };
-
-      xhr.open("POST", "/api/uploads", true);
-      xhr.send(formData);
-    });
+    setUploadProgress(fileKeys.reduce((acc, key) => ({ ...acc, [key]: 0 }), {}));
+    try {
+      const result = await uploadFiles(
+        fileKeys.map((key) => newProduct.imageFiles[key]),
+        (percent) => setUploadProgress(Object.fromEntries(fileKeys.map((key) => [key, percent]))),
+        { purpose: "product-images", fieldNames: fileKeys, signal: controller.signal },
+      );
+      setUploadProgress(Object.fromEntries(fileKeys.map((key) => [key, 100])));
+      setTimeout(() => setUploadProgress({}), 700);
+      return result;
+    } catch (error) {
+      if (controller.signal.aborted) return { aborted: true };
+      throw error;
+    } finally {
+      setUploading(false);
+      uploadRequestRef.current = null;
+    }
   };
 
   const cancelUpload = () => {

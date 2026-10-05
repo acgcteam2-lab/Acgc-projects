@@ -1,9 +1,6 @@
 import { uploadFiles } from "../uploads";
 import { describe, it, expect, vi, afterEach } from "vitest";
 
-vi.mock("@vercel/blob/client", () => ({ upload: vi.fn() }));
-import { upload } from "@vercel/blob/client";
-
 describe("uploadFiles", () => {
   const originalXHR = globalThis.XMLHttpRequest;
 
@@ -47,7 +44,11 @@ describe("uploadFiles", () => {
     expect(result).toEqual(fakeResponse);
   });
 
-  it("sends product photos to the backend with their image slot names", async () => {
+  it.each([
+    ["development", false],
+    ["production", true],
+  ])("sends product photos to Cloudinary in %s", async (_environment, isProduction) => {
+    vi.stubEnv("PROD", isProduction);
     let sentFormData;
     let requestUrl;
 
@@ -84,35 +85,4 @@ describe("uploadFiles", () => {
     expect(result.files.map(({ key }) => key)).toEqual(["main", "left"]);
   });
 
-  it("stores production product photos in Blob and preserves their image slots", async () => {
-    vi.stubEnv("PROD", true);
-    vi.mocked(upload).mockResolvedValue({
-      url: "https://blob.example/products/main.jpg",
-      pathname: "product-images/main.jpg",
-    });
-    const openRequest = vi.fn();
-    globalThis.XMLHttpRequest = function FakeXHR() {
-      this.open = openRequest;
-    };
-
-    const mainImage = new File(["main image"], "main.jpg", { type: "image/jpeg" });
-    const result = await uploadFiles([mainImage], undefined, {
-      purpose: "product-images",
-      fieldNames: ["main"],
-    });
-
-    expect(openRequest).not.toHaveBeenCalled();
-    expect(upload).toHaveBeenCalledWith(
-      "product-images/main.jpg",
-      mainImage,
-      expect.objectContaining({
-        access: "public",
-        handleUploadUrl: "/api/uploads/token",
-        clientPayload: expect.stringContaining('"purpose":"product-images"'),
-      }),
-    );
-    expect(result.files).toEqual([
-      expect.objectContaining({ key: "main", url: "https://blob.example/products/main.jpg" }),
-    ]);
-  });
 });

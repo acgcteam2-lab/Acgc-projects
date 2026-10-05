@@ -19,7 +19,7 @@ export const uploadFiles = async (files = [], onProgress, options = {}) => {
     }
   }
 
-  if (options.purpose === "product-images" && !import.meta.env.PROD) {
+  if (options.purpose === "product-images") {
     const fieldNames = options.fieldNames || [];
     const formData = new FormData();
     Array.from(files).forEach((file, index) => {
