@@ -13,11 +13,14 @@ export const uploadFiles = async (files = [], onProgress, options = {}) => {
   if (!files || files.length === 0) return { success: false, files: [] };
 
   if (options.purpose === "product-images") {
-    const fieldNames = options.fieldNames || [];
     const totalSize = Array.from(files).reduce((size, file) => size + file.size, 0);
     if (totalSize > 4 * 1024 * 1024) {
       throw new Error("Product photos must total 4 MB or less per upload.");
     }
+  }
+
+  if (options.purpose === "product-images" && !import.meta.env.PROD) {
+    const fieldNames = options.fieldNames || [];
     const formData = new FormData();
     Array.from(files).forEach((file, index) => {
       formData.append(fieldNames[index] || "files", file, file.name);
