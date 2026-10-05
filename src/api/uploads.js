@@ -11,6 +11,7 @@ const buildAuthHeaders = () => {
 
 export const uploadFiles = async (files = [], onProgress, options = {}) => {
   if (!files || files.length === 0) return { success: false, files: [] };
+  const useBlobUploads = options.useBlobUploads ?? import.meta.env.PROD;
 
   if (options.purpose === "product-images") {
     const totalSize = Array.from(files).reduce((size, file) => size + file.size, 0);
@@ -19,7 +20,7 @@ export const uploadFiles = async (files = [], onProgress, options = {}) => {
     }
   }
 
-  if (options.purpose === "product-images") {
+  if (options.purpose === "product-images" && !useBlobUploads) {
     const fieldNames = options.fieldNames || [];
     const formData = new FormData();
     Array.from(files).forEach((file, index) => {
@@ -74,7 +75,7 @@ export const uploadFiles = async (files = [], onProgress, options = {}) => {
     });
   }
 
-  if (import.meta.env.PROD) {
+  if (useBlobUploads) {
     const purpose = options.purpose || "uploads";
     const fieldNames = options.fieldNames || [];
     const { upload } = await import("@vercel/blob/client");

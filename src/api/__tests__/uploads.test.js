@@ -1,6 +1,13 @@
 import { uploadFiles } from "../uploads";
 import { describe, it, expect, vi, afterEach } from "vitest";
 
+vi.mock("@vercel/blob/client", () => ({
+  upload: vi.fn(async (pathname) => ({
+    url: `https://blob.vercel-storage.com/${pathname}`,
+    pathname,
+  })),
+}));
+
 describe("uploadFiles", () => {
   const originalXHR = globalThis.XMLHttpRequest;
 
@@ -44,11 +51,8 @@ describe("uploadFiles", () => {
     expect(result).toEqual(fakeResponse);
   });
 
-  it.each([
-    ["development", false],
-    ["production", true],
-  ])("sends product photos to Cloudinary in %s", async (_environment, isProduction) => {
-    vi.stubEnv("PROD", isProduction);
+  it("sends product photos to the backend image endpoint in development", async () => {
+    vi.stubEnv("PROD", false);
     let sentFormData;
     let requestUrl;
 
@@ -77,12 +81,41 @@ describe("uploadFiles", () => {
     const result = await uploadFiles([mainImage, leftImage], undefined, {
       purpose: "product-images",
       fieldNames: ["main", "left"],
+      useBlobUploads: false,
     });
 
     expect(requestUrl).toMatch(/\/api\/uploads\/product-images$/);
     expect(sentFormData.get("main").name).toBe(mainImage.name);
     expect(sentFormData.get("left").name).toBe(leftImage.name);
     expect(result.files.map(({ key }) => key)).toEqual(["main", "left"]);
+  });
+
+  it("uploads product photos to Blob in production", async () => {
+    vi.stubEnv("PROD", true);
+    const { upload } = await import("@vercel/blob/client");
+
+    const mainImage = new File(["main image"], "main.jpg", { type: "image/jpeg" });
+    const leftImage = new File(["left image"], "left.jpg", { type: "image/jpeg" });
+    const result = await uploadFiles([mainImage, leftImage], undefined, {
+      purpose: "product-images",
+      fieldNames: ["main", "left"],
+      useBlobUploads: true,
+    });
+
+    expect(upload).toHaveBeenCalledTimes(2);
+    expect(upload).toHaveBeenNthCalledWith(
+      1,
+      "product-images/main.jpg",
+      mainImage,
+      expect.objectContaining({
+        access: "public",
+        handleUploadUrl: expect.stringMatching(/\/api\/uploads\/token$/),
+      }),
+    );
+    expect(result.files).toEqual([
+      expect.objectContaining({ key: "main", url: "https://blob.vercel-storage.com/product-images/main.jpg" }),
+      expect.objectContaining({ key: "left", url: "https://blob.vercel-storage.com/product-images/left.jpg" }),
+    ]);
   });
 
 });
