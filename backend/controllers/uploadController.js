@@ -155,7 +155,7 @@ export const uploadProductImages = async (req, res) => {
     const message = error.status === 503
       ? error.message
       : upstreamStatus === 401
-      ? "Cloudinary rejected the API credentials. Check that CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET are a matching active pair on the backend, then redeploy."
+      ? "Cloudinary rejected the API credentials. Verify that CLOUDINARY_URL or the split Cloudinary variables contain the matching active credentials from the same Cloudinary account, then redeploy the backend."
       : upstreamStatus === 400
       ? "Cloudinary rejected the image data. Try a valid JPEG, PNG, WEBP, or GIF under 4 MB."
       : "Cloudinary upload failed. Check the backend function logs for the upstream error.";

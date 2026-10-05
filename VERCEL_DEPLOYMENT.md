@@ -26,7 +26,7 @@ Set these in the backend service's Vercel environment settings:
 
 - `MONGO_URI`
 - `JWT_SECRET`
-- `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` for server-side product image uploads
+- `CLOUDINARY_URL` (copied from Cloudinary's API environment variable field), or `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` for server-side product image uploads
 - `BACKUP_ENCRYPTION_KEY` (the existing key is required to read old encrypted backups)
 - `CRON_SECRET` (a newly generated long random secret)
 - `BLOB_READ_WRITE_TOKEN` (provided by the public media store)
