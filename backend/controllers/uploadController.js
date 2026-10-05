@@ -211,6 +211,18 @@ export const uploadProductImages = async (req, res) => {
       message: upstreamMessage,
     });
 
+    if (canUseLocalUploadFallback()) {
+      try {
+        const saved = await Promise.all(
+          files.map(async ({ key, file }) => saveBufferedUploadLocally(req, file, key))
+        );
+        console.warn("Product images saved locally because Cloudinary upload failed.");
+        return res.status(201).json({ success: true, files: saved, fallback: "local" });
+      } catch (fallbackError) {
+        console.error("Product image local upload fallback failed:", fallbackError);
+      }
+    }
+
     const isDisabledApiKey = upstreamStatus === 401 && /disabled api[_ ]key/i.test(upstreamMessage);
     const isCloudNameMismatch = upstreamStatus === 401 && /cloud_name mismatch/i.test(upstreamMessage);
     const message = error.status === 503

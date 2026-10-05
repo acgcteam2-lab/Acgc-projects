@@ -9,6 +9,7 @@ import {
   X,
   ChevronDown,
   Star,
+  Check,
 } from "lucide-react";
 import toast, { Toaster } from "react-hot-toast";
 import * as catalogApi from '@/api/catalog';
@@ -277,6 +278,7 @@ function ProductFormModal({
   uploaderSections,
   uploadProgress,
   uploading,
+  saving,
   modalError,
   saveProduct,
   closeModal,
@@ -299,11 +301,16 @@ function ProductFormModal({
     }));
   };
 
-  const removeImage = (key) => setNewProduct((product) => ({
-    ...product,
-    images: { ...product.images, [key]: undefined },
-    imageFiles: { ...product.imageFiles, [key]: undefined },
-  }));
+  const removeImage = (key) => setNewProduct((product) => {
+    const images = { ...(product.images || {}) };
+    const imageFiles = { ...(product.imageFiles || {}) };
+    if (typeof images[key] === "string" && images[key].startsWith("blob:")) {
+      URL.revokeObjectURL(images[key]);
+    }
+    delete images[key];
+    delete imageFiles[key];
+    return { ...product, images, imageFiles };
+  });
 
   const renderImageDropzone = ([key, label], isMain = false) => (
     <div key={key}>
@@ -386,8 +393,9 @@ function ProductFormModal({
           <button
             type="button"
             onClick={closeModal}
+            disabled={saving || uploading}
             aria-label="Close product form"
-            className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition ${darkMode ? "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white" : "border-rose-100 bg-white text-slate-500 hover:bg-rose-50 hover:text-slate-900"}`}
+            className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white" : "border-rose-100 bg-white text-slate-500 hover:bg-rose-50 hover:text-slate-900"}`}
           >
             <X size={18} />
           </button>
@@ -574,12 +582,12 @@ function ProductFormModal({
         </div>
 
         <footer className={`flex shrink-0 justify-end gap-3 border-t px-5 py-3 sm:px-7 ${darkMode ? "border-slate-700 bg-slate-800" : "border-rose-100 bg-[#fff8f7]"}`}>
-          <button type="button" onClick={closeModal} className={`rounded-xl border px-5 py-2.5 text-sm font-semibold transition ${darkMode ? "border-slate-600 bg-slate-900 text-slate-200 hover:bg-slate-700" : "border-rose-200 bg-white text-slate-700 hover:bg-rose-50"}`}>
+          <button type="button" onClick={closeModal} disabled={saving || uploading} className={`rounded-xl border px-5 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-slate-600 bg-slate-900 text-slate-200 hover:bg-slate-700" : "border-rose-200 bg-white text-slate-700 hover:bg-rose-50"}`}>
             Cancel
           </button>
-          <button type="button" onClick={saveProduct} disabled={uploading} className={`inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "bg-red-700 hover:bg-red-600" : "bg-red-900 hover:bg-red-800"}`}>
-            <span aria-hidden="true">✓</span>
-            {editingProduct ? "Update Product" : "Create Product"}
+          <button type="button" onClick={saveProduct} disabled={saving || uploading} className={`inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "bg-red-700 hover:bg-red-600" : "bg-red-900 hover:bg-red-800"}`}>
+            <Check size={16} aria-hidden="true" />
+            {saving ? "Saving..." : editingProduct ? "Update Product" : "Create Product"}
           </button>
         </footer>
       </section>
@@ -599,6 +607,14 @@ function Products() {
   })();
 
   const isLocalBlobOrFile = (url) => typeof url === "string" && (url.startsWith("blob:") || url.startsWith("file:"));
+  const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key);
+  const normalizeImageMap = (images = {}) => {
+    if (!images || typeof images !== "object" || Array.isArray(images)) return {};
+    return Object.fromEntries(
+      Object.entries(images)
+        .filter(([, value]) => typeof value === "string" ? value.trim() : Boolean(value))
+    );
+  };
 
   const ensureAbsoluteUrl = (url) => {
     if (!url) return PRODUCT_IMAGE_PLACEHOLDER;
@@ -612,30 +628,23 @@ function Products() {
 
   const resolveProductImage = (product) => {
     if (!product) return PRODUCT_IMAGE_PLACEHOLDER;
-    if (product.image && !isLocalBlobOrFile(product.image)) return ensureAbsoluteUrl(product.image);
+    const hasImageUrlField = hasOwn(product, "image_url");
     if (product.image_url && !isLocalBlobOrFile(product.image_url)) return ensureAbsoluteUrl(product.image_url);
     const imgs = product.images;
-    if (!imgs) return PRODUCT_IMAGE_PLACEHOLDER;
+    if (imgs && typeof imgs === "object" && !Array.isArray(imgs) && hasOwn(imgs, "main")) {
+      return ensureAbsoluteUrl(imgs.main);
+    }
+    if (hasImageUrlField || (imgs && typeof imgs === "object" && !Array.isArray(imgs))) {
+      return PRODUCT_IMAGE_PLACEHOLDER;
+    }
     if (typeof imgs === "string") return ensureAbsoluteUrl(imgs);
     if (Array.isArray(imgs) && imgs.length > 0) {
       const first = imgs[0];
       if (typeof first === "string") return ensureAbsoluteUrl(first);
       if (first && typeof first === "object" && first.url) return ensureAbsoluteUrl(first.url);
     }
-    if (typeof imgs === "object") {
-      if (imgs.main && !isLocalBlobOrFile(imgs.main)) return ensureAbsoluteUrl(imgs.main);
-      const keys = Object.keys(imgs);
-      for (let k of keys) {
-        const val = imgs[k];
-        if (!val) continue;
-        if (typeof val === "string" && !isLocalBlobOrFile(val)) return ensureAbsoluteUrl(val);
-        if (Array.isArray(val) && val.length > 0) {
-          const f = val[0];
-          if (typeof f === "string") return ensureAbsoluteUrl(f);
-          if (f && f.url) return ensureAbsoluteUrl(f.url);
-        }
-        if (val && val.url && !isLocalBlobOrFile(val.url)) return ensureAbsoluteUrl(val.url);
-      }
+    if (!hasImageUrlField && !hasOwn(product, "images") && product.image && !isLocalBlobOrFile(product.image)) {
+      return ensureAbsoluteUrl(product.image);
     }
     return PRODUCT_IMAGE_PLACEHOLDER;
   };
@@ -1006,8 +1015,10 @@ function Products() {
 
   const [uploadProgress, setUploadProgress] = useState({});
   const [uploading, setUploading] = useState(false);
+  const [savingProduct, setSavingProduct] = useState(false);
   const [uploadCanceled, setUploadCanceled] = useState(false);
   const uploadRequestRef = useRef(null);
+  const saveProductRequestRef = useRef(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -1174,7 +1185,7 @@ function Products() {
   useEffect(() => {
     const loadProducts = async () => {
       try {
-        const data = await getProducts();
+        const data = await getProducts({ adminOnly: isAdmin });
         const loadedProducts = (data.products || []).map((product) => normalizeProductForState(product));
         setProducts(loadedProducts);
       } catch (error) {
@@ -1183,7 +1194,7 @@ function Products() {
     };
 
     loadProducts();
-  }, []);
+  }, [isAdmin]);
 
     const openModal = (product = null) => {
       setModalError("");
@@ -1275,6 +1286,7 @@ function Products() {
   };
 
   const saveProduct = async () => {
+    if (saveProductRequestRef.current) return;
     if (!isAdmin) {
       setModalError("Only administrators can save products.");
       return;
@@ -1326,9 +1338,13 @@ function Products() {
 
     const numberIfEntered = (value) => (value === "" || value == null ? undefined : Number(value));
 
+    saveProductRequestRef.current = true;
+    setSavingProduct(true);
+    setModalError("");
+
     try {
       // If there are local files, upload them and replace previews with server URLs
-      let finalImages = newProduct.images;
+      let finalImages = normalizeImageMap(newProduct.images);
       if (newProduct.imageFiles && Object.keys(newProduct.imageFiles).length > 0) {
         const uploaded = await uploadImages();
         if (uploaded && uploaded.aborted) {
@@ -1338,7 +1354,7 @@ function Products() {
         if (uploaded && uploaded.files) {
           const mapping = {};
           uploaded.files.forEach((f) => { mapping[f.key] = f.url; });
-          finalImages = { ...newProduct.images, ...mapping };
+          finalImages = normalizeImageMap({ ...finalImages, ...mapping });
           setNewProduct((prev) => ({ ...prev, images: finalImages, imageFiles: {} }));
         }
       }
@@ -1349,7 +1365,7 @@ function Products() {
         unit_price: Number(newProduct.estimated_price_override) || Number(newProduct.estimated_price) || Number(newProduct.base_price) || Number(newProduct.price_per_sqft) || 0,
         unit: pricingMethod === "sqft" ? "per_sqft" : "per_piece",
         measurement_unit: newProduct.unit || "in",
-        image_url: finalImages?.main || editingProduct?.image_url || "",
+        image_url: finalImages.main || "",
         product_type: newProduct.product_type,
         product_name: newProduct.product_name || productName,
         pricing_method: pricingMethod,
@@ -1385,8 +1401,12 @@ function Products() {
       } else {
         const created = await createProductApi(payload);
         const product = created.product || created;
-        const refreshedProducts = await getProducts({ adminOnly: true });
-        setProducts((refreshedProducts.products || []).map((item) => normalizeProductForState(item)));
+        setProducts((current) => {
+          const normalizedProduct = normalizeProductForState(product);
+          const createdId = normalizedProduct.id || normalizedProduct._id;
+          if (current.some((item) => item.id === createdId || item._id === createdId)) return current;
+          return [normalizedProduct, ...current];
+        });
         recordActivity(user, `Created product ${productName}.`, "Products");
         toast.success("Product added successfully.");
       }
@@ -1397,6 +1417,9 @@ function Products() {
       setModalError(
         error.data?.message || error.message || "Unable to save product."
       );
+    } finally {
+      saveProductRequestRef.current = false;
+      setSavingProduct(false);
     }
   };
 
@@ -1719,6 +1742,7 @@ function Products() {
           uploaderSections={uploaderSections}
           uploadProgress={uploadProgress}
           uploading={uploading}
+          saving={savingProduct}
           modalError={modalError}
           saveProduct={saveProduct}
           closeModal={closeModal}
