@@ -12,6 +12,7 @@ import {
   createSystemBackup,
   deleteSystemBackup,
   getSystemBackupDownload,
+  hydrateBackupHistorySizes,
   importSystemBackup,
   importSystemBackupFromCloudinary,
   runScheduledBackup,
@@ -195,6 +196,7 @@ const sendPasswordResetCode = async (account, code) => {
 router.get("/system-settings", authMiddleware, async (req, res) => {
   try {
     const settings = await SystemSetting.findOne({ key: "global" }).lean();
+    const backupHistory = await hydrateBackupHistorySizes(settings?.backup_history);
     res.json({
       success: true,
       maintenance_mode: settings?.maintenance_mode === true,
@@ -202,7 +204,7 @@ router.get("/system-settings", authMiddleware, async (req, res) => {
       backup_schedule: settings?.backup_schedule || "weekly",
       backup_status: settings?.backup_status || "Success",
       last_backup_at: settings?.last_backup_at || null,
-      backup_history: Array.isArray(settings?.backup_history) ? settings.backup_history : [],
+      backup_history: backupHistory,
     });
   } catch (error) {
     console.error("Get system settings error:", error);
@@ -245,6 +247,7 @@ router.patch("/system-settings", authMiddleware, roleMiddleware(["admin", "super
       { $set: update },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     ).lean();
+    const backupHistory = await hydrateBackupHistorySizes(settings.backup_history);
     res.json({
       success: true,
       maintenance_mode: settings.maintenance_mode === true,
@@ -252,7 +255,7 @@ router.patch("/system-settings", authMiddleware, roleMiddleware(["admin", "super
       backup_schedule: settings.backup_schedule || "weekly",
       backup_status: settings.backup_status || "Success",
       last_backup_at: settings.last_backup_at || null,
-      backup_history: Array.isArray(settings.backup_history) ? settings.backup_history : [],
+      backup_history: backupHistory,
     });
   } catch (error) {
     console.error("Update system settings error:", error);

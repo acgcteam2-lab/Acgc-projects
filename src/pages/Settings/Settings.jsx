@@ -528,7 +528,7 @@ function Settings() {
                             <td className="px-4 py-3">
                               <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${backup.type === "Full System" ? darkMode ? "border-red-400/60 bg-red-950/70 text-red-200" : "border-brand/50 bg-brand/[0.08] text-brand" : darkMode ? "border-slate-700 bg-slate-800 text-slate-300" : "border-border bg-muted text-muted-foreground"}`}>{backup.type}</span>
                             </td>
-                            <td className={`px-4 py-3 text-right text-sm tabular-nums ${darkMode ? "text-slate-200" : "text-slate-900"}`}>{formatBackupSize(backup.size)}</td>
+                            <td className={`px-4 py-3 text-right text-sm tabular-nums ${darkMode ? "text-slate-200" : "text-slate-900"}`}>{formatBackupSize(backup)}</td>
                             <td className="px-4 py-3">
                               <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${darkMode ? "bg-green-950/50 text-green-300" : "bg-green-500/10 text-green-700"}`}>
                                 <span className="size-1.5 rounded-full bg-green-500" />
@@ -574,7 +574,7 @@ function Settings() {
                         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                           <div className="flex min-w-0 flex-wrap items-center gap-2">
                             <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${backup.type === "Full System" ? darkMode ? "border-red-400/60 bg-red-950/70 text-red-200" : "border-brand/50 bg-brand/[0.08] text-brand" : darkMode ? "border-slate-700 bg-slate-800 text-slate-300" : "border-border bg-muted text-muted-foreground"}`}>{backup.type}</span>
-                            <span className={`text-xs tabular-nums ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{formatBackupSize(backup.size)}</span>
+                            <span className={`text-xs tabular-nums ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{formatBackupSize(backup)}</span>
                           </div>
                           <div className="flex gap-2">
                             <button type="button" onClick={() => handleDownloadBackup(backup)} disabled={downloadingBackupId !== null} title="Download encrypted backup with transactions Excel report" aria-label={`Download complete backup ${backup.name}`} className={`inline-flex size-9 items-center justify-center rounded-[10px] disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "bg-blue-950/70 text-blue-300 hover:bg-blue-700 hover:text-white" : "bg-blue-500/10 text-blue-700 hover:bg-blue-600 hover:text-white"}`}>
@@ -845,7 +845,18 @@ function Settings() {
     });
   };
 
-  const formatBackupSize = (sizeInMB) => `${Number(sizeInMB || 0).toFixed(1)} MB`;
+  const formatBackupSize = (backup) => {
+    const sizeBytes = Number(backup?.sizeBytes);
+    if (Number.isFinite(sizeBytes) && sizeBytes > 0) {
+      if (sizeBytes < 1024) return `${sizeBytes} B`;
+      if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(sizeBytes < 100 * 1024 ? 1 : 0)} KB`;
+      return `${(sizeBytes / (1024 * 1024)).toFixed(sizeBytes < 10 * 1024 * 1024 ? 2 : 1)} MB`;
+    }
+
+    const sizeInMB = Number(backup?.size);
+    if (!Number.isFinite(sizeInMB) || sizeInMB <= 0) return "Under 0.1 MB";
+    return `${sizeInMB.toFixed(sizeInMB < 10 ? 2 : 1)} MB`;
+  };
 
   const backupMetrics = useMemo(() => {
     const backups = backupState.backups || [];

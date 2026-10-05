@@ -228,6 +228,7 @@ const getBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backu
 const getLegacyEncryptedBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backupId}.json.gz.enc`);
 const getLegacyBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backupId}.json.gz`);
 const getBackupCloudinaryPublicId = (backupId) => `acgc/backups/${backupId}.zip`;
+const getBackupSizeInMB = (byteLength) => Number((byteLength / (1024 * 1024)).toFixed(3));
 
 const getStoredBackupBuffer = async (backupId) => {
   if (usesCloudinaryStorage()) {
@@ -249,6 +250,41 @@ const getStoredBackupBuffer = async (backupId) => {
     }
   }
   throw backupError("Backup file is not available.", 404);
+};
+
+const getStoredBackupSizeBytes = async (backupId) => {
+  if (usesCloudinaryStorage()) return null;
+
+  for (const filePath of [
+    getBackupFilePath(backupId),
+    getLegacyEncryptedBackupFilePath(backupId),
+    getLegacyBackupFilePath(backupId),
+  ]) {
+    try {
+      return (await fs.stat(filePath)).size;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+};
+
+export const hydrateBackupHistorySizes = async (backupHistory = []) => {
+  if (!Array.isArray(backupHistory) || backupHistory.length === 0) return [];
+
+  return Promise.all(backupHistory.map(async (backup) => {
+    if (!backup || typeof backup !== "object") return backup;
+    if (Number.isFinite(Number(backup.sizeBytes)) && Number(backup.sizeBytes) > 0) return backup;
+
+    const sizeBytes = await getStoredBackupSizeBytes(backup.id);
+    if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return backup;
+
+    return {
+      ...backup,
+      sizeBytes,
+      size: getBackupSizeInMB(sizeBytes),
+    };
+  }));
 };
 
 const storeBackupBuffer = async (backupId, buffer) => {
@@ -290,7 +326,8 @@ export const createSystemBackup = async (type) => {
     name: `${type.toUpperCase().replace(/\s+/g, "_")}_BACKUP_${now.toISOString().slice(0, 10)}`,
     type,
     date: now.toISOString(),
-    size: Number((backupBuffer.length / (1024 * 1024)).toFixed(1)),
+    size: getBackupSizeInMB(backupBuffer.length),
+    sizeBytes: backupBuffer.length,
     status: "Success",
   };
 
@@ -332,7 +369,8 @@ export const importSystemBackup = async (source) => {
     name: `IMPORTED_BACKUP_${now.toISOString().slice(0, 10)}`,
     type,
     date: now.toISOString(),
-    size: Number((backupBuffer.length / (1024 * 1024)).toFixed(1)),
+    size: getBackupSizeInMB(backupBuffer.length),
+    sizeBytes: backupBuffer.length,
     status: "Success",
   };
 
