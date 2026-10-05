@@ -112,6 +112,42 @@ const cleanupFiles = async (files = []) => {
   );
 };
 
+const getSafeUploadExtension = (file) => {
+  const originalExtension = path.extname(file.originalname || "").toLowerCase();
+  if (originalExtension) return originalExtension;
+  if (file.mimetype === "application/pdf") return ".pdf";
+  if (file.mimetype === "image/jpeg") return ".jpg";
+  if (file.mimetype === "image/png") return ".png";
+  if (file.mimetype === "image/webp") return ".webp";
+  if (file.mimetype === "image/gif") return ".gif";
+  return "";
+};
+
+const saveBufferedUploadLocally = async (req, file, fieldname = "file") => {
+  await fs.promises.mkdir(uploadsDir, { recursive: true });
+  const extension = getSafeUploadExtension(file);
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${fieldname}${extension}`;
+  const filepath = path.join(uploadsDir, filename);
+  await fs.promises.writeFile(filepath, file.buffer);
+  return {
+    key: fieldname,
+    url: `${req.protocol}://${req.get("host")}/uploads/${filename}`,
+    filename,
+    originalName: file.originalname,
+    public_id: filename,
+    resource_type: file.mimetype === "application/pdf" ? "raw" : "image",
+    format: extension.replace(/^\./, ""),
+    storage: "local",
+  };
+};
+
+const canUseLocalUploadFallback = () => process.env.VERCEL !== "1" && process.env.NODE_ENV !== "production";
+
+const getRedactedCloudinaryMessage = (error) =>
+  String(error.message || "Cloudinary upload failed")
+    .replace(process.env.CLOUDINARY_API_KEY || "\u0000", "[redacted]")
+    .replace(process.env.CLOUDINARY_API_SECRET || "\u0000", "[redacted]");
+
 export const uploadImages = async (req, res) => {
   try {
     const { files } = req;
@@ -220,18 +256,35 @@ export const uploadPaymentProof = async (req, res) => {
     });
   } catch (error) {
     const upstreamStatus = Number(error.http_code || error.status) || null;
-    const isDisabledApiKey = upstreamStatus === 401 && /disabled api[_ ]key/i.test(error.message || "");
-    const isCloudNameMismatch = upstreamStatus === 401 && /cloud_name mismatch/i.test(error.message || "");
+    const upstreamMessage = getRedactedCloudinaryMessage(error);
+    console.error("Payment proof Cloudinary upload failed:", {
+      status: upstreamStatus,
+      message: upstreamMessage,
+    });
+
+    if (canUseLocalUploadFallback()) {
+      try {
+        const localFile = await saveBufferedUploadLocally(req, req.file, "file");
+        console.warn("Payment proof saved locally because Cloudinary upload failed.");
+        return res.status(201).json({ success: true, files: [localFile], fallback: "local" });
+      } catch (fallbackError) {
+        console.error("Payment proof local upload fallback failed:", fallbackError);
+      }
+    }
+
+    const isDisabledApiKey = upstreamStatus === 401 && /disabled api[_ ]key/i.test(upstreamMessage);
+    const isCloudNameMismatch = upstreamStatus === 401 && /cloud_name mismatch/i.test(upstreamMessage);
     const message = error.status === 503
       ? error.message
       : isDisabledApiKey
       ? "Cloudinary rejected the configured API key. Update the backend with an active key and redeploy."
       : isCloudNameMismatch
-      ? "Cloudinary cloud name does not match the configured API key and secret. Use the cloud name and credentials from the same Cloudinary account, then redeploy."
+      ? "Cloudinary cloud name does not match the configured API key and secret. Update CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET from the same Cloudinary account, then redeploy."
       : upstreamStatus === 401
       ? "Cloudinary rejected the configured credentials. Verify the active key and matching API secret."
       : "Payment proof upload failed. Check the backend Cloudinary configuration.";
-    return res.status(error.status || 502).json({ success: false, message });
+    const status = error.status || (upstreamStatus === 401 ? 503 : 502);
+    return res.status(status).json({ success: false, message });
   }
 };
 
