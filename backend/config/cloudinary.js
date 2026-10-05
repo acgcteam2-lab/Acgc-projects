@@ -94,7 +94,13 @@ export const uploadPrivateRawBuffer = (buffer, publicId) => {
   cloudinary.config(getCloudinaryConfig());
 
   return new Promise((resolve, reject) => {
-    const uploadStream = cloudinary.uploader.upload_large_stream(
+    const uploadLargeStream = cloudinary.uploader.upload_chunked_stream || cloudinary.uploader.upload_large_stream;
+    if (typeof uploadLargeStream !== "function") {
+      return reject(new Error("Installed Cloudinary SDK does not support chunked raw uploads."));
+    }
+
+    const uploadStream = uploadLargeStream.call(
+      cloudinary.uploader,
       {
         public_id: publicId,
         resource_type: "raw",
