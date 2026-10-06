@@ -40,14 +40,13 @@ function Sidebar({ isOpen, onToggle }) {
       window.location.reload();
       return;
     }
-
     window.location.assign("/dashboard");
   };
 
   const mobileNavItems = [
     canViewStaffModule("dashboard") && { to: "/dashboard", label: "Dashboard", icon: <Gauge size={20} />, active: location.pathname === "/dashboard" },
     canViewStaffModule("site_inspection") && { to: "/site-inspection", label: "Inspection", icon: <ClipboardCheck size={20} />, active: location.pathname === "/site-inspection" },
-    canViewStaffModule("transactions") && { to: "/transactions", label: "Transactions", icon: <ReceiptText size={20} />, active: location.pathname === "/transactions" },
+    canViewStaffModule("transactions") && { to: "/transactions", label: "Transactions", compactLabel: "Trans.", icon: <ReceiptText size={20} />, active: location.pathname === "/transactions" },
     canViewStaffModule("progress_monitoring") && { to: "/progress-monitor", label: "Monitor", icon: <ChartNoAxesCombined size={20} />, active: location.pathname === "/progress-monitor" },
     canViewStaffModule("product_management") && { to: "/product", label: "Products", icon: <Package size={20} />, active: location.pathname === "/product" },
     canViewStaffModule("profile") && { to: "/profile", label: user?.role === "skilled_worker" ? "Profile" : "Profile", icon: <UserCog size={20} />, active: location.pathname === "/profile" },
@@ -186,19 +185,35 @@ function Sidebar({ isOpen, onToggle }) {
 
       <nav
         aria-label="Admin navigation"
-        className={`admin-mobile-navigation fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-[60] flex items-center justify-around rounded-[22px] border px-2 py-2 shadow-lg backdrop-blur-xl lg:hidden ${darkMode ? "border-slate-700 bg-slate-900/95 shadow-black/30" : "border-slate-200 bg-white/95 shadow-slate-900/15"}`}
+        className={`admin-mobile-navigation fixed inset-x-0 bottom-0 z-[60] flex w-full items-center justify-around gap-0 border-t px-1 pt-1.5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-xl lg:hidden ${darkMode ? "border-slate-800 bg-slate-950/95" : "border-slate-200 bg-white/95"}`}
       >
-        {mobileNavItems.map(({ to, label, icon, active }) => (
+        {mobileNavItems.map(({ to, label, compactLabel, icon, active }) => (
           <Link
             key={to}
             to={to}
             aria-label={label}
             aria-current={active ? "page" : undefined}
             title={label}
-            className={`flex h-14 min-w-0 flex-1 flex-col items-center justify-center rounded-xl px-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${active ? darkMode ? "text-red-300" : "text-red-700" : darkMode ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 hover:bg-slate-100"}`}
+            className={`group flex h-[58px] min-w-0 flex-1 flex-col items-center justify-center rounded-lg px-0.5 text-center transition-[transform,background-color,color] duration-200 ease-out hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.94] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand motion-reduce:transform-none motion-reduce:transition-none ${active ? darkMode ? "text-white" : "text-slate-900" : darkMode ? "text-slate-400 hover:bg-slate-800 hover:text-slate-100" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}
           >
-            <span className="inline-flex" aria-hidden="true">{icon}</span>
-            <span className={`mt-1 h-0.5 w-4 rounded-full ${active ? "bg-current" : "bg-transparent"}`} aria-hidden="true" />
+            <span
+              className={[
+                "relative z-10 flex items-center justify-center transition-[transform,width,height,border-radius,background-color,border-color,color,box-shadow] duration-[220ms] ease-out group-hover:scale-105 group-active:scale-90 motion-reduce:transition-none",
+                active ? "-translate-y-6 size-10 rounded-full border-2 ring-4 shadow-lg" : "size-7 rounded-lg",
+                active
+                  ? darkMode
+                    ? "border-slate-900 bg-gradient-to-br from-brand-dark-fill via-brand to-red-700 text-white ring-red-300/30 shadow-black/50"
+                    : "border-white bg-gradient-to-br from-brand via-red-800 to-red-600 text-white ring-red-400/35 shadow-red-900/35"
+                  : darkMode
+                    ? "text-slate-300 group-hover:bg-white/[0.06]"
+                    : "text-slate-600 group-hover:bg-black/[0.04]",
+              ].join(" ")}
+              aria-hidden="true"
+            >
+              {icon}
+            </span>
+            <span className={`mt-0.5 max-w-full truncate leading-[10px] transition-opacity duration-150 motion-reduce:transition-none ${active ? "text-[9px] font-bold opacity-100 max-[360px]:text-[8px]" : "text-[8px] font-medium opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 max-[360px]:text-[7px]"} ${compactLabel ? "max-[360px]:hidden" : ""}`} aria-hidden="true">{label}</span>
+            {compactLabel && <span className={`mt-0.5 hidden max-w-full truncate leading-[10px] transition-opacity duration-150 motion-reduce:transition-none max-[360px]:inline ${active ? "text-[9px] font-bold opacity-100 max-[360px]:text-[8px]" : "text-[8px] font-medium opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 max-[360px]:text-[7px]"}`} aria-hidden="true">{compactLabel}</span>}
           </Link>
         ))}
       </nav>

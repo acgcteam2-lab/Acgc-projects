@@ -37,6 +37,7 @@ import {
   Moon,
   Sun,
   ArrowLeft,
+  ArrowUpRight,
   X,
   ClipboardList,
   CreditCard,
@@ -263,12 +264,6 @@ function CustomerDashboard() {
     }
   });
   const [products, setProducts] = useState([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("All");
-  const [productPage, setProductPage] = useState(1);
-  const [productsPerPage, setProductsPerPage] = useState(8);
-  const [isLoadingProducts, setIsLoadingProducts] = useState(false);
-  const [productError, setProductError] = useState("");
   const [featuredProducts, setFeaturedProducts] = useState([]);
   const [featuredProductsLoading, setFeaturedProductsLoading] = useState(false);
   const [featuredProductsError, setFeaturedProductsError] = useState("");
@@ -277,9 +272,16 @@ function CustomerDashboard() {
     total: 0,
     counts: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
   });
-
+  const [orders, setOrders] = useState([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
   const [cartItems, setCartItems] = useState([]);
   const [cartLoaded, setCartLoaded] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("All");
+  const [productPage, setProductPage] = useState(1);
+  const [productsPerPage, setProductsPerPage] = useState(8);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(false);
+  const [productError, setProductError] = useState("");
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedProductImageIndex, setSelectedProductImageIndex] = useState(0);
   const [productEstimatorForm, setProductEstimatorForm] = useState({ unit: "in", width: "0", height: "0" });
@@ -301,9 +303,6 @@ function CustomerDashboard() {
     shipping_address: "",
     notes: "",
   });
-
-  const [orders, setOrders] = useState([]);
-  const [ordersLoading, setOrdersLoading] = useState(false);
   const [productReviews, setProductReviews] = useState([]);
   const [productReviewsLoading, setProductReviewsLoading] = useState(false);
   const [productReviewStats, setProductReviewStats] = useState({});
@@ -345,10 +344,7 @@ function CustomerDashboard() {
   const [batchOrderAgreed, setBatchOrderAgreed] = useState(false);
   const [showBatchSuccessModal, setShowBatchSuccessModal] = useState(false);
   const [paymentProofOpenOrderId, setPaymentProofOpenOrderId] = useState(null);
-  const [paymentProofForm, setPaymentProofForm] = useState({
-    amount: "",
-    fileName: "",
-  });
+  const [paymentProofForm, setPaymentProofForm] = useState({ amount: "", fileName: "" });
   const [paymentProofError, setPaymentProofError] = useState("");
   const [paymentProofLoading, setPaymentProofLoading] = useState(false);
   const [paymentProofSuccessByOrder, setPaymentProofSuccessByOrder] = useState({});
@@ -601,7 +597,6 @@ function CustomerDashboard() {
       setMaintenanceCountdown(10);
       return;
     }
-
     permissionNoticeTimer.current = setTimeout(() => {
       setPermissionNotice((current) => (current ? { ...current, closing: true } : current));
       permissionNoticeTimer.current = setTimeout(() => setPermissionNotice(null), 350);
@@ -3222,22 +3217,29 @@ function CustomerDashboard() {
         <div className="admin-shell-circle admin-shell-circle-bottom" />
         <div className="admin-shell-circle admin-shell-circle-bottom-small" />
       </div>
-      <Toaster position="bottom-right" />
+      <Toaster
+        position="bottom-right"
+        toastOptions={{
+          style: darkMode
+            ? { background: "rgb(30 41 59)", border: "1px solid rgb(71 85 105)", color: "rgb(241 245 249)" }
+            : { background: "white", border: "1px solid rgb(226 232 240)", color: "rgb(15 23 42)" },
+        }}
+      />
       {permissionNotice && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-[2px]">
           <div
-            className={`w-full max-w-md rounded-3xl border border-amber-200 bg-white p-6 text-center shadow-2xl transition-all duration-300 ${
+            className={`w-full max-w-md rounded-3xl border p-6 text-center shadow-2xl transition-all duration-300 ${darkMode ? "border-amber-800 bg-slate-800 text-slate-100" : "border-amber-200 bg-white text-slate-900"} ${
               permissionNotice.closing ? "translate-y-2 scale-95 opacity-0" : "translate-y-0 scale-100 opacity-100"
             }`}
             role="alertdialog"
             aria-live="assertive"
             aria-label="Permission notice"
           >
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+            <div className={`mx-auto flex h-12 w-12 items-center justify-center rounded-full ${darkMode ? "bg-amber-950 text-amber-300" : "bg-amber-100 text-amber-700"}`}>
               <Info size={24} />
             </div>
-            <h2 className="mt-4 text-lg font-black text-slate-900">{permissionNotice.maintenance ? "System Under Maintenance" : "Access Restricted"}</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">{permissionNotice.message}</p>
+            <h2 className={`mt-4 text-lg font-black ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{permissionNotice.maintenance ? "System Under Maintenance" : "Access Restricted"}</h2>
+            <p className={`mt-2 text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{permissionNotice.message}</p>
             {permissionNotice.maintenance ? (
               <button type="button" onClick={handleLogoutConfirm} className="mt-5 rounded-xl bg-red-700 px-6 py-2.5 text-sm font-bold text-white transition hover:bg-red-800">Logout ({maintenanceCountdown})</button>
             ) : (
@@ -3246,7 +3248,12 @@ function CustomerDashboard() {
           </div>
         </div>
       )}
-      <div className={`${darkMode ? "bg-slate-900/90 border-b border-slate-700 shadow-lg shadow-slate-950/20" : "bg-white/90 border-b border-slate-200 shadow-sm"} sticky top-0 z-50`}>
+      <div className={`${activeTab === "home"
+        ? darkMode
+          ? "border-b border-white/10 bg-[rgba(8,13,24,0.58)] shadow-lg shadow-black/10 backdrop-blur-2xl"
+          : "border-b border-white/40 bg-[rgba(255,255,255,0.55)] shadow-sm backdrop-blur-2xl"
+        : darkMode ? "bg-slate-900/90 border-b border-slate-700 shadow-lg shadow-slate-950/20" : "bg-white/90 border-b border-slate-200 shadow-sm"
+      } sticky top-0 z-50`}>
         <div className="flex w-full items-center justify-between gap-2 px-3 py-2.5 sm:px-4 lg:gap-4">
           <button
             type="button"
@@ -3256,10 +3263,10 @@ function CustomerDashboard() {
           >
             <img src={logo} alt="ACGC Aluminum Services" className="h-8 w-8 shrink-0 object-contain sm:h-12 sm:w-12 lg:h-14 lg:w-14" />
             <div className="min-w-0">
-              <h1 className="truncate text-sm font-bold text-red-500 sm:text-lg lg:text-xl">
+              <h1 className="whitespace-nowrap text-[15px] font-semibold text-red-500 sm:text-lg lg:text-xl">
                 ACGC Services
               </h1>
-              <p className={`hidden truncate text-[10px] font-bold sm:block sm:text-xs lg:text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+              <p className={`whitespace-nowrap text-[10px] font-semibold sm:text-xs lg:text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
                 Aluminum & Glass Services
               </p>
             </div>
@@ -3270,13 +3277,7 @@ function CustomerDashboard() {
               <button
                 onClick={() => setActiveTab("cart")}
                 className={`order-1 relative hidden p-2.5 text-sm font-semibold transition lg:inline-flex ${
-                  activeTab === "cart" || cartQuantity > 0
-                    ? darkMode
-                      ? "text-white"
-                      : "text-slate-700"
-                    : darkMode
-                      ? "text-slate-200 hover:text-white"
-                      : "text-slate-700 hover:text-slate-900"
+                  darkMode ? "text-slate-200 hover:text-white" : "text-slate-700 hover:text-slate-900"
                 }`}
                 aria-label="Cart"
                 title="Cart"
@@ -3291,42 +3292,24 @@ function CustomerDashboard() {
             )}
             <button
               onClick={() => setActiveTab("products")}
-                className={`order-3 hidden rounded-full px-4 py-2 text-base font-semibold transition lg:inline-flex ${
-                activeTab === "products"
-                  ? darkMode
-                    ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
-                    : "border border-slate-200 bg-slate-100 text-red-600 shadow-sm"
-                  : darkMode
-                    ? "text-slate-200 hover:bg-slate-800"
-                    : "text-slate-700 hover:bg-slate-100"
+              className={`order-3 hidden rounded-full px-4 py-2 text-base font-semibold transition lg:inline-flex ${
+                darkMode ? "text-slate-200 hover:bg-slate-800" : "text-slate-700 hover:bg-slate-100"
               }`}
             >
               Browse Products
             </button>
             <button
               onClick={() => setActiveTab("orders")}
-                className={`order-4 hidden rounded-full px-4 py-2 text-base font-semibold transition lg:inline-flex ${
-                activeTab === "orders"
-                  ? darkMode
-                    ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
-                    : "border border-slate-200 bg-slate-100 text-red-600 shadow-sm"
-                  : darkMode
-                    ? "text-slate-200 hover:bg-slate-800"
-                    : "text-slate-700 hover:bg-slate-100"
+              className={`order-4 hidden rounded-full px-4 py-2 text-base font-semibold transition lg:inline-flex ${
+                darkMode ? "text-slate-200 hover:bg-slate-800" : "text-slate-700 hover:bg-slate-100"
               }`}
             >
               Your Orders
             </button>
             <button
               onClick={() => setActiveTab("about")}
-                className={`order-5 hidden rounded-full px-4 py-2 text-base font-semibold transition lg:inline-flex ${
-                activeTab === "about"
-                  ? darkMode
-                    ? "border border-slate-700 bg-slate-800 text-white shadow-sm"
-                    : "border border-slate-200 bg-slate-100 text-red-600 shadow-sm"
-                  : darkMode
-                    ? "text-slate-200 hover:bg-slate-800"
-                    : "text-slate-700 hover:bg-slate-100"
+              className={`order-5 hidden rounded-full px-4 py-2 text-base font-semibold transition lg:inline-flex ${
+                darkMode ? "text-slate-200 hover:bg-slate-800" : "text-slate-700 hover:bg-slate-100"
               }`}
             >
               About Us
@@ -3334,10 +3317,8 @@ function CustomerDashboard() {
             <button
               type="button"
               onClick={toggleDarkMode}
-                className={`order-7 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition focus:outline-none focus:ring-2 focus:ring-red-500/40 sm:h-10 sm:w-10 ${
-                darkMode
-                  ? "text-slate-200 hover:bg-slate-800"
-                  : "text-slate-700 hover:bg-slate-100"
+              className={`order-7 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition focus:outline-none sm:h-10 sm:w-10 ${
+                darkMode ? "text-slate-200 hover:bg-slate-800" : "text-slate-700 hover:bg-slate-100"
               }`}
               aria-label={darkMode ? "Switch to day mode" : "Switch to night mode"}
               aria-pressed={darkMode}
@@ -3622,7 +3603,12 @@ function CustomerDashboard() {
 
       <nav
         aria-label="Customer navigation"
-        className={`customer-mobile-navigation fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-[60] flex items-center justify-around rounded-[22px] border px-2 py-2 shadow-lg backdrop-blur-xl lg:hidden ${darkMode ? "border-slate-700 bg-slate-900/95 shadow-black/30" : "border-slate-200 bg-white/95 shadow-slate-900/15"}`}
+        className={`customer-mobile-navigation fixed inset-x-0 bottom-0 z-[60] flex w-full items-center justify-around gap-0 border-t px-1 pt-1.5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-2xl lg:hidden ${activeTab === "home"
+          ? darkMode
+            ? "border-white/15 bg-[rgba(8,13,24,0.68)]"
+            : "border-white/55 bg-[rgba(255,255,255,0.58)]"
+          : darkMode ? "border-slate-800 bg-slate-950/95" : "border-slate-200 bg-white/95"
+        }`}
       >
         {[
           { label: "Home", tab: "home", Icon: Home },
@@ -3643,20 +3629,34 @@ function CustomerDashboard() {
               aria-label={tab === "cart" && cartQuantity > 0 ? `Cart, ${cartQuantity} ${cartQuantity === 1 ? "item" : "items"}` : label}
               aria-current={isActive ? "page" : undefined}
               title={label}
-              className={`flex h-12 min-w-12 flex-1 flex-col items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${isActive ? darkMode ? "text-red-300" : "text-red-700" : darkMode ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 hover:bg-slate-100"}`}
+              className={`group flex h-[58px] min-w-0 flex-1 flex-col items-center justify-center rounded-lg px-1 text-center transition-[transform,background-color,color] duration-200 ease-out hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.94] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand motion-reduce:transform-none motion-reduce:transition-none ${isActive ? darkMode ? "text-white" : "text-slate-900" : darkMode ? "text-slate-400 hover:bg-slate-800 hover:text-slate-100" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}
             >
               <span className="relative inline-flex">
-                <Icon size={21} strokeWidth={isActive ? 2.3 : 1.8} aria-hidden="true" />
+                <span
+                  className={[
+                    "relative z-10 flex items-center justify-center transition-[transform,width,height,border-radius,background-color,border-color,color,box-shadow] duration-[220ms] ease-out group-hover:scale-105 group-active:scale-90 motion-reduce:transition-none",
+                    isActive ? "-translate-y-6 size-10 rounded-full border-2 ring-4 shadow-lg" : "size-7 rounded-lg",
+                    isActive
+                      ? darkMode
+                        ? "border-slate-900 bg-gradient-to-br from-brand-dark-fill via-brand to-red-700 text-white ring-red-300/30 shadow-black/50"
+                        : "border-white bg-gradient-to-br from-brand via-red-800 to-red-600 text-white ring-red-400/35 shadow-red-900/35"
+                      : darkMode
+                        ? "text-slate-300 group-hover:bg-white/[0.06]"
+                        : "text-slate-600 group-hover:bg-black/[0.04]",
+                  ].join(" ")}
+                >
+                  <Icon size={21} strokeWidth={isActive ? 2.3 : 1.8} aria-hidden="true" />
+                </span>
                 {tab === "cart" && cartQuantity > 0 && (
                   <span
                     aria-hidden="true"
-                    className={`absolute -right-2 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full border px-1 text-[9px] font-bold leading-none ${darkMode ? "border-slate-900 bg-red-500 text-white" : "border-white bg-red-600 text-white"}`}
+                    className={`absolute -right-2 -top-1 z-20 inline-flex h-4 min-w-4 items-center justify-center rounded-full border px-1 text-[9px] font-bold leading-none ${darkMode ? "border-slate-900 bg-red-500 text-white" : "border-white bg-red-600 text-white"}`}
                   >
                     {cartQuantity > 99 ? "99+" : cartQuantity}
                   </span>
                 )}
               </span>
-              <span className={`mt-1 h-0.5 w-4 rounded-full ${isActive ? "bg-current" : "bg-transparent"}`} aria-hidden="true" />
+              <span className={`mt-0.5 max-w-full truncate leading-[12px] transition-opacity duration-150 motion-reduce:transition-none ${isActive ? "text-[11px] font-bold opacity-100" : "text-[10px] font-medium opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100"}`} aria-hidden="true">{label}</span>
             </button>
           );
         })}
@@ -3664,50 +3664,56 @@ function CustomerDashboard() {
 
       {activeTab === "home" && (
         <>
-          <section className="relative overflow-hidden bg-[#941d24] text-white">
-            <div className="relative mx-auto flex min-h-[360px] max-w-7xl items-center justify-center px-6 py-16 text-center">
-              <div className="max-w-2xl">
-                <p className="text-sm font-semibold uppercase tracking-[0.28em] text-red-100">ACGC Services</p>
-                <h2 className="mt-4 text-4xl font-black leading-tight sm:text-6xl">Custom Glass & Aluminum Solutions</h2>
-                <p className="mx-auto mt-5 max-w-xl text-base leading-7 text-red-100 sm:text-lg">
-                  Professional fabrication and installation of glass windows, doors, partitions, and aluminum works for your space.
-                </p>
-                <div className="mt-8 flex flex-wrap justify-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab("products")}
-                    className="rounded-xl bg-white px-5 py-3 text-sm font-bold text-red-700 shadow-lg transition hover:bg-red-50"
-                  >
-                    Browse Products
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab("orders")}
-                    className="rounded-xl border border-white/70 px-5 py-3 text-sm font-bold text-white transition hover:bg-white/10"
-                  >
-                    View My Orders
-                  </button>
-                </div>
-              </div>
-            </div>
-          </section>
+          <section className={`relative overflow-hidden ${darkMode ? "bg-[#0d1117]/75 text-white" : "bg-[#45151f]/75 text-white"}`}>
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.16),transparent_26%),radial-gradient(circle_at_bottom_right,_rgba(239,68,68,0.18),transparent_28%),linear-gradient(135deg,#170d11_0%,#4b1017_38%,#140d13_100%)]" />
+            <div className="absolute -left-16 top-10 h-72 w-72 rounded-full border border-white/10" />
+            <div className="absolute -right-10 bottom-6 h-80 w-80 rounded-full border border-white/10" />
+            <div className="absolute left-1/2 top-1/2 h-[460px] w-[460px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/10" />
 
-          <section className="relative z-10 mx-auto -mt-8 max-w-5xl px-6">
-            <div className={`grid gap-6 rounded-3xl px-6 py-8 text-center shadow-xl sm:grid-cols-3 sm:px-10 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
-              <div className="flex flex-col items-center">
-                <ShieldCheck className={`h-12 w-12 ${darkMode ? "text-slate-100" : "text-slate-900"}`} strokeWidth={1.7} />
-                <h3 className={`mt-4 text-xl font-black ${darkMode ? "text-white" : "text-slate-900"}`}>Quality Guaranteed</h3>
-                <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Premium materials and careful workmanship.</p>
-              </div>
-              <div className="flex flex-col items-center">
-                <Clock3 className={`h-12 w-12 ${darkMode ? "text-slate-100" : "text-slate-900"}`} strokeWidth={1.7} />
-                <h3 className={`mt-4 text-xl font-black ${darkMode ? "text-white" : "text-slate-900"}`}>Fast Turnaround</h3>
-                <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Efficient production for your project timeline.</p>
-              </div>
-              <div className="flex flex-col items-center">
-                <Wrench className={`h-12 w-12 ${darkMode ? "text-slate-100" : "text-slate-900"}`} strokeWidth={1.7} />
-                <h3 className={`mt-4 text-xl font-black ${darkMode ? "text-white" : "text-slate-900"}`}>Expert Installation</h3>
-                <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Professional site inspection and installation.</p>
+            <div className="relative mx-auto max-w-7xl px-6 py-14 sm:py-20">
+              <div className="mx-auto max-w-6xl rounded-[32px] border border-white/20 bg-white/[0.08] px-5 py-8 shadow-[0_25px_80px_rgba(0,0,0,0.28)] backdrop-blur-2xl sm:px-8 sm:py-12 lg:px-10">
+                <div className="mx-auto max-w-4xl text-center">
+                  <p className="text-[11px] font-black uppercase tracking-[0.42em] text-red-100/90 sm:text-xs">ACGC Services</p>
+                  <h2 className="mt-5 text-4xl font-black leading-[0.96] tracking-[-0.06em] text-white sm:text-6xl lg:text-[5rem]">
+                    Custom Glass &<br />
+                    <span className="text-red-100/95">Aluminum Solutions</span>
+                  </h2>
+                  <p className="mx-auto mt-6 max-w-2xl text-base leading-7 text-red-50/90 sm:text-lg">
+                    Professional fabrication and installation of glass windows, doors, partitions, and aluminum works designed for timeless architecture and practical performance.
+                  </p>
+                  <div className="mt-9 flex flex-wrap justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("products")}
+                      className="rounded-full border border-white/50 bg-white/20 px-6 py-3.5 text-sm font-black uppercase tracking-[0.08em] text-white shadow-[0_18px_40px_rgba(15,23,42,0.22)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-white/30"
+                    >
+                      Browse Products
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("orders")}
+                      className="rounded-full border border-white/30 bg-white/5 px-6 py-3.5 text-sm font-black uppercase tracking-[0.08em] text-white transition hover:bg-white/10"
+                    >
+                      View My Orders
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-10 grid gap-4 sm:grid-cols-3">
+                  {[
+                    { icon: ShieldCheck, title: "Quality Guaranteed", text: "Premium materials and careful workmanship." },
+                    { icon: Clock3, title: "Fast Turnaround", text: "Efficient production for your project timeline." },
+                    { icon: Wrench, title: "Expert Installation", text: "Professional site inspection and installation." },
+                  ].map(({ icon: Icon, title, text }) => (
+                    <div key={title} className="rounded-[24px] border border-white/20 bg-white/[0.08] p-4 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.16)] backdrop-blur-2xl transition hover:-translate-y-1 hover:bg-white/[0.14] sm:p-5">
+                      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-white/25 bg-white/[0.12] text-red-100 backdrop-blur-xl">
+                        <Icon className="h-7 w-7" strokeWidth={1.8} />
+                      </div>
+                      <h3 className="mt-4 text-xl font-black text-white">{title}</h3>
+                      <p className="mt-2 text-sm leading-6 text-red-50/80">{text}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </section>
@@ -3715,18 +3721,19 @@ function CustomerDashboard() {
       )}
 
       {showFeaturedSection && (
-        <div className={`max-w-7xl mx-auto px-6 py-8 ${darkMode ? "bg-slate-900" : "bg-gray-100"}`}>
-          <div className={`rounded-[24px] border p-5 shadow-[0_14px_35px_rgba(148,163,184,0.12)] ${darkMode ? "border-slate-700 bg-slate-800" : "border-red-100 bg-white"}`}>
-            <div className="mb-5 flex items-center justify-between gap-4">
+        <div className={`relative mx-auto max-w-7xl overflow-hidden px-6 py-8 ${darkMode ? "bg-[radial-gradient(ellipse_at_top,_rgba(148,163,184,0.12),transparent_60%)]" : "bg-[radial-gradient(ellipse_at_top,_rgba(255,255,255,0.6),transparent_65%)]"}`}>
+          <div className={`rounded-[30px] border p-5 shadow-[0_22px_50px_rgba(15,23,42,0.12)] backdrop-blur-2xl ${darkMode ? "border-white/15 bg-white/[0.06]" : "border-white/55 bg-white/[0.3]"}`}>
+            <div className="mb-6 flex items-end justify-between gap-4">
               <div className="text-left">
-                <h2 className={`text-3xl font-black leading-tight sm:text-5xl sm:leading-none ${darkMode ? "text-white" : "text-slate-900"}`}>
-                  Featured <span className="text-red-500">Products</span>
+                <h2 className={`mt-3 text-3xl font-black leading-tight sm:text-5xl sm:leading-none ${darkMode ? "text-white" : "text-slate-900"}`}>
+                  Featured <span className="text-[#dc2626]">Products</span>
                 </h2>
-                <p className={`mt-3 max-w-3xl text-sm leading-6 sm:mt-6 sm:text-lg sm:leading-normal ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
-                  Discover premium aluminum and glass solutions crafted for modern residential and commercial projects.
-                </p>
               </div>
             </div>
+
+            <p className={`mb-6 max-w-3xl text-sm leading-6 sm:text-lg ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+              Discover premium aluminum and glass solutions crafted for modern residential and commercial projects.
+            </p>
 
             {featuredProductsError ? (
               <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
@@ -3735,108 +3742,106 @@ function CustomerDashboard() {
             ) : featuredProductsLoading ? (
               <div className="grid gap-4 md:grid-cols-3">
                 {[...Array(3)].map((_, index) => (
-                  <div key={index} className="h-72 animate-pulse rounded-[20px] bg-slate-100" />
+                  <div key={index} className="h-72 animate-pulse rounded-[22px] bg-slate-200" />
                 ))}
               </div>
             ) : featuredProducts.length === 0 ? (
-              <div className={`rounded-2xl border border-dashed p-8 text-center ${darkMode ? "border-slate-600 bg-slate-700 text-slate-300" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
+              <div className={`rounded-2xl border border-dashed p-8 text-center ${darkMode ? "border-slate-600 bg-slate-800 text-slate-300" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
                 No featured products are available right now.
               </div>
             ) : (
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid gap-5 md:grid-cols-3">
                 {featuredProducts.map((product) => {
                   const reviewStats = productReviewStats[product._id || product.id] || { averageRating: 0, ratingsCount: 0 };
                   const averageRating = Number(reviewStats.averageRating) || 0;
                   const reviewsCount = Number(reviewStats.ratingsCount) || 0;
 
                   return (
-                    <div
+                    <article
                       key={product._id || product.name}
-                      className={`group overflow-hidden rounded-[20px] border shadow-[0_8px_22px_rgba(15,23,42,0.05)] ${
-                        darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-slate-50"
+                      className={`group flex h-full min-w-0 flex-col overflow-hidden rounded-[26px] border shadow-[0_18px_38px_rgba(15,23,42,0.08)] transition duration-300 hover:-translate-y-1 ${
+                        darkMode ? "border-white/15 bg-white/[0.045] backdrop-blur-xl" : "border-white/65 bg-white/[0.2] backdrop-blur-xl"
                       }`}
                     >
-                      <div className={`relative h-44 overflow-hidden ${darkMode ? "bg-slate-800" : "bg-slate-100"}`}>
+                      <div className={`relative aspect-[4/3] w-full overflow-hidden ${darkMode ? "bg-slate-900" : "bg-slate-100"}`}>
                         <img
                           src={getProductImage(product)}
                           alt={product.name}
                           className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
                         />
-                        <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-slate-900/25 to-transparent" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
+                        <span className="absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-full border border-amber-200/80 bg-amber-100/95 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-amber-950 shadow-lg backdrop-blur-sm">
+                          <Star size={12} fill="currentColor" aria-hidden="true" />
+                          Featured
+                        </span>
                       </div>
 
-                      <div className="space-y-3 p-4">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className={`rounded-full px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] ${
-                            darkMode ? "bg-red-950/60 text-red-300" : "bg-red-50 text-red-700"
-                          }`}>
-                            {product.category || "Product"}
-                          </span>
-                          <span className="text-m font-bold text-red-500">{getProductPrice(product)}</span>
-                        </div>
-
-                        <div>
-                          <h3 className={`text-xl font-bold leading-tight ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name}</h3>
-                          <p className={`mt-1 text-xs leading-5 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                            {product.description || "Premium aluminum and glass solution for modern spaces."}
-                          </p>
-                        </div>
-
-                        {canUploadFeedback && canShowRatings && <div className="flex items-center justify-between gap-3 pt-1">
-                          <div className="flex min-w-0 flex-col">
-                            <div className="flex items-center gap-1 text-amber-500">
+                      <div className="flex flex-1 flex-col gap-4 p-4 sm:p-5">
+                        <p className={`line-clamp-3 min-h-[4.5rem] text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                          {product.description || "Premium aluminum and glass solution for modern spaces."}
+                        </p>
+                        {canUploadFeedback && canShowRatings && (
+                          <div className={`flex items-center gap-2 ${darkMode ? "text-amber-300" : "text-amber-600"}`}>
+                            <div className="flex shrink-0 items-center gap-0.5">
                               {renderRatingStars(averageRating, 14)}
                             </div>
-                            <span className={`mt-1 text-[11px] font-medium ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                              {averageRating > 0 ? `${averageRating.toFixed(1)} (${reviewsCount} review${reviewsCount === 1 ? "" : "s"})` : "No reviews yet"}
+                            <span className={`text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                              {averageRating > 0 ? `${averageRating.toFixed(1)} (${reviewsCount})` : "New"}
                             </span>
                           </div>
-                        </div>}
+                        )}
+
+                        <div className={`mt-auto border-t pt-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                          <p className={`text-[10px] uppercase tracking-[0.14em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Starting from</p>
+                          <p className={`mt-1 text-2xl font-black ${darkMode ? "text-red-300" : "text-red-700"}`}>{getProductPrice(product)}</p>
+                        </div>
                       </div>
-                    </div>
+                    </article>
                   );
                 })}
               </div>
             )}
           </div>
 
-          {canShowRatings && canUploadFeedback && <section className={`mt-8 rounded-3xl px-6 py-8 shadow-sm sm:px-10 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
-            <h2 className={`text-center text-3xl font-black ${darkMode ? "text-white" : "text-slate-900"}`}>Customer Ratings</h2>
-            <div className="mt-8 grid gap-8 md:grid-cols-[220px_1fr] md:items-center">
-              <div className="text-center">
-                <p className={`text-6xl font-black leading-none ${darkMode ? "text-white" : "text-slate-950"}`}>
-                  {featuredRatingStats.average.toFixed(1)}
-                </p>
-                <div className="mt-3 flex justify-center gap-1 text-amber-500">
-                  {renderRatingStars(featuredRatingStats.average, 22)}
+          {canShowRatings && canUploadFeedback && (
+            <section className={`mt-8 rounded-[30px] border px-6 py-8 shadow-[0_20px_48px_rgba(15,23,42,0.06)] backdrop-blur-2xl sm:px-10 ${darkMode ? "border-white/15 bg-white/[0.06] text-slate-100" : "border-white/60 bg-white/[0.32] text-slate-900"}`}>
+              <h2 className={`text-center text-3xl font-black ${darkMode ? "text-white" : "text-slate-900"}`}>Customer Ratings</h2>
+              <div className="mt-8 grid gap-8 md:grid-cols-[220px_1fr] md:items-center">
+                <div className="text-center">
+                  <p className={`text-6xl font-black leading-none ${darkMode ? "text-white" : "text-slate-950"}`}>
+                    {featuredRatingStats.average.toFixed(1)}
+                  </p>
+                  <div className="mt-3 flex justify-center gap-1 text-amber-500">
+                    {renderRatingStars(featuredRatingStats.average, 22)}
+                  </div>
+                  <p className={`mt-3 text-sm font-semibold ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                    Average Rating ({featuredRatingStats.total} review{featuredRatingStats.total === 1 ? "" : "s"})
+                  </p>
                 </div>
-                <p className={`mt-3 text-sm font-semibold ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                  Average Rating ({featuredRatingStats.total} review{featuredRatingStats.total === 1 ? "" : "s"})
-                </p>
-              </div>
 
-              <div className="space-y-3">
-                {[5, 4, 3, 2, 1].map((star) => {
-                  const count = featuredRatingStats.counts[star] || 0;
-                  const percentage = featuredRatingStats.total
-                    ? Math.round((count / featuredRatingStats.total) * 100)
-                    : 0;
-                  return (
-                    <div key={star} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 text-sm">
-                      <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{star}</span>
-                      <div className={`h-3 overflow-hidden rounded-full ${darkMode ? "bg-slate-700" : "bg-slate-100"}`}>
-                        <div
-                          className="h-full rounded-full bg-amber-400 transition-all"
-                          style={{ width: `${percentage}%` }}
-                        />
+                <div className="space-y-3">
+                  {[5, 4, 3, 2, 1].map((star) => {
+                    const count = featuredRatingStats.counts[star] || 0;
+                    const percentage = featuredRatingStats.total
+                      ? Math.round((count / featuredRatingStats.total) * 100)
+                      : 0;
+                    return (
+                      <div key={star} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 text-sm">
+                        <span className={`font-semibold ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{star}</span>
+                        <div className={`h-3 overflow-hidden rounded-full ${darkMode ? "bg-white/10" : "bg-white/55"}`}>
+                          <div
+                            className="h-full rounded-full bg-amber-400 transition-all"
+                            style={{ width: `${percentage}%` }}
+                          />
+                        </div>
+                        <span className={`w-12 text-right font-semibold ${darkMode ? "text-slate-300" : "text-slate-500"}`}>{percentage}%</span>
                       </div>
-                      <span className={`w-12 text-right font-semibold ${darkMode ? "text-slate-300" : "text-slate-500"}`}>{percentage}%</span>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          </section>}
+            </section>
+          )}
         </div>
       )}
 
@@ -3887,86 +3892,118 @@ function CustomerDashboard() {
                 <div className={`rounded-3xl p-10 text-center shadow ${darkMode ? "bg-slate-800 text-slate-200" : "bg-white text-gray-600"}`}><p className={darkMode ? "text-slate-300" : "text-gray-600"}>No products matched your search.</p></div>
               ) : (
                 <>
-                  <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="grid grid-cols-1 gap-3 min-[360px]:grid-cols-2 sm:gap-5 md:grid-cols-3 xl:grid-cols-4">
                     {displayedProducts.map((product) => (
                       <div
                         key={product._id || product.name}
-                        className={`group relative flex h-full cursor-pointer flex-col overflow-hidden rounded-2xl border shadow-[0_12px_30px_rgba(15,23,42,0.12)] transition duration-300 ease-out hover:-translate-y-1 ${
+                        className={`group relative flex h-full min-w-0 cursor-pointer flex-col overflow-hidden rounded-[26px] border transition-all duration-300 ease-out hover:-translate-y-1.5 motion-reduce:transition-none ${
                           darkMode
-                            ? "border-slate-700 bg-slate-800/95 hover:border-red-400/60 hover:shadow-[0_22px_45px_rgba(15,23,42,0.55)]"
-                            : "border-slate-200 bg-white hover:border-red-200 hover:shadow-[0_22px_45px_rgba(127,29,29,0.16)]"
+                            ? "border-slate-700 bg-[linear-gradient(180deg,#0f172a_0%,#111827_100%)] shadow-[0_20px_45px_rgba(2,6,23,0.45)] hover:border-red-500/60 hover:shadow-[0_26px_60px_rgba(239,68,68,0.16)]"
+                            : "border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff7f7_100%)] shadow-[0_16px_40px_rgba(15,23,42,0.08)] hover:border-red-200 hover:shadow-[0_22px_55px_rgba(127,29,29,0.12)]"
                         }`}
                         onClick={() => handleViewProduct(product)}
                       >
-                      <div className="relative h-64 overflow-hidden bg-slate-100">
-                        <img src={getProductImage(product)} alt={product.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
-                        <div className="absolute inset-0 flex items-center justify-center bg-slate-950/45 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
-                          <span className="rounded-full border border-white/40 bg-white/95 px-4 py-2 text-[10px] font-black uppercase tracking-[0.12em] text-slate-900 shadow-lg">
-                            Click to see product details
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex flex-1 flex-col justify-between gap-5 p-5">
-                        <div className="space-y-3">
-                          <span className={`inline-flex items-center rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.14em] ${darkMode ? "bg-red-950/70 text-red-300" : "bg-red-50 text-red-700"}`}>
-                            {product.category ? product.category.charAt(0).toUpperCase() + product.category.slice(1) : "General"}
-                          </span>
-                          <div>
-                            <h3 className={`text-xl font-black leading-tight ${darkMode ? "text-white" : "text-slate-900"}`}>{product.name}</h3>
-                            <p className={`mt-1.5 text-xs font-medium uppercase tracking-[0.12em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{product.product_type || product.category || "General"}</p>
+                        <div className={`relative aspect-[4/3] overflow-hidden ${darkMode ? "bg-slate-900" : "bg-slate-100"}`}>
+                          <img src={getProductImage(product)} alt={product.name} className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-110 motion-reduce:transition-none" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
+
+                          <div className="absolute left-3 top-3 right-3 flex items-start justify-between gap-2">
+                            {product.is_featured ? (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/80 bg-amber-200/90 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-amber-950 backdrop-blur-sm">
+                                <Star size={11} fill="currentColor" aria-hidden="true" /> Top Product
+                              </span>
+                            ) : (
+                              <span className="rounded-full border border-white/20 bg-slate-900/30 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white backdrop-blur-sm">
+                                {product.category ? product.category.charAt(0).toUpperCase() + product.category.slice(1) : "General"}
+                              </span>
+                            )}
                           </div>
-                          {canUploadFeedback && <div className={`flex items-center gap-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                            {renderRatingStars(productReviewStats[product._id || product.id]?.averageRating || 0, 16)}
-                            <span className={darkMode ? "font-medium text-slate-200" : "font-medium text-slate-700"}>
-                              {productReviewStats[product._id || product.id]?.averageRating > 0
-                                ? `${productReviewStats[product._id || product.id].averageRating.toFixed(1)} (${productReviewStats[product._id || product.id].ratingsCount} rating${productReviewStats[product._id || product.id].ratingsCount === 1 ? "" : "s"})`
-                                : "No ratings yet"}
-                            </span>
-                          </div>}
-                          <div className={`space-y-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+
+                          <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3">
+                            <div className="max-w-[70%] rounded-full border border-white/25 bg-slate-950/40 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.10em] text-slate-100 backdrop-blur-sm">
+                              {product.product_type || product.category || "General"}
+                            </div>
+
+                            {canRequestOrders && (
+                              <div className="flex gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    openOrderNowModal(product);
+                                  }}
+                                  className={`inline-flex size-[32px] items-center justify-center rounded-xl border shadow-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${darkMode ? "border-red-400/50 bg-slate-900/90 text-red-200 hover:border-red-400 hover:bg-red-500 hover:text-white" : "border-red-200 bg-white/90 text-red-700 hover:border-red-300 hover:bg-red-600 hover:text-white"}`}
+                                  aria-label="Place order"
+                                  title="Place order"
+                                >
+                                  <Package size={16} aria-hidden="true" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    handleAddToCart(product);
+                                  }}
+                                  className={`inline-flex size-[32px] items-center justify-center rounded-xl border shadow-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${darkMode ? "border-slate-600 bg-slate-900/90 text-slate-200 hover:border-slate-400 hover:bg-slate-700 hover:text-white" : "border-slate-200 bg-white/90 text-slate-700 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-900"}`}
+                                  aria-label="Add to cart"
+                                  title="Add to cart"
+                                >
+                                  <ShoppingCart size={16} aria-hidden="true" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-1 flex-col gap-3 p-4">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <h3 className={`truncate text-[17px] font-black leading-tight ${darkMode ? "text-white" : "text-slate-900"}`} title={product.name}>{product.name}</h3>
+                              <p className={`mt-1 truncate text-[12px] font-medium ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{product.product_type || product.category || "General"}</p>
+                            </div>
+                          </div>
+
+                          {canUploadFeedback && (
+                            <div className={`flex min-w-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] ${darkMode ? "border-slate-700 bg-slate-900/80 text-slate-300" : "border-slate-200 bg-white text-slate-700"}`}>
+                              <span className="flex items-center gap-1 text-amber-400">{renderRatingStars(productReviewStats[product._id || product.id]?.averageRating || 0, 13)}</span>
+                              <span className={`truncate ${darkMode ? "font-medium text-slate-200" : "font-medium text-slate-800"}`}>
+                                {productReviewStats[product._id || product.id]?.averageRating > 0
+                                  ? `${productReviewStats[product._id || product.id].averageRating.toFixed(1)} • ${productReviewStats[product._id || product.id].ratingsCount} reviews`
+                                  : "No ratings yet"}
+                              </span>
+                            </div>
+                          )}
+
+                          <div className={`grid gap-2 rounded-2xl border px-3 py-2.5 ${darkMode ? "border-slate-700 bg-slate-900/75" : "border-slate-200 bg-slate-50"}`}>
                             {product.dimensions ? (
-                              <p><span className={darkMode ? "font-medium text-white" : "font-medium text-slate-900"}>Dimensions:</span> {product.dimensions}</p>
+                              <p className="flex items-center justify-between gap-2 text-[11px]">
+                                <span className={darkMode ? "text-slate-400" : "text-slate-500"}>Dimensions</span>
+                                <span className={`truncate font-semibold ${darkMode ? "text-slate-100" : "text-slate-700"}`}>{product.dimensions}</span>
+                              </p>
                             ) : product.standard_size ? (
-                              <p><span className={darkMode ? "font-medium text-white" : "font-medium text-slate-900"}>Dimensions:</span> {product.standard_size}</p>
+                              <p className="flex items-center justify-between gap-2 text-[11px]">
+                                <span className={darkMode ? "text-slate-400" : "text-slate-500"}>Dimensions</span>
+                                <span className={`truncate font-semibold ${darkMode ? "text-slate-100" : "text-slate-700"}`}>{product.standard_size}</span>
+                              </p>
                             ) : product.width && product.height ? (
-                              <p><span className={darkMode ? "font-medium text-white" : "font-medium text-slate-900"}>Dimensions:</span> {product.width} × {product.height}</p>
+                              <p className="flex items-center justify-between gap-2 text-[11px]">
+                                <span className={darkMode ? "text-slate-400" : "text-slate-500"}>Dimensions</span>
+                                <span className={`truncate font-semibold ${darkMode ? "text-slate-100" : "text-slate-700"}`}>{product.width} × {product.height}</span>
+                              </p>
                             ) : null}
-                            <p><span className={darkMode ? "font-medium text-white" : "font-medium text-slate-900"}>Unit Rate:</span> {getProductUnitRate(product)}</p>
+
+                            <p className="flex items-center justify-between gap-2 text-[11px]">
+                              <span className={darkMode ? "text-slate-400" : "text-slate-500"}>Unit rate</span>
+                              <span className={`font-semibold ${darkMode ? "text-slate-100" : "text-slate-700"}`}>{getProductUnitRate(product)}</span>
+                            </p>
                           </div>
-                        </div>
-                        <div className="mt-auto space-y-3">
-                          <div className={`border-t pt-4 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
-                            <p className="text-2xl font-black text-red-500">{getProductPrice(product)}</p>
+
+                          <div className={`mt-auto border-t pt-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                            <p className={`text-[10px] uppercase tracking-[0.14em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Starting from</p>
+                            <p className={`mt-1 text-[22px] font-black ${darkMode ? "text-red-300" : "text-red-700"}`}>{getProductPrice(product)}</p>
                           </div>
-                          {canRequestOrders && <div className="grid grid-cols-2 gap-2">
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openOrderNowModal(product);
-                              }}
-                              className={`inline-flex items-center justify-center gap-1 rounded-xl border bg-transparent px-2 py-2 text-[11px] font-bold shadow-sm transition ${darkMode ? "border-red-400/50 text-red-300 hover:border-red-300 hover:bg-red-900/40 hover:text-red-200" : "border-red-200 text-red-700 hover:bg-red-100"}`}
-                              aria-label="Place order"
-                              title="Place order"
-                            >
-                              <Package size={28} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleAddToCart(product);
-                              }}
-                              className={`inline-flex items-center justify-center gap-1 rounded-xl border bg-transparent px-2 py-2 text-[11px] font-bold shadow-sm transition ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700 hover:text-white" : "border-slate-200 text-slate-700 hover:bg-slate-100 hover:text-slate-900"}`}
-                              aria-label="Add to cart"
-                              title="Add to cart"
-                            >
-                              <ShoppingCart size={28} />
-                            </button>
-                          </div>}
                         </div>
                       </div>
-                    </div>
                     ))}
                   </div>
 
@@ -4130,18 +4167,18 @@ function CustomerDashboard() {
                           )}
                         </div>
                         {!isProductModalReadOnly && <>
-                        <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
+                        <div className={`rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-300 bg-slate-50"}`}>
                             <h4 className={`text-base font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Product Details</h4>
                             <p className={`mt-1.5 text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                               {selectedProduct.description || "No description available."}
                             </p>
                         </div>
                         <div className="grid gap-2 sm:grid-cols-3">
-                          <div className={`min-w-0 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+                          <div className={`min-w-0 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-300 bg-white"}`}>
                             <p className={`text-[10px] font-semibold uppercase tracking-[0.14em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Type</p>
                             <p className={`mt-1 truncate text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{selectedProduct.type || selectedProduct.product_type || "N/A"}</p>
                           </div>
-                          <div className={`min-w-0 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+                          <div className={`min-w-0 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-300 bg-white"}`}>
                             <p className={`text-[10px] font-semibold uppercase tracking-[0.14em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Dimensions</p>
                             <p className={`mt-1 truncate text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
                               {selectedProduct.dimensions
@@ -4153,7 +4190,7 @@ function CustomerDashboard() {
                                 : "N/A"}
                             </p>
                           </div>
-                          <div className={`min-w-0 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+                          <div className={`min-w-0 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-300 bg-white"}`}>
                             <p className={`text-[10px] font-semibold uppercase tracking-[0.14em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Unit Rate</p>
                             <p className={`mt-1 truncate text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{getProductUnitRate(selectedProduct)}</p>
                           </div>
@@ -6483,8 +6520,8 @@ function CustomerDashboard() {
                         aria-pressed={selectedReviewRatingTab === 0}
                         className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
                           selectedReviewRatingTab === 0
-                            ? "border-slate-900 bg-slate-900 text-white"
-                            : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                            ? darkMode ? "border-slate-500 bg-slate-700 text-white" : "border-slate-900 bg-slate-900 text-white"
+                            : darkMode ? "border-slate-600 bg-slate-900 text-slate-300 hover:bg-slate-800" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                         }`}
                       >
                         All
@@ -6497,8 +6534,8 @@ function CustomerDashboard() {
                           aria-pressed={selectedReviewRatingTab === star}
                           className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold transition ${
                             selectedReviewRatingTab === star
-                              ? "border-amber-400 bg-amber-50 text-amber-900"
-                              : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                              ? darkMode ? "border-amber-300 bg-amber-300 text-amber-950 hover:bg-amber-200" : "border-amber-400 bg-amber-50 text-amber-900"
+                              : darkMode ? "border-slate-600 bg-slate-900 text-slate-300 hover:bg-slate-800" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                           }`}
                         >
                           {star} star ({count})
@@ -7018,7 +7055,7 @@ function CustomerDashboard() {
                   onClick={() => setProfileEditing(true)}
                   variant="outline"
                   size="lg"
-                  className={`h-10 shrink-0 gap-2 rounded-[10px] border px-4 text-sm font-medium transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${darkMode ? "border-slate-600 text-slate-200 hover:border-brand-dark-text hover:text-brand-dark-text" : "border-slate-300 text-slate-700 hover:border-brand hover:text-brand"}`}
+                  className={`h-10 shrink-0 gap-2 rounded-[10px] border px-4 text-sm font-medium transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${darkMode ? "border-slate-600 bg-slate-900 text-slate-200 hover:border-brand-dark-text hover:bg-slate-700 hover:text-brand-dark-text" : "border-slate-300 bg-white text-slate-700 hover:border-brand hover:text-brand"}`}
                 >
                   <User size={16} aria-hidden="true" />
                   Edit profile

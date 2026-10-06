@@ -6,8 +6,10 @@ import {
   CalendarRange,
   ChevronDown,
   CircleCheck,
+  CloudUpload,
   Database,
   Download,
+  FileArchive,
   History,
   Loader2,
   RotateCcw,
@@ -19,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { RadioGroup } from "radix-ui";
+import { motion, useReducedMotion } from "framer-motion";
 import toast, { Toaster } from "react-hot-toast";
 
 import Sidebar from "../../components/layout/Sidebar";
@@ -27,6 +30,7 @@ import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import { useAuth } from "../../contexts/AuthContext";
 import { useAdminTheme } from "../../contexts/AdminThemeContext";
 import { recordActivity } from "@/lib/activityLog";
+import { cn } from "@/lib/utils";
 import {
   createSystemBackup,
   deleteSystemBackup,
@@ -108,6 +112,7 @@ const normalizeStaffAccess = (staffAccess = {}) => {
 function Settings() {
   const { user, logout } = useAuth();
   const { darkMode } = useAdminTheme();
+  const prefersReducedMotion = useReducedMotion();
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   const canManageAccess = isAdmin || (user?.role === "skilled_worker" && user.staff_access?.modules?.settings?.enabled === true && user.staff_access.modules.settings.actions?.manage_access === true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
@@ -227,42 +232,24 @@ function Settings() {
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [deleteConfirmation, deletingBackup]);
 
-  const loadUsers = async () => {
-    setLoading(true);
-    try {
-      const response = await getAdminUsers({ role: activeTab, search });
-      setUsers((response.users || []).map((account) => ({ ...account, is_active: true })));
-    } catch (error) {
-      setUsers([]);
-      toast.error(error?.data?.message || error?.message || "Unable to load users.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    const timer = setTimeout(loadUsers, 250);
-    return () => clearTimeout(timer);
-  }, [activeTab, search]);
+    const loadUsers = async () => {
+      setLoading(true);
+      try {
+        const response = await getAdminUsers();
+        setUsers((response.users || []).map((account) => ({ ...account, is_active: true })));
+      } catch (error) {
+        setUsers([]);
+        toast.error(error?.data?.message || error?.message || "Unable to load users.");
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const counts = useMemo(() => ({
-    all: users.length,
-    customer: users.filter((account) => account.role === "customer").length,
-    staff: users.filter((account) => account.role === "skilled_worker").length,
-    helper: users.filter((account) => account.role === "helper").length,
-    skilled_worker: users.filter((account) => account.role === "skilled_worker").length,
-    active: users.length,
-  }), [users]);
+    loadUsers();
+  }, []);
 
-  const userCategoryTabs = [
-    { key: "all", label: "All Users", count: counts.all },
-    { key: "customer", label: "Customers", count: counts.customer },
-    { key: "staff", label: "Staff", count: counts.staff },
-    { key: "helper", label: "Helpers", count: counts.helper },
-    { key: "skilled_worker", label: "Skilled Workers", count: counts.skilled_worker },
-  ];
-
-  const displayUsers = useMemo(() => {
+  const allDisplayUsers = useMemo(() => {
     const authAdmin = user && (user.role === "admin" || user.role === "super_admin")
       ? {
           ...user,
@@ -284,6 +271,36 @@ function Settings() {
     });
     return [authAdmin, ...realUsers];
   }, [users, user]);
+
+  const counts = useMemo(() => ({
+    all: allDisplayUsers.length,
+    customer: allDisplayUsers.filter((account) => account.role === "customer").length,
+    staff: allDisplayUsers.filter((account) => account.role === "skilled_worker").length,
+    helper: allDisplayUsers.filter((account) => account.role === "helper").length,
+    skilled_worker: allDisplayUsers.filter((account) => account.role === "skilled_worker").length,
+    active: allDisplayUsers.filter((account) => account.is_active !== false).length,
+  }), [allDisplayUsers]);
+
+  const userCategoryTabs = [
+    { key: "all", label: "All Users", count: counts.all },
+    { key: "customer", label: "Customers", count: counts.customer },
+    { key: "staff", label: "Staff", count: counts.staff },
+    { key: "helper", label: "Helpers", count: counts.helper },
+    { key: "skilled_worker", label: "Skilled Workers", count: counts.skilled_worker },
+  ];
+
+  const displayUsers = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase();
+    return allDisplayUsers.filter((account) => {
+      const matchesRole = activeTab === "all"
+        || (activeTab === "staff" || activeTab === "skilled_worker"
+          ? account.role === "skilled_worker"
+          : account.role === activeTab);
+      const matchesSearch = !normalizedSearch || [account.first_name, account.last_name, account.email, account.username]
+        .some((value) => String(value || "").toLowerCase().includes(normalizedSearch));
+      return matchesRole && matchesSearch;
+    });
+  }, [allDisplayUsers, activeTab, search]);
 
   const getPermissions = (account) => normalizePermissions(account.access_permissions);
 
@@ -317,191 +334,128 @@ function Settings() {
     }
   };
 
-  const renderBackupRecovery = (metrics) => (
-    <>
-          {activeSettingsTab === "backup-recovery" && (
-            <div className="mt-7 min-w-0 space-y-6">
-              <div className="grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3">
-                <div className={`flex min-w-0 items-center gap-3 rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-border bg-background"}`}>
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-red-950/60 text-red-300" : "bg-brand/[0.08] text-brand"}`}>
-                    <Calendar aria-hidden="true" className="size-5" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className={`text-[11px] font-medium uppercase tracking-[0.08em] ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>Last backup</div>
-                    <div className={`mt-1 text-base font-medium ${darkMode ? "text-slate-100" : "text-foreground"}`}>{metrics.lastBackupAt ? formatBackupDateShort(metrics.lastBackupAt) : "No backup"}</div>
-                  </div>
-                </div>
+  const renderBackupRecovery = (metrics) => {
+    const isSuccessfulStatus = metrics.status === "Success";
+    const isFailedStatus = metrics.status === "Failed" || metrics.status === "Error";
+    const statusTone = isSuccessfulStatus
+      ? "bg-green-100 text-green-700 dark:bg-green-950/60 dark:text-green-300"
+      : isFailedStatus
+        ? "bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300"
+        : "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300";
+    const statusValueTone = isSuccessfulStatus
+      ? "text-green-700 dark:text-green-300"
+      : isFailedStatus
+        ? "text-red-700 dark:text-red-300"
+        : "text-amber-800 dark:text-amber-300";
+    const hasSelectedBackupFile = Boolean(backupImportFile || uploadedBackup);
 
-                <div className={`flex min-w-0 items-center gap-3 rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-border bg-background"}`}>
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${darkMode ? metrics.status === "Success" ? "bg-green-950/60 text-green-300" : "bg-slate-800 text-slate-400" : metrics.status === "Success" ? "bg-green-500/10 text-green-700" : "bg-muted text-muted-foreground"}`}>
-                    <History aria-hidden="true" className="size-5" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className={`text-[11px] font-medium uppercase tracking-[0.08em] ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>Backup status</div>
-                    <div className={`mt-1 inline-flex items-center gap-2 text-base font-medium ${metrics.status === "Success" ? darkMode ? "text-green-300" : "text-green-700" : darkMode ? "text-slate-300" : "text-muted-foreground"}`}>
-                      <span className={`size-2 rounded-full ${metrics.status === "Success" ? "bg-green-500" : darkMode ? "bg-slate-500" : "bg-muted-foreground"}`} />
-                      {metrics.status}
-                    </div>
-                  </div>
-                </div>
+    return (
+      <>
+        {activeSettingsTab === "backup-recovery" && (
+          <div className="mt-4.5 min-w-0 max-w-full space-y-4.5 overflow-x-clip">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3.5">
+              <motion.article whileHover={prefersReducedMotion ? undefined : { y: -2 }} transition={{ duration: prefersReducedMotion ? 0 : 0.18 }} className={cn("flex min-w-0 items-center gap-3.5 rounded-2xl border px-4.5 py-4 transition-colors motion-reduce:transition-none hover:border-brand/30", "border-border bg-card dark:border-slate-700 dark:bg-slate-900")}>
+                <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand dark:bg-brand/15 dark:text-brand-dark-text"><Calendar aria-hidden="true" className="size-[21px]" /></span>
+                <span className="min-w-0"><span className="block text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">Last backup</span><span className="mt-1 block text-[19px] font-medium text-foreground">{metrics.lastBackupAt ? formatBackupDateShort(metrics.lastBackupAt) : "No backup"}</span></span>
+              </motion.article>
+              <motion.article whileHover={prefersReducedMotion ? undefined : { y: -2 }} transition={{ duration: prefersReducedMotion ? 0 : 0.18 }} className={cn("flex min-w-0 items-center gap-3.5 rounded-2xl border px-4.5 py-4 transition-colors motion-reduce:transition-none hover:border-brand/30", "border-border bg-card dark:border-slate-700 dark:bg-slate-900")}>
+                <span className={cn("flex size-11 shrink-0 items-center justify-center rounded-xl", statusTone)}><History aria-hidden="true" className="size-[21px]" /></span>
+                <span className="min-w-0"><span className="block text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">Backup status</span><span className={cn("mt-1 inline-flex items-center gap-2 text-[19px] font-medium", statusValueTone)}><span className="relative flex size-[9px] shrink-0" aria-hidden="true"><span className={cn("absolute inline-flex size-full rounded-full motion-safe:animate-ping motion-reduce:animate-none", isSuccessfulStatus ? "bg-green-500/45" : isFailedStatus ? "bg-red-500/45" : "bg-amber-500/45")} /><span className={cn("relative inline-flex size-[9px] rounded-full", isSuccessfulStatus ? "bg-green-500" : isFailedStatus ? "bg-red-500" : "bg-amber-500")} /></span>{metrics.status}</span></span>
+              </motion.article>
+              <motion.article whileHover={prefersReducedMotion ? undefined : { y: -2 }} transition={{ duration: prefersReducedMotion ? 0 : 0.18 }} className={cn("flex min-w-0 items-center gap-3.5 rounded-2xl border px-4.5 py-4 transition-colors motion-reduce:transition-none hover:border-brand/30", "border-border bg-card dark:border-slate-700 dark:bg-slate-900")}>
+                <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300"><Database aria-hidden="true" className="size-[21px]" /></span>
+                <span className="min-w-0"><span className="block text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">Backup snapshots</span><span className="mt-1 block text-[19px] font-medium text-foreground">{metrics.totalBackups} backups</span></span>
+              </motion.article>
+              <motion.article whileHover={prefersReducedMotion ? undefined : { y: -2 }} transition={{ duration: prefersReducedMotion ? 0 : 0.18 }} className={cn("flex min-w-0 items-center gap-3.5 rounded-2xl border px-4.5 py-4 transition-colors motion-reduce:transition-none hover:border-brand/30", "border-border bg-card dark:border-slate-700 dark:bg-slate-900")}>
+                <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-green-500/10 text-green-700 dark:bg-green-950/60 dark:text-green-300"><CircleCheck aria-hidden="true" className="size-[21px]" /></span>
+                <span className="min-w-0"><span className="block text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">Success rate</span><span className="mt-1 block text-[19px] font-medium text-foreground">{metrics.successRate}%</span></span>
+              </motion.article>
+            </div>
 
-                <div className={`flex min-w-0 items-center gap-3 rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-border bg-background"}`}>
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-blue-950/70 text-blue-300" : "bg-blue-500/10 text-blue-700"}`}>
-                    <Database aria-hidden="true" className="size-5" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className={`text-[11px] font-medium uppercase tracking-[0.08em] ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>Backup snapshots</div>
-                    <div className={`mt-1 text-base font-medium ${darkMode ? "text-slate-100" : "text-foreground"}`}>{metrics.totalBackups} backups</div>
-                  </div>
-                </div>
-
-                <div className={`flex min-w-0 items-center gap-3 rounded-2xl border p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-border bg-background"}`}>
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-green-950/60 text-green-300" : "bg-green-500/10 text-green-700"}`}>
-                    <CircleCheck aria-hidden="true" className="size-5" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className={`text-[11px] font-medium uppercase tracking-[0.08em] ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>Success rate</div>
-                    <div className={`mt-1 text-base font-medium ${darkMode ? "text-slate-100" : "text-foreground"}`}>{metrics.successRate}%</div>
-                  </div>
-                </div>
-              </div>
-
-              <section className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h3 id="backup-schedule-heading" className={`text-[17px] font-medium ${darkMode ? "text-slate-100" : "text-foreground"}`}>Backup Schedule</h3>
-                </div>
-
-                <div className="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-3">
-                  <RadioGroup.Root
-                    value={backupState.selectedSchedule}
-                    onValueChange={handleScheduleChange}
-                    disabled={loadingBackupSettings}
-                    aria-labelledby="backup-schedule-heading"
-                    className="contents"
-                  >
+            <div className="grid grid-cols-1 items-stretch gap-4.5 lg:grid-cols-[minmax(300px,390px)_minmax(0,1fr)]">
+              <section className="flex min-w-0 flex-col overflow-hidden rounded-[20px] border border-border bg-card dark:border-slate-700 dark:bg-slate-900">
+                <header className="px-6 pt-5.5 max-[520px]:px-4"><h3 id="backup-schedule-heading" className="text-[19px] font-medium text-foreground">Backup Schedule</h3></header>
+                <div className="flex-1 px-6 pb-5.5 pt-4.5 max-[520px]:px-4">
+                  <RadioGroup.Root value={backupState.selectedSchedule} onValueChange={handleScheduleChange} disabled={loadingBackupSettings} aria-label="Backup Schedule" aria-labelledby="backup-schedule-heading" className="flex flex-col gap-2.5">
                     {backupOptions.map((option) => {
                       const isSelected = backupState.selectedSchedule === option.id;
-                      const ScheduleIcon = {
-                        weekly: CalendarDays,
-                        monthly: CalendarRange,
-                        yearly: CalendarClock,
-                      }[option.id];
-
+                      const ScheduleIcon = { weekly: CalendarDays, monthly: CalendarRange, yearly: CalendarClock }[option.id];
                       return (
-                        <label
-                          key={option.id}
-                          htmlFor={`backup-schedule-${option.id}`}
-                          className={`flex min-h-[84px] cursor-pointer items-center gap-3 rounded-2xl border p-4 transition-colors motion-reduce:transition-none ${darkMode ? isSelected ? "border-red-700 bg-red-950/45" : "border-slate-700 bg-slate-900 hover:bg-slate-800" : isSelected ? "border-brand bg-brand/[0.08]" : "border-border bg-background hover:bg-muted/50"}`}
-                        >
-                          <span className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${isSelected ? darkMode ? "bg-red-800 text-white" : "bg-brand text-white" : darkMode ? "bg-slate-800 text-slate-300" : "bg-muted text-muted-foreground"}`}>
-                            <ScheduleIcon aria-hidden="true" className="size-5" />
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className={`block text-base font-medium ${darkMode ? "text-slate-100" : "text-foreground"}`}>{option.label}</span>
-                            <span className={`mt-1 block text-[13px] ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>{option.description}</span>
-                          </span>
-                          <RadioGroup.Item
-                            id={`backup-schedule-${option.id}`}
-                            value={option.id}
-                            aria-label={option.label}
-                            className={`flex size-5 shrink-0 items-center justify-center rounded-full border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 motion-reduce:transition-none ${darkMode ? "border-slate-500 text-red-300 focus-visible:ring-offset-slate-900 data-[state=checked]:border-red-400" : "border-muted-foreground/50 text-brand focus-visible:ring-offset-background data-[state=checked]:border-brand"}`}
-                          >
-                            <RadioGroup.Indicator className="flex items-center justify-center">
-                              <span className="size-2.5 rounded-full bg-current" />
-                            </RadioGroup.Indicator>
+                        <label key={option.id} htmlFor={`backup-schedule-${option.id}`} className={cn(
+                          "flex min-h-[74px] cursor-pointer items-center gap-3 rounded-[14px] px-4 py-3.25 transition-colors motion-reduce:transition-none",
+                          isSelected ? "border-[1.5px] border-brand/50 bg-brand/[0.07] dark:border-brand-dark-text/50 dark:bg-brand-dark-fill/10" : "border border-border bg-background hover:bg-muted/50 dark:border-slate-700 dark:bg-slate-950 dark:hover:bg-slate-800",
+                        )}>
+                          <span className={cn("flex size-[42px] shrink-0 items-center justify-center rounded-[11px] transition-colors motion-reduce:transition-none", isSelected ? "bg-brand text-white dark:bg-brand-dark-fill" : "bg-muted text-muted-foreground dark:bg-slate-800 dark:text-slate-300")}><ScheduleIcon aria-hidden="true" className="size-5" /></span>
+                          <span className="min-w-0 flex-1"><span className="block text-base font-medium text-foreground">{option.label}</span><span className="mt-0.5 block text-sm text-muted-foreground">{option.description}</span></span>
+                          <RadioGroup.Item id={`backup-schedule-${option.id}`} value={option.id} aria-label={option.label} className="flex size-5 shrink-0 items-center justify-center rounded-full border border-muted-foreground/50 text-brand outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=checked]:border-brand motion-reduce:transition-none dark:border-slate-500 dark:text-brand-dark-text dark:focus-visible:ring-offset-slate-900 dark:data-[state=checked]:border-brand-dark-text">
+                            <RadioGroup.Indicator className="flex items-center justify-center"><span className="size-2.5 rounded-full bg-current" /></RadioGroup.Indicator>
                           </RadioGroup.Item>
                         </label>
                       );
                     })}
                   </RadioGroup.Root>
                 </div>
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={handleBackupNow}
-                    disabled={loadingBackupSettings || creatingBackup}
-                    className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "bg-red-800 hover:bg-red-700" : "bg-brand hover:bg-red-900"}`}
-                  >
+                <footer className="flex min-h-[70px] items-center border-t border-border bg-muted/50 px-6 py-3.5 dark:border-slate-700 dark:bg-slate-800/50 max-[520px]:px-4">
+                  <button type="button" onClick={handleBackupNow} disabled={loadingBackupSettings || creatingBackup} className="inline-flex h-10.5 w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:bg-brand-dark-fill">
                     {creatingBackup ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <Database aria-hidden="true" className="size-4" />}
                     {creatingBackup ? "Creating backup..." : "Back Up Now"}
                   </button>
-                </div>
+                </footer>
               </section>
 
-              <section className={`w-fit max-w-full space-y-3 self-start rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-900" : "border-border bg-background"}`}>
-                <div>
-                  <h3 className={`text-[15px] font-semibold ${darkMode ? "text-slate-100" : "text-foreground"}`}>Upload Backup File</h3>
-                  <p className={`mt-0.5 text-xs ${darkMode ? "text-slate-400" : "text-muted-foreground"}`}>
-                    Drop a backup ZIP here or choose one to restore your system. The transactions Excel report is included inside the ZIP; do not upload it separately. Legacy .json.gz backups are also supported.
-                  </p>
-                </div>
-                <div
-                  onDragEnter={(event) => {
-                    event.preventDefault();
-                    if (!uploadedBackup && !uploadingBackupFile) setIsDraggingBackupFile(true);
-                  }}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDragLeave={(event) => {
-                    const nextTarget = event.relatedTarget;
-                    if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
-                      setIsDraggingBackupFile(false);
-                    }
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    setIsDraggingBackupFile(false);
-                    if (!uploadedBackup && !uploadingBackupFile) {
-                      handleBackupFileSelection(event.dataTransfer.files?.[0]);
-                    }
-                  }}
-                  className={`flex flex-col gap-2 rounded-lg border border-dashed p-3 transition-colors sm:flex-row sm:items-center ${isDraggingBackupFile ? darkMode ? "border-red-400 bg-red-950/40" : "border-brand bg-brand/[0.06]" : darkMode ? "border-slate-600" : "border-border"} ${uploadedBackup || uploadingBackupFile ? "opacity-60" : ""}`}
-                >
-                  <label
-                    htmlFor="system-backup-upload"
-                    className={`inline-flex min-h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${uploadedBackup || uploadingBackupFile ? "cursor-not-allowed opacity-50" : ""} ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-border bg-background text-slate-700 hover:bg-muted"}`}
-                  >
-                    <Upload aria-hidden="true" className="size-3.5" />
-                    Choose backup file
-                  </label>
-                  <input
-                    ref={backupUploadInputRef}
-                    id="system-backup-upload"
-                    type="file"
-                    accept=".zip,.json.gz.enc,.json.gz,application/zip,application/octet-stream,application/gzip,application/x-gzip"
-                    disabled={Boolean(uploadedBackup) || uploadingBackupFile}
-                    onChange={(event) => {
-                      handleBackupFileSelection(event.target.files?.[0]);
-                      event.target.value = "";
+              <section className="flex min-w-0 flex-col overflow-hidden rounded-[20px] border border-border bg-card dark:border-slate-700 dark:bg-slate-900">
+                <header className="px-6 pt-5.5 max-[520px]:px-4">
+                  <h3 className="text-[19px] font-medium text-foreground">Upload Backup File</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Drop a backup <span className="font-medium text-foreground">ZIP</span> here or choose one to restore your system. The transactions Excel report is included inside the <span className="font-medium text-foreground">ZIP</span>; do not upload it separately. Legacy <code className="rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-[12px] text-foreground">.json.gz</code> backups are also supported.</p>
+                </header>
+                <div className="flex-1 px-6 pb-5.5 pt-4.5 max-[520px]:px-4">
+                  <div
+                    onDragEnter={(event) => {
+                      event.preventDefault();
+                      if (!uploadedBackup && !uploadingBackupFile) setIsDraggingBackupFile(true);
                     }}
-                    className="sr-only"
-                  />
-                  <span className={`min-w-0 flex-1 truncate text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                    {uploadedBackup
-                      ? `Uploaded: ${backupImportFile?.name || uploadedBackup.name}`
-                      : backupImportFile?.name || (isDraggingBackupFile ? "Drop backup file to select" : "Drop a backup file here or choose a file")}
-                  </span>
-                </div>
-                <div className="flex flex-wrap justify-start gap-1.5">
-                  <button
-                    type="button"
-                    onClick={handleSyncUploadedBackup}
-                    disabled={(!uploadedBackup && !backupImportFile) || restoringBackup || uploadingBackupFile}
-                    className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "bg-red-800 hover:bg-red-700" : "bg-brand hover:bg-red-900"}`}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDragLeave={(event) => {
+                      const nextTarget = event.relatedTarget;
+                      if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) setIsDraggingBackupFile(false);
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      setIsDraggingBackupFile(false);
+                      if (!uploadedBackup && !uploadingBackupFile) handleBackupFileSelection(event.dataTransfer.files?.[0]);
+                    }}
+                    className={cn("flex h-full min-h-[200px] flex-col items-center justify-center gap-3.5 rounded-2xl border-[1.5px] border-dashed bg-muted/30 p-7 text-center transition-colors motion-reduce:transition-none max-[520px]:p-5", isDraggingBackupFile ? "border-brand bg-brand/[0.07] ring-4 ring-brand/10 dark:border-brand-dark-text dark:bg-brand-dark-fill/10" : "border-border hover:border-brand/60 hover:bg-brand/[0.04] dark:border-slate-600 dark:hover:border-brand-dark-text/60 dark:hover:bg-brand-dark-fill/5")}
                   >
-                    {uploadingBackupFile || restoringBackup ? <Loader2 aria-hidden="true" className="size-3.5 animate-spin" /> : <RotateCcw aria-hidden="true" className="size-3.5" />}
+                    <span className={cn("flex size-[58px] shrink-0 items-center justify-center rounded-[18px] border border-border bg-background text-brand transition-transform transition-colors motion-reduce:transition-none dark:border-slate-700 dark:bg-slate-950 dark:text-brand-dark-text", hasSelectedBackupFile || isDraggingBackupFile ? "-translate-y-[3px] border-brand bg-brand text-white dark:border-brand-dark-fill dark:bg-brand-dark-fill dark:text-white" : "")}>
+                      {hasSelectedBackupFile ? <FileArchive aria-hidden="true" className="size-[25px]" /> : <CloudUpload aria-hidden="true" className="size-[25px]" />}
+                    </span>
+                    {hasSelectedBackupFile ? (
+                      <div className="min-w-0 max-w-full">
+                        <p className="break-all font-mono text-sm font-medium text-foreground">{uploadedBackup ? `Uploaded: ${backupImportFile?.name || uploadedBackup.name}` : backupImportFile?.name || uploadedBackup?.name}</p>
+                        <p className="mt-1 text-[13px] text-muted-foreground">{backupImportFile ? formatBackupSize({ sizeBytes: backupImportFile.size }) : formatBackupSize(uploadedBackup)}</p>
+                      </div>
+                    ) : (
+                      <p className="text-[15px] text-muted-foreground">{isDraggingBackupFile ? "Drop backup file to select" : "Drop a backup file here or choose a file"}</p>
+                    )}
+                    <label htmlFor="system-backup-upload" className={cn("inline-flex h-10.5 cursor-pointer items-center justify-center gap-2 rounded-xl border border-border bg-background px-5 text-sm font-medium text-foreground transition-colors focus-within:outline-none focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-2 focus-within:ring-offset-background motion-reduce:transition-none", "hover:border-brand hover:text-brand dark:border-slate-600 dark:bg-slate-950 dark:text-slate-200 dark:hover:border-brand-dark-text dark:hover:text-brand-dark-text", uploadedBackup || uploadingBackupFile ? "cursor-not-allowed opacity-50" : "")}>
+                      <input ref={backupUploadInputRef} id="system-backup-upload" type="file" accept=".zip,.json.gz.enc,.json.gz,application/zip,application/octet-stream,application/gzip,application/x-gzip" disabled={Boolean(uploadedBackup) || uploadingBackupFile} onChange={(event) => { handleBackupFileSelection(event.target.files?.[0]); event.target.value = ""; }} className="sr-only" />
+                      <Upload aria-hidden="true" className="size-4" />
+                      Choose backup file
+                    </label>
+                  </div>
+                </div>
+                <footer className="flex min-h-[70px] flex-wrap items-center gap-2.5 border-t border-border bg-muted/50 px-6 py-3.5 dark:border-slate-700 dark:bg-slate-800/50 max-[520px]:grid max-[520px]:grid-cols-2 max-[520px]:px-4">
+                  <button type="button" onClick={handleSyncUploadedBackup} disabled={(!uploadedBackup && !backupImportFile) || restoringBackup || uploadingBackupFile} className="inline-flex h-10.5 items-center justify-center gap-2 rounded-xl bg-brand px-6 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100 motion-reduce:transition-none dark:bg-brand-dark-fill dark:disabled:bg-slate-700 dark:disabled:text-slate-400 max-[520px]:w-full max-[520px]:px-3">
+                    {uploadingBackupFile || restoringBackup ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <RotateCcw aria-hidden="true" className="size-4" />}
                     {uploadingBackupFile ? "Uploading..." : restoringBackup ? "Syncing..." : "Sync"}
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleRemoveBackupFile}
-                    disabled={(!backupImportFile && !uploadedBackup) || uploadingBackupFile || removingBackupFile || restoringBackup}
-                    className={`inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-border text-slate-700 hover:bg-muted"}`}
-                  >
-                    {removingBackupFile ? <Loader2 aria-hidden="true" className="size-3.5 animate-spin" /> : <Trash2 aria-hidden="true" className="size-3.5" />}
+                  <button type="button" onClick={handleRemoveBackupFile} disabled={(!backupImportFile && !uploadedBackup) || uploadingBackupFile || removingBackupFile || restoringBackup} className="inline-flex h-10.5 items-center justify-center gap-2 rounded-xl border border-border bg-background px-5 text-sm font-medium text-foreground transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100 motion-reduce:transition-none dark:border-slate-600 dark:bg-slate-950 dark:text-slate-200 dark:hover:border-red-800 dark:hover:bg-red-950/40 dark:hover:text-red-300 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-500 max-[520px]:w-full max-[520px]:px-2">
+                    {removingBackupFile ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <Trash2 aria-hidden="true" className="size-4" />}
                     {removingBackupFile ? "Removing..." : "Remove File"}
                   </button>
-                </div>
+                </footer>
               </section>
+            </div>
 
               <section className="space-y-3">
                 <h3 className={`text-[17px] font-medium ${darkMode ? "text-slate-100" : "text-foreground"}`}>Backup History</h3>
@@ -640,7 +594,8 @@ function Settings() {
             </div>
           )}
     </>
-  );
+    );
+  };
 
   const togglePermissionDraft = (key, checked) => {
     setPermissionDraft((current) => {
@@ -1093,12 +1048,12 @@ function Settings() {
   };
 
   return (
-    <div className={`admin-settings settings-premium flex h-dvh min-h-dvh overflow-hidden ${darkMode ? "bg-slate-950 text-slate-100" : "bg-[#eef1f3] text-slate-900"}`}>
+    <div className={`admin-settings settings-premium flex h-dvh min-h-dvh overflow-hidden ${darkMode ? "dark bg-slate-950 text-slate-100" : "bg-[#eef1f3] text-slate-900"}`}>
       <Toaster position="bottom-right" />
       <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((open) => !open)} />
       <div className="flex min-h-0 flex-1 flex-col">
         <Navbar />
-        <main className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain p-4 sm:p-6 lg:p-8">
+        <main className="min-w-0 flex-1 min-h-0 overflow-x-hidden overflow-y-auto overscroll-y-contain p-4 sm:p-6 lg:p-8">
           <AdminPageHeader
             title="System Settings"
             description="Manage customer access, permissions, and account availability."
@@ -1109,16 +1064,19 @@ function Settings() {
             ]}
           />
 
-          <section className={`mt-6 rounded-2xl border p-2 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
-            <div className="flex flex-wrap gap-2">
+          <section className="mt-6 min-w-0 max-w-full overflow-hidden">
+            <div role="tablist" aria-label="Settings tabs" className="inline-flex max-w-full gap-1 overflow-x-auto rounded-2xl border border-border bg-muted/50 p-1.5 dark:border-slate-700 dark:bg-slate-900">
               {settingsTabs.map((tab) => (
                 <button
                   key={tab.key}
                   type="button"
+                  role="tab"
+                  aria-selected={activeSettingsTab === tab.key}
                   onClick={() => setActiveSettingsTab(tab.key)}
-                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${activeSettingsTab === tab.key ? (darkMode ? "border border-red-700 bg-red-950/60 text-red-200" : "border border-red-900 bg-red-50 text-red-950") : (darkMode ? "text-slate-400 hover:bg-slate-800" : "text-slate-600 hover:bg-slate-50")}`}
+                  className={cn("relative inline-flex h-10 shrink-0 items-center justify-center whitespace-nowrap rounded-[11px] border border-transparent px-5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none", activeSettingsTab === tab.key ? "text-brand dark:text-brand-dark-text" : "text-secondary-foreground hover:bg-background/80 hover:text-foreground dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100")}
                 >
-                  {tab.label}
+                  {activeSettingsTab === tab.key && <motion.span layoutId="settings-tab-indicator" aria-hidden="true" initial={false} transition={{ duration: prefersReducedMotion ? 0 : 0.18 }} className="absolute inset-0 rounded-[11px] border border-brand/50 bg-brand/[0.07] dark:border-brand-dark-text/50 dark:bg-brand-dark-fill/10" />}
+                  <span className="relative z-10">{tab.label}</span>
                 </button>
               ))}
             </div>
@@ -1158,16 +1116,18 @@ function Settings() {
                 ))}
               </select>
             </div>
-            <div className="hidden flex-wrap gap-1 lg:flex">
+            <div role="tablist" aria-label="Filter users by category" className="hidden min-w-0 flex-wrap gap-1.5 lg:flex">
               {userCategoryTabs.map((tab) => (
                 <button
                   key={tab.key}
                   type="button"
+                  role="tab"
+                  aria-selected={activeTab === tab.key}
                   onClick={() => setActiveTab(tab.key)}
-                  className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${activeTab === tab.key ? (darkMode ? "border border-red-700 bg-red-950/60 text-red-200" : "border border-red-900 bg-red-50 text-red-950") : (darkMode ? "text-slate-400 hover:bg-slate-800" : "text-slate-600 hover:bg-slate-50")}`}
+                  className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 ${activeTab === tab.key ? (darkMode ? "border-red-700 bg-red-950/60 text-red-100 shadow-sm shadow-black/10" : "border-red-200 bg-red-50 text-red-950 shadow-sm") : (darkMode ? "border-transparent text-slate-400 hover:border-slate-700 hover:bg-slate-800 hover:text-slate-100" : "border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900")}`}
                 >
                   {tab.label}
-                  <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[10px] ${activeTab === tab.key ? (darkMode ? "bg-red-900 text-red-100" : "bg-red-200 text-red-900") : (darkMode ? "bg-slate-700 text-slate-300" : "bg-slate-200")}`}>
+                  <span className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] tabular-nums ${activeTab === tab.key ? (darkMode ? "bg-red-800 text-red-50" : "bg-red-200 text-red-900") : (darkMode ? "bg-slate-700 text-slate-300" : "bg-slate-200 text-slate-700")}`}>
                     {tab.count}
                   </span>
                 </button>

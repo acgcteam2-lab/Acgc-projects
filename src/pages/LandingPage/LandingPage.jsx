@@ -7,11 +7,13 @@ import {
   ArrowRight,
   ShoppingBag,
   Search,
+  Package,
   BriefcaseBusiness,
   ShieldCheck,
   Clock3,
   Wrench,
   Truck,
+  Ruler,
   LoaderCircle,
   Star,
   StarHalf,
@@ -24,17 +26,25 @@ import {
 import OrderProgressTimeline from "@/components/OrderProgressTimeline";
 import { getPaymentSummary } from "@/pages/Transactions/paymentProofUtils";
 import { getProducts } from "../../api/products";
-import { getProductReviews, trackOrder } from "../../api/orders";
+import { getProductReviewSummary, trackOrder } from "../../api/orders";
 import logo from "../../assets/images/ACGCLOGO1.png";
+import { calculateEstimate } from "@/lib/estimator";
 import { resolveBackendImageUrl } from "../../lib/resolveBackendImageUrl";
+import { getProductLineTotal } from "../../lib/productPricing";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 function LandingPage() {
-
+  const isMobile = useIsMobile();
   const [active, setActive] = useState("home");
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [productEstimatorForm, setProductEstimatorForm] = useState({ unit: "in", width: "0", height: "0" });
   const [featuredProducts, setFeaturedProducts] = useState([]);
   const [catalogProducts, setCatalogProducts] = useState([]);
   const [productSearch, setProductSearch] = useState("");
+  const [productCategory, setProductCategory] = useState("All");
+  const [productPage, setProductPage] = useState(1);
+  const [productsPerPage, setProductsPerPage] = useState(8);
   const [featuredProductStats, setFeaturedProductStats] = useState({});
   const [featuredRatingStats, setFeaturedRatingStats] = useState({
     average: 0,
@@ -54,6 +64,10 @@ function LandingPage() {
     setMobileMenu(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+  const openProductDetails = (product) => {
+    setSelectedProduct(product);
+    setProductEstimatorForm({ unit: "in", width: "0", height: "0" });
+  };
 
   useEffect(() => {
     const loadFeaturedProducts = async () => {
@@ -67,21 +81,13 @@ function LandingPage() {
         const productReviewData = await Promise.all(
           activeProducts.map(async (product) => {
             try {
-              const reviewResponse = await getProductReviews(product._id || product.id);
-              const reviews = Array.isArray(reviewResponse.reviews) ? reviewResponse.reviews : [];
-              const ratedReviews = reviews.filter((review) => Number(review.rating) > 0);
-              const averageRating = ratedReviews.length
-                ? ratedReviews.reduce((sum, review) => sum + Number(review.rating), 0) / ratedReviews.length
-                : 0;
+              const reviewResponse = await getProductReviewSummary(product._id || product.id);
 
               return {
                 product,
-                averageRating,
-                ratingsCount: ratedReviews.length,
-                ratingCounts: [5, 4, 3, 2, 1].reduce((counts, star) => {
-                  counts[star] = ratedReviews.filter((review) => Math.round(Number(review.rating)) === star).length;
-                  return counts;
-                }, {}),
+                averageRating: Number(reviewResponse.average) || 0,
+                ratingsCount: Number(reviewResponse.total) || 0,
+                ratingCounts: reviewResponse.counts || { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
               };
             } catch {
               return {
@@ -142,6 +148,22 @@ function LandingPage() {
     loadFeaturedProducts();
   }, []);
 
+  useEffect(() => {
+    if (!selectedProduct) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setSelectedProduct(null);
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [selectedProduct]);
+
   const isLocalBlobOrFile = (url) =>
     typeof url === "string" && (url.startsWith("blob:") || url.startsWith("file:"));
 
@@ -167,21 +189,117 @@ function LandingPage() {
     return "";
   };
 
+  const getProductDefaultDimensions = (product) => {
+    const dimensionText = String(product?.dimensions || product?.standard_size || product?.size || "");
+    const dimensionMatch = dimensionText.match(/(\d+(?:\.\d+)?)\s*(?:x|×|by)\s*(\d+(?:\.\d+)?)/i);
+    const unitMatch = dimensionText.match(/\b(cm|mm|m|ft|in|inch|inches|feet|meter|meters)\b|"/i);
+    const unitMap = { inch: "in", inches: "in", feet: "ft", meter: "m", meters: "m" };
+
+    return {
+      width: Number(product?.width) > 0 ? Number(product.width) : dimensionMatch ? Number(dimensionMatch[1]) : 0,
+      height: Number(product?.height) > 0 ? Number(product.height) : dimensionMatch ? Number(dimensionMatch[2]) : 0,
+      unit: product?.measurement_unit || product?.measurementUnit || (
+        unitMatch ? unitMap[unitMatch[1]?.toLowerCase()] || unitMatch[1]?.toLowerCase() || "in" : "in"
+      ),
+      quantity: 1,
+      customized: false,
+    };
+  };
+
   const getProductPrice = (product) => {
     if (!product) return "Contact us";
-    const pricePerSqft = Number(product.price_per_sqft || 0);
-    const unitPrice = Number(product.unit_price || 0);
-    if (pricePerSqft > 0) return `₱${pricePerSqft.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/sqft`;
-    if (unitPrice > 0) return `₱${unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const price = getProductLineTotal(product, getProductDefaultDimensions(product));
+    return price > 0
+      ? `₱${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : "Contact us";
+  };
+
+  const getProductUnitRate = (product) => {
+    const pricePerSqft = Number(product.price_per_sqft) || 0;
+    const pricePerBlade = Number(product.price_per_blade) || 0;
+    const unitPrice = Number(product.unit_price) || 0;
+    const unitKey = product.unit || product.pricing_method || "unit";
+    const unitLabels = {
+      per_sqft: "sq ft",
+      sqft: "sq ft",
+      per_blade: "blade",
+      blade: "blade",
+      per_piece: "piece",
+      piece: "piece",
+      per_meter: "meter",
+      meter: "meter",
+      per_set: "set",
+      set: "set",
+    };
+    const label = unitLabels[unitKey] || unitKey;
+
+    if ((product.pricing_method === "sqft" || label === "sq ft") && pricePerSqft > 0) {
+      return `₱${pricePerSqft.toLocaleString()} / ${label}`;
+    }
+    if ((product.pricing_method === "blade" || label === "blade") && pricePerBlade > 0) {
+      return `₱${pricePerBlade.toLocaleString()} / ${label}`;
+    }
+    if (unitPrice > 0) return `₱${unitPrice.toLocaleString()} / ${label}`;
     return "Contact us";
+  };
+
+  const getProductEstimateRate = (product) => {
+    const pricingMethod = String(product?.pricing_method || "").toLowerCase();
+    const legacyUnit = String(product?.unit || "").toLowerCase();
+    if (pricingMethod === "sqft" || (!pricingMethod && legacyUnit === "per_sqft")) {
+      return Number(product?.price_per_sqft) || undefined;
+    }
+    if (pricingMethod === "blade" || (!pricingMethod && legacyUnit === "per_blade")) {
+      return Number(product?.price_per_blade) || undefined;
+    }
+    return undefined;
   };
 
   const visibleProducts = catalogProducts.filter((product) => {
     const query = productSearch.trim().toLowerCase();
-    return !query || `${product.name || ""} ${product.product_name || ""} ${product.category || ""} ${product.description || ""}`
-      .toLowerCase()
-      .includes(query);
+    const matchesSearch = !query || `${product.name || ""} ${product.product_name || ""} ${product.product_type || ""} ${product.category || ""} ${product.description || ""}`
+      .toLowerCase().includes(query);
+    const matchesCategory = productCategory === "All" || [product.category, product.product_type, product.type]
+      .filter(Boolean)
+      .some((category) => String(category).toLowerCase() === productCategory.toLowerCase());
+    return matchesSearch && matchesCategory;
   });
+  const productPageCount = Math.max(1, Math.ceil(visibleProducts.length / productsPerPage));
+  const currentProductPage = Math.min(productPage, productPageCount);
+  const productPageStart = (currentProductPage - 1) * productsPerPage;
+  const pagedProducts = visibleProducts.slice(productPageStart, productPageStart + productsPerPage);
+  const displayedProducts = isMobile ? visibleProducts : pagedProducts;
+  const productEstimatorWidth = Number(productEstimatorForm.width) || 0;
+  const productEstimatorHeight = Number(productEstimatorForm.height) || 0;
+  const rawProductEstimatorResult = selectedProduct ? calculateEstimate({
+    productName: selectedProduct.product_name || selectedProduct.name,
+    categoryKey: selectedProduct.product_type || selectedProduct.category,
+    variantName: selectedProduct.variant,
+    width: productEstimatorWidth,
+    height: productEstimatorHeight,
+    measurementUnit: productEstimatorForm.unit,
+    quantity: 1,
+    blade_count: selectedProduct.blade_count || 0,
+    base_price: selectedProduct.base_price || undefined,
+    overrideRate: getProductEstimateRate(selectedProduct),
+    customization: selectedProduct.customization || false,
+    customization_fee: selectedProduct.customization_fee || 0,
+  }) : null;
+  const productEstimatorResult = selectedProduct
+    ? {
+        ...rawProductEstimatorResult,
+        estimated_price: getProductLineTotal(selectedProduct, {
+          width: productEstimatorWidth,
+          height: productEstimatorHeight,
+          measurement_unit: productEstimatorForm.unit,
+          quantity: 1,
+          customized: true,
+        }),
+      }
+    : null;
+  const selectedProductRating = selectedProduct
+    ? featuredProductStats[selectedProduct._id || selectedProduct.id] || { averageRating: 0, ratingsCount: 0 }
+    : { averageRating: 0, ratingsCount: 0 };
 
   const handleTrackOrder = async (event) => {
     event.preventDefault();
@@ -319,29 +437,34 @@ function LandingPage() {
 
       {/* NAVBAR */}
 
-      <header className="fixed inset-x-0 top-0 z-50 border-b border-slate-200 bg-white/95 backdrop-blur-2xl">
+      <header
+        className="fixed inset-x-0 top-0 z-50 border-b border-white/50 bg-white/65 backdrop-blur-2xl"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setMobileMenu(false);
+        }}
+      >
 
-        <div className="w-full px-4 py-2.5 flex items-center justify-between gap-3">
+        <div className="flex w-full items-center justify-between gap-2 px-3 py-2 sm:gap-3 sm:px-4 sm:py-2.5">
 
           {/* LOGO */}
 
           <button
             type="button"
             onClick={() => scrollToSection("home")}
-            className="flex items-center gap-3 px-1.5 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+            className="flex min-w-0 flex-1 items-center gap-2 px-1 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 sm:gap-3 sm:px-1.5"
             aria-label="Go to ACGC Services home"
           >
             <img
               src={logo}
               alt="logo"
-              className="w-14 h-14 object-contain"
+              className="h-10 w-10 shrink-0 object-contain sm:h-12 sm:w-12 lg:h-14 lg:w-14"
             />
 
-            <div className="leading-tight">
-              <h1 className="text-xl font-medium text-red-600">
+            <div className="min-w-0 leading-tight">
+              <h1 className="whitespace-nowrap text-[15px] font-semibold text-red-600 sm:text-xl">
                 ACGC Services
               </h1>
-              <p className="text-sm font-medium text-gray-600">
+              <p className="whitespace-nowrap text-[10px] font-medium text-gray-600 sm:text-sm">
                 Aluminum & Glass Services
               </p>
             </div>
@@ -389,12 +512,14 @@ function LandingPage() {
           {/* MOBILE MENU */}
 
           <button
-            onClick={()=>setMobileMenu(!mobileMenu)}
-            className="rounded-full p-2 text-slate-700 transition-colors hover:bg-slate-100 motion-reduce:transition-none lg:hidden"
+            type="button"
+            onClick={() => setMobileMenu((open) => !open)}
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200/80 bg-white/70 text-slate-700 shadow-sm transition-colors hover:bg-white motion-reduce:transition-none lg:hidden"
             aria-label={mobileMenu ? "Close navigation menu" : "Open navigation menu"}
             aria-expanded={mobileMenu}
+            aria-controls="mobile-navigation"
           >
-            {mobileMenu ? <X size={30} aria-hidden="true" /> : <Menu size={30} aria-hidden="true" />}
+            {mobileMenu ? <X size={22} aria-hidden="true" /> : <Menu size={22} aria-hidden="true" />}
           </button>
 
         </div>
@@ -402,60 +527,46 @@ function LandingPage() {
         {/* MOBILE DROPDOWN */}
 
         {mobileMenu && (
+          <div
+            id="mobile-navigation"
+            className="border-t border-white/50 bg-white/70 px-3 pb-3 pt-2 backdrop-blur-2xl lg:hidden sm:px-4"
+          >
+            <nav aria-label="Mobile navigation" className="mx-auto max-h-[calc(100dvh-5rem)] max-w-xl overflow-y-auto rounded-2xl border border-white/80 bg-white/90 p-2 shadow-[0_18px_45px_rgba(15,23,42,0.14)] backdrop-blur-2xl">
+              {[
+                { name: "Browse Products", id: "products", Icon: ShoppingBag },
+                { name: "About Us", id: "about", Icon: BriefcaseBusiness },
+                { name: "Track Order", id: "track-order", Icon: Truck },
+              ].map(({ name, id, Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => scrollToSection(id)}
+                  aria-current={active === id ? "page" : undefined}
+                  className={`flex min-h-12 w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left text-sm font-semibold transition-colors motion-reduce:transition-none ${active === id ? "border-red-100 bg-red-50 text-red-700" : "border-transparent text-slate-700 hover:bg-slate-50"}`}
+                >
+                  <Icon size={18} aria-hidden="true" />
+                  {name}
+                </button>
+              ))}
 
-          <div className="border-t border-slate-200 bg-white lg:hidden">
-
-            <div className="flex flex-col gap-2 px-4 py-4">
-
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileMenu(false);
-                  scrollToSection("products");
-                }}
-                className={`rounded-full px-4 py-2 text-left text-base font-medium transition-colors motion-reduce:transition-none ${active === "products" ? "border border-slate-200 bg-slate-100 text-red-700" : "text-slate-700 hover:bg-slate-100"}`}
-              >
-                Browse Products
-              </button>
-
-              <button
-                onClick={() => scrollToSection("about")}
-                className={`rounded-full px-4 py-2 text-left text-base font-medium transition-colors motion-reduce:transition-none ${active === "about" ? "border border-slate-200 bg-slate-100 text-red-700" : "text-slate-700 hover:bg-slate-100"}`}
-              >
-                About Us
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileMenu(false);
-                  scrollToSection("track-order");
-                }}
-                className={`rounded-full px-4 py-2 text-left text-base font-medium transition-colors motion-reduce:transition-none ${active === "track-order" ? "border border-slate-200 bg-slate-100 text-red-700" : "text-slate-700 hover:bg-slate-100"}`}
-              >
-                Track Order
-              </button>
-
-              <Link
-                to="/login"
-                onClick={() => setMobileMenu(false)}
-                className="rounded-full px-4 py-2 text-center text-base font-medium text-slate-700 transition-colors hover:bg-slate-100 motion-reduce:transition-none"
-              >
-                Login
-              </Link>
-
-              <Link
-                to="/signup"
-                onClick={() => setMobileMenu(false)}
-                className="rounded-full bg-red-600 px-4 py-2 text-center text-base font-medium text-white transition-opacity hover:opacity-90 motion-reduce:transition-none"
-              >
-                Sign Up
-              </Link>
-
-            </div>
-
+              <div className="mt-2 grid grid-cols-2 gap-2 border-t border-slate-100 pt-3">
+                <Link
+                  to="/login"
+                  onClick={() => setMobileMenu(false)}
+                  className="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 motion-reduce:transition-none"
+                >
+                  Login
+                </Link>
+                <Link
+                  to="/signup"
+                  onClick={() => setMobileMenu(false)}
+                  className="inline-flex min-h-11 items-center justify-center rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700 motion-reduce:transition-none"
+                >
+                  Sign Up
+                </Link>
+              </div>
+            </nav>
           </div>
-
         )}
 
       </header>
@@ -464,241 +575,579 @@ function LandingPage() {
 
       {active === "home" && (
         <>
-      <section id="home" className="relative scroll-mt-24 overflow-hidden bg-[#941d24] pt-24 text-white">
-        <div className="relative mx-auto flex min-h-[360px] max-w-7xl items-center justify-center px-6 py-16 text-center">
-          <div className="max-w-2xl">
-            <p className="text-sm font-semibold uppercase tracking-[0.28em] text-red-100">
-              ACGC Services
-            </p>
-            <h1 className="mt-4 text-4xl font-black leading-tight sm:text-6xl">Custom Glass &amp; Aluminum Solutions</h1>
-            <p className="mx-auto mt-5 max-w-xl text-base leading-7 text-red-100 sm:text-lg">
-              Professional fabrication and installation of glass windows, doors, partitions, and aluminum works for your space.
-            </p>
-            <div className="mt-8 flex flex-wrap justify-center gap-3">
-              <button type="button" onClick={() => scrollToSection("products")} className="inline-flex items-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-bold text-red-700 shadow-lg transition hover:bg-red-50">
-                <ShoppingBag size={18} /> Browse Products <ArrowRight size={16} />
-              </button>
-              <button type="button" onClick={() => scrollToSection("track-order")} className="inline-flex items-center gap-2 rounded-xl border border-white/70 px-5 py-3 text-sm font-bold text-white transition hover:bg-white/10">
-                <Search size={18} /> View My Orders
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
+          <section id="home" className="relative scroll-mt-24 overflow-hidden bg-[#170d11] pt-24 text-white">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.16),transparent_26%),radial-gradient(circle_at_bottom_right,_rgba(239,68,68,0.2),transparent_28%),linear-gradient(135deg,#170d11_0%,#4b1017_38%,#140d13_100%)]" />
+            <div className="absolute -left-16 top-28 h-72 w-72 rounded-full border border-white/10" />
+            <div className="absolute -right-10 bottom-6 h-80 w-80 rounded-full border border-white/10" />
+            <div className="absolute left-1/2 top-1/2 h-[460px] w-[460px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/10" />
 
-      <section className="relative z-10 mx-auto -mt-8 max-w-5xl px-6">
-        <div className="grid gap-6 rounded-3xl bg-white px-6 py-8 text-center shadow-xl sm:grid-cols-3 sm:px-10">
-          <div className="flex flex-col items-center"><ShieldCheck className="h-12 w-12 text-slate-900" strokeWidth={1.7} /><h3 className="mt-4 text-xl font-black">Quality Guaranteed</h3><p className="mt-2 text-sm text-slate-600">Premium materials and careful workmanship.</p></div>
-          <div className="flex flex-col items-center"><Clock3 className="h-12 w-12 text-slate-900" strokeWidth={1.7} /><h3 className="mt-4 text-xl font-black">Fast Turnaround</h3><p className="mt-2 text-sm text-slate-600">Efficient production for your project timeline.</p></div>
-          <div className="flex flex-col items-center"><Wrench className="h-12 w-12 text-slate-900" strokeWidth={1.7} /><h3 className="mt-4 text-xl font-black">Expert Installation</h3><p className="mt-2 text-sm text-slate-600">Professional site inspection and installation.</p></div>
-        </div>
-      </section>
-        </>
-      )}
-{/* PRODUCTS SECTION */}
-
-    {active === "home" && (
-<section id="featured-products" className="relative mx-auto max-w-7xl scroll-mt-24 px-6 py-8">
-
-  <div className="rounded-[24px] border border-red-100 bg-white p-5 shadow-[0_14px_35px_rgba(148,163,184,0.12)]">
-  <motion.div
-    initial={{opacity:0,y:60}}
-    whileInView={{opacity:1,y:0}}
-    viewport={{once:true}}
-    transition={{duration:1}}
-    className="mb-5 text-left"
-  >
-
-    <h2 className="text-3xl font-black leading-tight sm:text-5xl sm:leading-none">
-
-      Featured
-
-      <span className="text-red-500">
-        {" "}Products
-      </span>
-
-    </h2>
-
-    <p className="mt-6 max-w-3xl text-lg text-slate-500">
-
-      Discover premium aluminum and glass solutions crafted for modern residential and commercial projects.
-
-    </p>
-
-  </motion.div>
-
-  <div className="grid gap-4 md:grid-cols-3">
-    {isLoadingFeatured ? (
-      <div className="col-span-full rounded-[24px] border border-slate-200 bg-white p-10 text-center text-slate-600 shadow-sm">
-        Loading products...
-      </div>
-    ) : featuredProducts.length === 0 ? (
-      <div className="col-span-full rounded-[24px] border border-dashed border-slate-200 bg-slate-50 p-10 text-center text-slate-600">
-        No products are available right now.
-      </div>
-    ) : (
-      featuredProducts.map((product, index) => {
-        const imageUrl = getProductImage(product);
-        const reviewStats = featuredProductStats[product._id || product.id] || { averageRating: 0, ratingsCount: 0 };
-        const averageRating = Number(reviewStats.averageRating) || 0;
-        const reviewsCount = Number(reviewStats.ratingsCount) || 0;
-
-        return (
-          <motion.div
-            key={product._id || product.id || index}
-            initial={{opacity:0,y:80}}
-            whileInView={{opacity:1,y:0}}
-            viewport={{once:true}}
-            transition={{delay:index * 0.12,duration:0.7}}
-            whileHover={{scale:1.01}}
-            className="group cursor-pointer overflow-hidden rounded-[20px] border border-slate-200 bg-slate-50 shadow-[0_8px_22px_rgba(15,23,42,0.05)] transition duration-300 hover:-translate-y-1 hover:border-red-200 hover:shadow-[0_18px_30px_rgba(239,68,68,0.12)]"
-          >
-            <div className="relative h-44 overflow-hidden bg-slate-100">
-              {imageUrl ? (
-                <img src={imageUrl} alt={product.product_name || product.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-105" />
-              ) : (
-                <div className="h-full w-full bg-gradient-to-br from-red-600/20 to-white/5" />
-              )}
-              <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-slate-900/25 to-transparent" />
-            </div>
-
-            <div className="space-y-5 p-5">
-              <div className="flex items-center justify-between gap-3">
-                <span className="rounded-full bg-red-50 px-2.5 py-1 text-[12px] font-bold uppercase tracking-[0.18em] text-red-700">
-                  {product.category || product.product_type || "General"}
-                </span>
-                <span className="text-base font-extrabold text-emerald-600">{getProductPrice(product)}</span>
-              </div>
-
-              <div>
-                <h3 className="text-xl font-bold leading-tight text-slate-900">
-                  {product.product_name || product.name || "Unnamed Product"}
-                </h3>
-                <p className="mt-2 line-clamp-2 text-[0.95rem] leading-6 text-slate-700">
-                  {product.description || "Premium aluminum and glass product crafted for reliability and style."}
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between gap-3 pt-1">
-                <div className="flex min-w-0 flex-col">
-                  <div className="flex items-center gap-1 text-amber-500">
-                    {renderRatingStars(averageRating, 14)}
+            <div className="relative mx-auto max-w-7xl px-6 py-14 sm:py-20">
+              <div className="mx-auto max-w-6xl rounded-[32px] border border-white/20 bg-white/[0.08] px-5 py-8 shadow-[0_25px_80px_rgba(0,0,0,0.28)] backdrop-blur-2xl sm:px-8 sm:py-12 lg:px-10">
+                <div className="mx-auto max-w-4xl text-center">
+                  <p className="text-[11px] font-black uppercase tracking-[0.42em] text-red-100/90 sm:text-xs">ACGC Services</p>
+                  <h1 className="mt-5 text-4xl font-black leading-[0.96] tracking-[-0.06em] sm:text-6xl lg:text-[5rem]">
+                    Custom Glass &amp;
+                    <span className="mt-2 block text-red-100/95">Aluminum Solutions</span>
+                  </h1>
+                  <p className="mx-auto mt-6 max-w-2xl text-base leading-7 text-red-50/90 sm:text-lg">
+                    Professional fabrication and installation of glass windows, doors, partitions, and aluminum works designed for timeless architecture and practical performance.
+                  </p>
+                  <div className="mt-9 flex flex-wrap justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => scrollToSection("products")}
+                      className="inline-flex items-center gap-2 rounded-full border border-white/50 bg-white/20 px-6 py-3.5 text-sm font-black uppercase tracking-[0.08em] text-white shadow-[0_18px_40px_rgba(15,23,42,0.22)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-white/30"
+                    >
+                      <ShoppingBag size={18} aria-hidden="true" /> Browse Products <ArrowRight size={16} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => scrollToSection("track-order")}
+                      className="inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/5 px-6 py-3.5 text-sm font-black uppercase tracking-[0.08em] text-white transition hover:bg-white/10"
+                    >
+                      <Search size={18} aria-hidden="true" /> Track an Order
+                    </button>
                   </div>
-                  <span className="mt-1 text-[15px] font-semibold text-slate-600">
-                    {averageRating > 0 ? `${averageRating.toFixed(1)} (${reviewsCount} review${reviewsCount === 1 ? "" : "s"})` : "No reviews yet"}
-                  </span>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => scrollToSection("products")}
-                  className="inline-flex items-center gap-2 rounded-full bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
-                >
-                  View
-                  <ArrowRight size={14} />
-                </button>
+                <div className="mt-10 grid gap-4 sm:grid-cols-3">
+                  {[
+                    { icon: ShieldCheck, title: "Quality Guaranteed", text: "Premium materials and careful workmanship." },
+                    { icon: Clock3, title: "Fast Turnaround", text: "Efficient production for your project timeline." },
+                    { icon: Wrench, title: "Expert Installation", text: "Professional site inspection and installation." },
+                  ].map(({ icon: Icon, title, text }) => (
+                    <div key={title} className="rounded-[24px] border border-white/20 bg-white/[0.08] p-4 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.16)] backdrop-blur-2xl transition hover:-translate-y-1 hover:bg-white/[0.14] sm:p-5">
+                      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-white/25 bg-white/[0.12] text-red-100 backdrop-blur-xl">
+                        <Icon className="h-7 w-7" strokeWidth={1.8} aria-hidden="true" />
+                      </div>
+                      <h2 className="mt-4 text-xl font-black text-white">{title}</h2>
+                      <p className="mt-2 text-sm leading-6 text-red-50/80">{text}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
-          </motion.div>
-        );
-      })
-    )}
-  </div>
-  </div>
+          </section>
+        </>
+      )}
+      {/* PRODUCTS SECTION */}
 
-  <section className="mt-8 rounded-3xl bg-white px-6 py-8 shadow-sm sm:px-10">
-    <h2 className="text-center text-3xl font-black text-slate-900">Customer Ratings</h2>
-    <div className="mt-8 grid gap-8 md:grid-cols-[220px_1fr] md:items-center">
-      <div className="text-center">
-        <p className="text-6xl font-black leading-none text-slate-950">{featuredRatingStats.average.toFixed(1)}</p>
-        <div className="mt-3 flex justify-center gap-1 text-amber-500">
-          {renderRatingStars(featuredRatingStats.average, 22)}
-        </div>
-        <p className="mt-3 text-sm font-semibold text-slate-600">
-          Average Rating ({featuredRatingStats.total} review{featuredRatingStats.total === 1 ? "" : "s"})
-        </p>
-      </div>
-      <div className="space-y-3">
-        {[5, 4, 3, 2, 1].map((star) => {
-          const count = featuredRatingStats.counts[star] || 0;
-          const percentage = featuredRatingStats.total
-            ? Math.round((count / featuredRatingStats.total) * 100)
-            : 0;
-          return (
-            <div key={star} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 text-sm">
-              <span className="font-semibold text-slate-600">{star}</span>
-              <div className="h-3 overflow-hidden rounded-full bg-slate-100">
-                <div className="h-full rounded-full bg-amber-400 transition-all" style={{ width: `${percentage}%` }} />
+      {active === "home" && (
+        <section id="featured-products" className="relative mx-auto max-w-7xl scroll-mt-24 px-6 py-8">
+          <div className="rounded-[30px] border border-white/65 bg-white/[0.3] p-5 shadow-[0_22px_50px_rgba(15,23,42,0.12)] backdrop-blur-2xl sm:p-7">
+            <motion.div
+              initial={{ opacity: 0, y: 36 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.7 }}
+              className="mb-6"
+            >
+              <p className="text-sm font-black uppercase tracking-[0.24em] text-red-600">Curated collection</p>
+              <h2 className="mt-3 text-3xl font-black leading-tight sm:text-5xl sm:leading-none">
+                Featured <span className="text-[#dc2626]">Products</span>
+              </h2>
+              <p className="mt-5 max-w-3xl text-sm leading-6 text-slate-600 sm:text-lg">
+                Discover premium aluminum and glass solutions crafted for modern residential and commercial projects.
+              </p>
+            </motion.div>
+
+            {featuredError ? (
+              <div className="rounded-2xl border border-red-200/70 bg-white/40 p-4 text-sm text-red-700 backdrop-blur-xl">
+                {featuredError}
               </div>
-              <span className="w-12 text-right font-semibold text-slate-500">{percentage}%</span>
+            ) : isLoadingFeatured ? (
+              <div className="grid gap-5 md:grid-cols-3">
+                {[...Array(3)].map((_, index) => (
+                  <div key={index} className="h-72 animate-pulse rounded-[26px] border border-white/50 bg-white/35 backdrop-blur-xl" />
+                ))}
+              </div>
+            ) : featuredProducts.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-white/65 bg-white/35 p-8 text-center text-slate-600 backdrop-blur-xl">
+                No products are available right now.
+              </div>
+            ) : (
+              <div className="grid gap-5 md:grid-cols-3">
+                {featuredProducts.map((product, index) => {
+                  const imageUrl = getProductImage(product);
+                  const reviewStats = featuredProductStats[product._id || product.id] || { averageRating: 0, ratingsCount: 0 };
+                  const averageRating = Number(reviewStats.averageRating) || 0;
+                  const reviewsCount = Number(reviewStats.ratingsCount) || 0;
+
+                  return (
+                    <motion.article
+                      key={product._id || product.id || index}
+                      initial={{ opacity: 0, y: 44 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: true }}
+                      transition={{ delay: index * 0.12, duration: 0.6 }}
+                      whileHover={{ y: -4 }}
+                      className="group flex h-full min-w-0 flex-col overflow-hidden rounded-[26px] border border-white/65 bg-white/[0.2] shadow-[0_18px_38px_rgba(15,23,42,0.08)] backdrop-blur-xl transition hover:shadow-[0_24px_48px_rgba(127,29,29,0.12)]"
+                    >
+                      <div className="relative aspect-[4/3] w-full overflow-hidden bg-slate-100/70">
+                        {imageUrl ? (
+                          <img
+                            src={imageUrl}
+                            alt={product.product_name || product.name || "Featured product"}
+                            className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+                          />
+                        ) : (
+                          <div className="h-full w-full bg-gradient-to-br from-red-600/20 via-white/10 to-slate-900/10" />
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
+                        <span className="absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-full border border-amber-200/80 bg-amber-100/95 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-amber-950 shadow-lg backdrop-blur-sm">
+                          <Star size={12} fill="currentColor" aria-hidden="true" />
+                          Featured
+                        </span>
+                      </div>
+
+                      <div className="flex flex-1 flex-col gap-4 p-4 sm:p-5">
+                        <p className="line-clamp-3 min-h-[4.5rem] text-sm leading-6 text-slate-700">
+                          {product.description || "Premium aluminum and glass solution for modern spaces."}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <div className="flex shrink-0 items-center gap-0.5 text-amber-500">
+                            {renderRatingStars(averageRating, 14)}
+                          </div>
+                          <span className="text-xs font-semibold text-slate-600">
+                            {averageRating > 0 ? `${averageRating.toFixed(1)} (${reviewsCount})` : "New"}
+                          </span>
+                        </div>
+                        <div className="mt-auto border-t border-white/60 pt-3">
+                          <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Starting from</p>
+                          <p className="mt-1 text-2xl font-black text-red-700">{getProductPrice(product)}</p>
+                        </div>
+                      </div>
+                    </motion.article>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <section className="mt-8 rounded-[30px] border border-white/60 bg-white/[0.32] px-6 py-8 shadow-[0_20px_48px_rgba(15,23,42,0.06)] backdrop-blur-2xl sm:px-10">
+            <h2 className="text-center text-3xl font-black text-slate-900">Customer Ratings</h2>
+            <div className="mt-8 grid gap-8 md:grid-cols-[220px_1fr] md:items-center">
+              <div className="text-center">
+                <p className="text-6xl font-black leading-none text-slate-950">{featuredRatingStats.average.toFixed(1)}</p>
+                <div className="mt-3 flex justify-center gap-1 text-amber-500">
+                  {renderRatingStars(featuredRatingStats.average, 22)}
+                </div>
+                <p className="mt-3 text-sm font-semibold text-slate-600">
+                  Average Rating ({featuredRatingStats.total} review{featuredRatingStats.total === 1 ? "" : "s"})
+                </p>
+              </div>
+              <div className="space-y-3">
+                {[5, 4, 3, 2, 1].map((star) => {
+                  const count = featuredRatingStats.counts[star] || 0;
+                  const percentage = featuredRatingStats.total
+                    ? Math.round((count / featuredRatingStats.total) * 100)
+                    : 0;
+                  return (
+                    <div key={star} className="grid grid-cols-[auto_1fr_auto] items-center gap-3 text-sm">
+                      <span className="font-semibold text-slate-600">{star}</span>
+                      <div className="h-3 overflow-hidden rounded-full bg-white/55">
+                        <div className="h-full rounded-full bg-amber-400 transition-all" style={{ width: `${percentage}%` }} />
+                      </div>
+                      <span className="w-12 text-right font-semibold text-slate-500">{percentage}%</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          );
-        })}
-      </div>
-    </div>
-  </section>
-</section>
-)}
+          </section>
+        </section>
+      )}
 
 {active === "products" && (
-<section id="products" className="mx-auto max-w-7xl scroll-mt-24 px-6 py-14">
-  <div className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
-    <div>
-      <p className="text-xs font-black uppercase tracking-[0.25em] text-red-600">ACGC Catalog</p>
-      <h2 className="mt-3 text-4xl font-black tracking-tight text-slate-950 sm:text-5xl">Browse Products</h2>
-      <p className="mt-4 max-w-2xl text-slate-600">Explore the complete collection of aluminum and glass products created in the system.</p>
+  <section id="products" className="mx-auto max-w-7xl scroll-mt-24 px-4 py-10 sm:px-6 sm:py-14">
+    <div className="mb-6 flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+      <div>
+        <p className="text-xs font-black uppercase tracking-[0.25em] text-red-600">ACGC Catalog</p>
+        <h2 className="mt-3 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">Browse Products</h2>
+        <p className="mt-2 text-sm text-slate-600">Browse available aluminum &amp; glass products.</p>
+      </div>
+      <div className="flex w-full flex-col gap-3 sm:flex-row md:max-w-2xl md:justify-end">
+        <label className="relative min-w-0 flex-1">
+          <span className="sr-only">Search products</span>
+          <Search size={18} className="absolute left-3 top-3.5 text-slate-400" aria-hidden="true" />
+          <input
+            value={productSearch}
+            onChange={(event) => {
+              setProductSearch(event.target.value);
+              setProductPage(1);
+            }}
+            placeholder="Search products..."
+            className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-slate-900 outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-100"
+          />
+        </label>
+        <label className="sm:w-56">
+          <span className="sr-only">Filter by category</span>
+          <select
+            value={productCategory}
+            onChange={(event) => {
+              setProductCategory(event.target.value);
+              setProductPage(1);
+            }}
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-100"
+          >
+            <option value="All">All categories</option>
+            <option value="Windows">Windows</option>
+            <option value="Doors">Doors</option>
+            <option value="Cabinets">Cabinets</option>
+            <option value="Shower Enclosures">Shower Enclosures</option>
+            <option value="Aluminum">Aluminum</option>
+            <option value="Glass">Glass</option>
+            <option value="Accessories">Accessories</option>
+          </select>
+        </label>
+      </div>
     </div>
-    <label className="relative w-full md:max-w-xs">
-      <Search size={18} className="absolute left-4 top-3.5 text-slate-400" />
-      <input
-        value={productSearch}
-        onChange={(event) => setProductSearch(event.target.value)}
-        placeholder="Search products"
-        className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-11 pr-4 outline-none focus:border-red-500"
-      />
-    </label>
-  </div>
 
-  {isLoadingFeatured && <p className="py-20 text-center text-slate-500">Loading products...</p>}
-  {!isLoadingFeatured && featuredError && <p className="mt-10 rounded-2xl border border-red-200 bg-red-50 p-5 text-red-700">{featuredError}</p>}
-  {!isLoadingFeatured && !featuredError && visibleProducts.length === 0 && (
-    <p className="mt-10 rounded-2xl border border-dashed border-slate-300 p-12 text-center text-slate-500">No products match your search.</p>
-  )}
+    {isLoadingFeatured ? (
+      <div className="grid grid-cols-1 gap-3 min-[360px]:grid-cols-2 sm:gap-5 md:grid-cols-3 xl:grid-cols-4">
+        {[...Array(8)].map((_, index) => (
+          <div key={index} className="h-80 animate-pulse rounded-[26px] border border-slate-200 bg-white" />
+        ))}
+      </div>
+    ) : featuredError ? (
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">{featuredError}</div>
+    ) : visibleProducts.length === 0 ? (
+      <div className="rounded-3xl border border-dashed border-slate-300 bg-white/70 p-10 text-center text-slate-600 backdrop-blur-xl">
+        No products matched your search.
+      </div>
+    ) : (
+      <>
+        <div className="grid grid-cols-1 gap-3 min-[360px]:grid-cols-2 sm:gap-5 md:grid-cols-3 xl:grid-cols-4">
+          {displayedProducts.map((product, index) => {
+            const productId = product._id || product.id || `${product.name}-${index}`;
+            const rating = featuredProductStats[product._id || product.id] || { averageRating: 0, ratingsCount: 0 };
+            const image = getProductImage(product);
+            const productName = product.product_name || product.name || "Unnamed Product";
+            const category = product.product_type || product.category || "General";
+            const dimensions = product.dimensions || product.standard_size || (
+              product.width && product.height ? `${product.width} × ${product.height}` : ""
+            );
 
-  <div className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-    {visibleProducts.map((product) => {
-      const productId = product._id || product.id;
-      const rating = featuredProductStats[productId] || { averageRating: 0, ratingsCount: 0 };
-      const image = getProductImage(product);
-      return (
-        <article key={productId} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-xl">
-          <div className="h-64 bg-slate-100">
-            {image ? <img src={image} alt={product.product_name || product.name} className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-sm text-slate-400">No image available</div>}
+            return (
+              <article
+                key={productId}
+                role="button"
+                tabIndex={0}
+                aria-label={`View details for ${productName}`}
+                onClick={() => openProductDetails(product)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    openProductDetails(product);
+                  }
+                }}
+                className="group flex h-full min-w-0 flex-col overflow-hidden rounded-[26px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff7f7_100%)] shadow-[0_16px_40px_rgba(15,23,42,0.08)] transition-all duration-300 ease-out hover:-translate-y-1.5 hover:border-red-200 hover:shadow-[0_22px_55px_rgba(127,29,29,0.12)] motion-reduce:transition-none"
+              >
+                <div className="relative aspect-[4/3] overflow-hidden bg-slate-100">
+                  {image ? (
+                    <img src={image} alt={productName} className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-110 motion-reduce:transition-none" />
+                  ) : (
+                    <div className="flex h-full items-center justify-center bg-gradient-to-br from-red-600/10 to-slate-100 text-sm text-slate-500">No image available</div>
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
+                  <div className="absolute left-3 right-3 top-3 flex items-start justify-between gap-2">
+                    {product.is_featured ? (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/80 bg-amber-200/90 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-amber-950 backdrop-blur-sm">
+                        <Star size={11} fill="currentColor" aria-hidden="true" /> Top Product
+                      </span>
+                    ) : (
+                      <span className="rounded-full border border-white/20 bg-slate-900/30 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white backdrop-blur-sm">
+                        {product.category || "General"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3">
+                    <span className="max-w-[70%] truncate rounded-full border border-white/25 bg-slate-950/40 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.1em] text-slate-100 backdrop-blur-sm">
+                      {category}
+                    </span>
+                    <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/60 bg-white/90 text-red-700 shadow-lg" aria-hidden="true">
+                      <ArrowRight size={17} />
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-1 flex-col gap-3 p-4">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-[17px] font-black leading-tight text-slate-900" title={productName}>{productName}</h3>
+                    <p className="mt-1 truncate text-[12px] font-medium text-slate-600">{category}</p>
+                  </div>
+
+                  <div className="flex min-w-0 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px]">
+                    <span className="flex shrink-0 items-center gap-0.5 text-amber-400">{renderRatingStars(rating.averageRating || 0, 13)}</span>
+                    <span className="truncate font-medium text-slate-700">
+                      {rating.ratingsCount ? `${rating.averageRating.toFixed(1)} · ${rating.ratingsCount} reviews` : "No ratings yet"}
+                    </span>
+                  </div>
+
+                  <div className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                    {dimensions && (
+                      <p className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="text-slate-500">Dimensions</span>
+                        <span className="truncate font-semibold text-slate-700">{dimensions}</span>
+                      </p>
+                    )}
+                    <p className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="text-slate-500">Unit rate</span>
+                      <span className="font-semibold text-slate-700">{getProductUnitRate(product)}</span>
+                    </p>
+                  </div>
+
+                  <div className="mt-auto border-t border-slate-200 pt-3">
+                    <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Starting from</p>
+                    <p className="mt-1 text-[22px] font-black text-red-700">{getProductPrice(product)}</p>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+
+        {!isMobile && visibleProducts.length > 0 && (
+          <div className="mt-6 flex flex-col gap-4 rounded-[20px] border border-red-100 bg-white/80 p-4 shadow-[0_12px_30px_rgba(15,23,42,0.06)] backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between">
+            <label className="flex items-center gap-3 text-sm font-medium text-slate-600">
+              <span>Items per page</span>
+              <select
+                value={productsPerPage}
+                onChange={(event) => {
+                  setProductsPerPage(Number(event.target.value));
+                  setProductPage(1);
+                }}
+                className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-slate-800 outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100"
+              >
+                <option value={4}>4</option>
+                <option value={8}>8</option>
+                <option value={12}>12</option>
+                <option value={16}>16</option>
+              </select>
+            </label>
+            <p className="text-center text-sm font-medium text-slate-600">
+              Showing {productPageStart + 1}-{Math.min(productPageStart + productsPerPage, visibleProducts.length)} of {visibleProducts.length}
+            </p>
+            <div className="flex items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => setProductPage((page) => Math.max(1, page - 1))}
+                disabled={currentProductPage === 1}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-red-200 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <span className="min-w-16 text-center text-sm font-bold text-slate-700">{currentProductPage} / {productPageCount}</span>
+              <button
+                type="button"
+                onClick={() => setProductPage((page) => Math.min(productPageCount, page + 1))}
+                disabled={currentProductPage === productPageCount}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-red-200 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
           </div>
-          <div className="space-y-4 p-5">
-            <div className="flex items-start justify-between gap-3">
-              <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-red-700">{product.category || "General"}</span>
-              <span className="font-bold text-emerald-600">{getProductPrice(product)}</span>
-            </div>
-            <div>
-              <h3 className="text-2xl font-black text-slate-900">{product.product_name || product.name || "Unnamed Product"}</h3>
-              <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-600">{product.description || "Premium aluminum and glass product crafted for reliability and style."}</p>
-            </div>
-            <div className="flex items-center justify-between gap-3 text-amber-500">
-              <div className="flex items-center gap-1">
-                {renderRatingStars(rating.averageRating, 15)}
-                <span className="ml-1 text-xs font-semibold text-slate-500">{rating.ratingsCount ? `${rating.averageRating.toFixed(1)} (${rating.ratingsCount})` : "No reviews"}</span>
+        )}
+      </>
+    )}
+  </section>
+)}
+
+{selectedProduct && (
+  <div
+    className="mobile-fullscreen-overlay fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5"
+    onClick={() => setSelectedProduct(null)}
+  >
+    <section
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="landing-product-dialog-title"
+      className="mobile-fullscreen-dialog relative flex max-h-[90dvh] w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-white/20 bg-white shadow-2xl"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <header className="flex shrink-0 items-center justify-between gap-4 border-b border-red-500/25 bg-gradient-to-r from-red-700 to-red-800 px-5 py-4 text-white sm:px-6">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/25">
+            <Package size={19} aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-red-100">Product details</p>
+            <h2 id="landing-product-dialog-title" className="truncate text-lg font-black sm:text-xl">
+              {selectedProduct.product_name || selectedProduct.name || "Product"}
+            </h2>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setSelectedProduct(null)}
+          aria-label="Close product details"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 transition hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+        >
+          <X size={20} aria-hidden="true" />
+        </button>
+      </header>
+
+      <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto p-4 sm:p-6 md:grid-cols-[1.1fr_0.9fr]">
+        <div className="min-w-0 space-y-4">
+          <div className="overflow-hidden rounded-2xl bg-slate-100">
+            {getProductImage(selectedProduct) ? (
+              <img
+                src={getProductImage(selectedProduct)}
+                alt={selectedProduct.product_name || selectedProduct.name || "Product"}
+                className="aspect-[4/3] max-h-[340px] w-full object-cover"
+              />
+            ) : (
+              <div className="flex aspect-[4/3] items-center justify-center bg-gradient-to-br from-red-600/10 to-slate-100 text-sm text-slate-500">
+                No image available
               </div>
-              <Link to="/login" className="inline-flex items-center gap-1 rounded-full bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700">
-                Order <ArrowRight size={14} />
-              </Link>
+            )}
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <h3 className="text-base font-bold text-slate-900">Product Details</h3>
+            <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600">
+              {selectedProduct.description || "No description available."}
+            </p>
+          </div>
+        </div>
+
+        <aside className="min-w-0 space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-red-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-red-700">
+              {selectedProduct.product_type || selectedProduct.type || "Glass & Aluminum"}
+            </span>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-600">
+              {selectedProduct.category || "General"}
+            </span>
+          </div>
+          <h3 className="text-2xl font-black leading-tight text-slate-900">
+            {selectedProduct.product_name || selectedProduct.name || "Product"}
+          </h3>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Customer Rating</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-0.5">{renderRatingStars(selectedProductRating.averageRating, 16)}</span>
+              <span className="text-sm font-bold text-slate-900">
+                {selectedProductRating.ratingsCount ? `${selectedProductRating.averageRating.toFixed(1)} / 5` : "No ratings yet"}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              {selectedProductRating.ratingsCount} rating{selectedProductRating.ratingsCount === 1 ? "" : "s"}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Starting from</p>
+            <p className="mt-1 text-2xl font-black text-red-700">{getProductPrice(selectedProduct)}</p>
+            <p className="mt-1 text-xs text-slate-500">Price may vary based on specifications.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Dimensions</p>
+              <p className="mt-1 text-sm font-bold text-slate-800">
+                {selectedProduct.dimensions || selectedProduct.standard_size || (
+                  selectedProduct.width > 0 || selectedProduct.height > 0
+                    ? `${selectedProduct.width || 0} × ${selectedProduct.height || 0}`
+                    : "N/A"
+                )}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Unit rate</p>
+              <p className="mt-1 text-sm font-bold text-slate-800">{getProductUnitRate(selectedProduct)}</p>
             </div>
           </div>
-        </article>
-      );
-    })}
+          <section className="overflow-hidden rounded-xl border border-slate-200 border-t-2 border-t-red-600 bg-white p-4" aria-labelledby="landing-product-estimator-title">
+            <div className="flex items-center gap-2">
+              <Ruler size={16} className="text-red-600" aria-hidden="true" />
+              <h4 id="landing-product-estimator-title" className="text-sm font-bold text-slate-900">Price Estimator</h4>
+            </div>
+            <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(88px,0.8fr)]">
+              <label className="min-w-0">
+                <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-slate-500">Width</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={productEstimatorForm.width}
+                  onChange={(event) => setProductEstimatorForm((current) => ({ ...current, width: event.target.value }))}
+                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/15"
+                />
+              </label>
+              <span className="mt-6 text-sm text-slate-400" aria-hidden="true">×</span>
+              <label className="min-w-0">
+                <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-slate-500">Height</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={productEstimatorForm.height}
+                  onChange={(event) => setProductEstimatorForm((current) => ({ ...current, height: event.target.value }))}
+                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/15"
+                />
+              </label>
+              <label className="col-span-3 min-w-0 sm:col-span-1">
+                <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-slate-500">Unit</span>
+                <select
+                  value={productEstimatorForm.unit}
+                  onChange={(event) => setProductEstimatorForm((current) => ({ ...current, unit: event.target.value }))}
+                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/15"
+                >
+                  <option value="in">in</option>
+                  <option value="cm">cm</option>
+                  <option value="m">m</option>
+                </select>
+              </label>
+            </div>
+            {productEstimatorWidth > 0 && productEstimatorHeight > 0 ? (
+              <div className="mt-4 space-y-3 text-sm text-slate-600" aria-live="polite">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="inline-flex items-center gap-2"><Ruler size={13} aria-hidden="true" />Area</span>
+                  <span className="font-bold text-slate-900">
+                    {Number(productEstimatorResult?.estimated_area) > 0
+                      ? `${Number(productEstimatorResult.estimated_area).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq ft`
+                      : productEstimatorResult?.areaDisplay || "—"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span>Base Rate</span>
+                  <span className="font-bold text-slate-900">
+                    {Number(productEstimatorResult?.rate) > 0
+                      ? `${formatCurrency(productEstimatorResult.rate)} / ${productEstimatorResult?.areaDisplay?.includes("blade") ? "blade" : Number(productEstimatorResult?.estimated_area) > 0 ? "sq ft" : "unit"}`
+                      : "Contact us"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-red-100 bg-red-50 px-3 py-3 text-red-800">
+                  <span className="font-bold">Estimated Total</span>
+                  <span className="text-base font-black">
+                    {Number(productEstimatorResult?.estimated_price) > 0 ? formatCurrency(productEstimatorResult.estimated_price) : "Contact us"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3 px-1">
+                  <span>50% Downpayment</span>
+                  <span className="font-bold text-red-800">
+                    {Number(productEstimatorResult?.estimated_price) > 0 ? formatCurrency(productEstimatorResult.estimated_price * 0.5) : "Contact us"}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 flex min-h-12 items-center justify-center rounded-lg bg-slate-50 px-3 py-2.5 text-center text-xs text-slate-500">
+                Enter width &amp; height to calculate your estimate.
+              </div>
+            )}
+            <p className="mt-2 text-[11px] font-semibold leading-4 text-slate-500">
+              Final pricing is subject to negotiation during shop discussion or on-site inspection.
+            </p>
+          </section>
+          <Link
+            to="/login"
+            className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+          >
+            Sign in to order <ArrowRight size={16} aria-hidden="true" />
+          </Link>
+        </aside>
+      </div>
+    </section>
   </div>
-</section>
 )}
 
 {active === "track-order" && (

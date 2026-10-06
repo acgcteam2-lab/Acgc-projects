@@ -13,6 +13,8 @@ export const getAdminOrder = (orderId, module) => {
 };
 
 export const getProductReviews = (productId) => apiFetch(`/orders/reviews/product/${encodeURIComponent(productId)}`);
+export const getProductReviewSummary = (productId) =>
+  apiFetch(`/orders/reviews/product/${encodeURIComponent(productId)}/summary`);
 
 export const updateOrderStatus = (orderId, payload) =>
   apiFetch(`/orders/admin/${orderId}/status`, {

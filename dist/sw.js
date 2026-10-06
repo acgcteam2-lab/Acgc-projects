@@ -24,7 +24,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
 	const requestUrl = new URL(event.request.url)
 
-	if (requestUrl.origin !== self.location.origin || requestUrl.pathname.startsWith('/api')) {
+	if (event.request.method !== 'GET' || requestUrl.origin !== self.location.origin || requestUrl.pathname.startsWith('/api')) {
 		return
 	}
 
@@ -55,13 +55,18 @@ self.addEventListener('fetch', (event) => {
 				return cachedResponse
 			}
 
-			return fetch(event.request).then((response) => {
-				if (response.ok) {
-					const responseCopy = response.clone()
-					caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseCopy))
-				}
-				return response
-			})
+			return fetch(event.request)
+				.then((response) => {
+					if (response.ok) {
+						const responseCopy = response.clone()
+						caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseCopy))
+					}
+					return response
+				})
+				.catch(() => new Response('This file is temporarily unavailable offline.', {
+					status: 503,
+					headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+				}))
 		}),
 	)
 })

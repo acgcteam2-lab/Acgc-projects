@@ -985,6 +985,52 @@ export const submitOrderReview = async (req, res) => {
   }
 };
 
+const getProductReviewOrdersFilter = (productId) => ({
+  "items.product_id": productId,
+  $or: [
+    { "review.submittedAt": { $ne: null } },
+    { items: { $elemMatch: { product_id: productId, "review.submittedAt": { $ne: null } } } },
+  ],
+});
+
+export const getProductReviewSummary = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    if (!productId) {
+      return res.status(400).json({ success: false, message: "Product ID is required." });
+    }
+
+    const orders = await Order.find(getProductReviewOrdersFilter(productId))
+      .select("review items.product_id items.review")
+      .lean();
+    const counts = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+    let total = 0;
+    let ratingTotal = 0;
+
+    for (const order of orders) {
+      for (const item of order.items || []) {
+        if (String(item.product_id) !== String(productId)) continue;
+        const review = item.review?.submittedAt ? item.review : order.review;
+        const rating = Number(review?.rating);
+        if (!review?.submittedAt || !Number.isFinite(rating) || rating < 1 || rating > 5) continue;
+        counts[Math.round(rating)] += 1;
+        ratingTotal += rating;
+        total += 1;
+      }
+    }
+
+    return res.json({
+      success: true,
+      average: total ? ratingTotal / total : 0,
+      total,
+      counts,
+    });
+  } catch (error) {
+    console.error("Get product review summary error:", error);
+    return res.status(500).json({ success: false, message: "Unable to fetch product ratings." });
+  }
+};
+
 export const getProductReviews = async (req, res) => {
   try {
     const { productId } = req.params;
@@ -992,13 +1038,7 @@ export const getProductReviews = async (req, res) => {
       return res.status(400).json({ success: false, message: "Product ID is required." });
     }
 
-    const reviews = await Order.find({
-      "items.product_id": productId,
-      $or: [
-        { "review.submittedAt": { $ne: null } },
-        { items: { $elemMatch: { product_id: productId, "review.submittedAt": { $ne: null } } } },
-      ],
-    })
+    const reviews = await Order.find(getProductReviewOrdersFilter(productId))
       .populate("customer", "first_name last_name")
       .populate("items.product_id", "name")
       .sort({ "review.submittedAt": -1 })

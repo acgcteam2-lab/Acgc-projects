@@ -29,24 +29,16 @@ function Navbar() {
           <button
             type="button"
             onClick={toggleDarkMode}
-            className={`relative inline-flex h-10 w-[128px] shrink-0 items-center rounded-full border p-1 transition-all duration-500 ease-in-out focus:outline-none focus:ring-2 focus:ring-red-500/40 ${
-              darkMode
-                ? "border-black bg-black text-white hover:bg-slate-950"
-                : "border-slate-300 bg-slate-200 text-slate-950 hover:bg-slate-300"
+            className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition focus:outline-none sm:h-10 sm:w-10 ${
+              darkMode ? "text-slate-200 hover:bg-slate-800" : "text-slate-700 hover:bg-slate-100"
             }`}
             aria-label={darkMode ? "Switch to day mode" : "Switch to night mode"}
             aria-pressed={darkMode}
+            title={darkMode ? "Switch to day mode" : "Switch to night mode"}
           >
-            <span className={`absolute inset-y-1 flex w-[84px] items-center justify-center gap-1 text-[8px] font-black uppercase tracking-[0.06em] transition-all duration-500 ease-in-out ${
-              darkMode ? "left-[40px] text-white" : "left-1 text-slate-950"
-            }`}>
-              {darkMode ? "Night Mode" : "Day Mode"}
-            </span>
-            <span className={`relative z-10 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-white text-black shadow-sm transition-all duration-500 ease-in-out ${
-              darkMode ? "translate-x-0 border-slate-300" : "translate-x-[86px] border-slate-200"
-            }`}>
-              {darkMode ? <Moon size={18} strokeWidth={1.8} /> : <Sun size={18} strokeWidth={1.8} />}
-            </span>
+            {darkMode
+              ? <Moon size={22} strokeWidth={1.8} className="text-sky-300" />
+              : <Sun size={22} strokeWidth={1.8} className="text-amber-500" />}
           </button>
 
           <div className="flex items-center gap-2">
