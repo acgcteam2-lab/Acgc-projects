@@ -194,6 +194,10 @@ const OrderSchema = new mongoose.Schema(
       ref: "User",
       required: false,
     },
+    cart_item_ids: {
+      type: [String],
+      default: [],
+    },
     customer_name: {
       type: String,
       trim: true,
@@ -227,6 +231,16 @@ const OrderSchema = new mongoose.Schema(
     },
     manual_override: {
       type: Number,
+      default: 0,
+    },
+    estimated_cost: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    final_project_cost: {
+      type: Number,
+      min: 0,
       default: 0,
     },
     attachments: {

@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
   FileText,
-  ShieldCheck,
   CheckCircle,
   Eye,
   Pencil,
@@ -11,7 +10,6 @@ import {
   Trash2,
   X,
   Info,
-  XCircle,
 } from "lucide-react";
 import { toPng } from "html-to-image";
 import jsPDF from "jspdf";
@@ -21,8 +19,9 @@ import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import ContractModal from "../../components/ContractModal";
+import TransactionDetailsModal from "../../components/TransactionDetailsModal";
 import { getAdminOrders, acceptContract, declineContract, updateOrderStatus, deleteOrderReview } from "@/api/orders";
-import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, formatDateToMMMDDYYYY, getTodayIso, isSameOrAfter } from "@/lib/dateUtils";
+import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { useAuth } from "@/contexts/AuthContext";
 import { recordActivity } from "@/lib/activityLog";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
@@ -103,13 +102,6 @@ function Transactions() {
   const [editPaymentMethod, setEditPaymentMethod] = useState("Cash");
   const [editPaymentAmount, setEditPaymentAmount] = useState("0.00");
   const [editPaymentTransactionNumber, setEditPaymentTransactionNumber] = useState("");
-  const [showWarrantyModal, setShowWarrantyModal] = useState(false);
-  const [warrantyOrder, setWarrantyOrder] = useState(null);
-  const [warrantyTerms, setWarrantyTerms] = useState("Standard parts and workmanship warranty for one year.");
-  const [warrantyStartDate, setWarrantyStartDate] = useState("");
-  const [warrantyExpiryDate, setWarrantyExpiryDate] = useState("");
-  const [warrantySaving, setWarrantySaving] = useState(false);
-  const today = getTodayIso();
 
   const isCompletedProject = (order) => {
     const status = (order.status || "").toString().toLowerCase();
@@ -196,17 +188,6 @@ function Transactions() {
   };
 
   // Warranty helpers
-  const getCompletionDate = (order) => {
-    // prefer an explicit completed timestamp, fallback to updatedAt when status === completed
-    if (!order) return null;
-    if (order.completed_at) return new Date(order.completed_at);
-    if (order.completedAt) return new Date(order.completedAt);
-    if ((order.status || "").toString().toLowerCase() === "completed") {
-      return order.updatedAt ? new Date(order.updatedAt) : (order.createdAt ? new Date(order.createdAt) : null);
-    }
-    return null;
-  };
-
   const getInstallationCompletionDate = (order, item = null) => {
     const stages = item?.progress_stages?.length
       ? item.progress_stages
@@ -226,8 +207,7 @@ function Transactions() {
       if (!Number.isNaN(parsedStageDate.getTime()) && parsedStageDate <= new Date()) return parsedStageDate;
     }
 
-    const completedDate = getCompletionDate(order);
-    return completedDate && completedDate <= new Date() ? completedDate : null;
+    return null;
   };
 
   const parseWarrantyPeriod = (value) => {
@@ -252,7 +232,7 @@ function Transactions() {
     if (order.warranty_expiry_date) return new Date(order.warranty_expiry_date);
     if (order.warrantyExpiryDate) return new Date(order.warrantyExpiryDate);
 
-    const completed = getCompletionDate(order);
+    const completed = getInstallationCompletionDate(order);
     if (!completed) return null;
 
     // Check for warranty_period on order or items
@@ -285,159 +265,60 @@ function Transactions() {
       : [];
   };
 
+  const getWarrantyStatus = (order) => {
+    const items = Array.isArray(order.items) && order.items.length ? order.items : [order];
+    const perProduct = order.warranty_assignment_mode === "per_product";
+    const statuses = items.map((item) => {
+      const status = String(item.warranty_status || order.warranty_status || "").toLowerCase();
+      const period = item.warranty_period || (perProduct ? "" : order.warranty_period) || "";
+      if (status === "no_warranty" || String(period).trim().toLowerCase() === "no warranty") return "No warranty";
+      if (!period && !status && !item.warranty_start_date && !item.warranty_expiry_date) return "Not assigned";
+
+      const isPending = status === "pending";
+      const installationDate = getInstallationCompletionDate(order, item === order ? null : item);
+      const startValue = isPending
+        ? installationDate
+        : item.warranty_start_date || (perProduct ? null : order.warranty_start_date) || installationDate;
+      const start = startValue ? new Date(startValue) : null;
+      const durationDays = period === "Custom"
+        ? Number(item.custom_warranty_days || order.custom_warranty_days) || 90
+        : parseWarrantyPeriod(period)?.days || Number(period) || null;
+      const expiryValue = isPending
+        ? null
+        : item.warranty_expiry_date || (perProduct ? null : order.warranty_expiry_date);
+      const expiry = expiryValue
+        ? new Date(expiryValue)
+        : start && durationDays
+          ? new Date(start.getTime() + durationDays * 24 * 60 * 60 * 1000)
+          : null;
+      const now = new Date();
+
+      if (status === "expired" || (expiry && expiry <= now)) return "Expired";
+      if (
+        (status === "active" || (installationDate && durationDays) || (!status && expiry)) &&
+        (!start || start <= now) &&
+        (!expiry || expiry > now)
+      ) return "Active";
+      if ((start && start > now) || installationDate) return "Pending activation";
+      return "Pending installation";
+    });
+
+    const uniqueStatuses = [...new Set(statuses)];
+    return uniqueStatuses.length === 1 ? uniqueStatuses[0] : "Mixed";
+  };
+
+  const getWarrantyStatusClass = (status) => {
+    if (status === "Active") return "bg-emerald-100 text-emerald-700";
+    if (status === "Expired" || status === "No warranty" || status === "Not assigned") return "bg-slate-100 text-slate-600";
+    if (status === "Mixed") return "bg-blue-100 text-blue-700";
+    return "bg-amber-100 text-amber-800";
+  };
+
   const activeWarrantyCount = transactionOrders.reduce((count, order) => (
     count + getWarrantyRecords(order).filter(({ status, start, expiry }) => (
       (!start || start <= new Date()) && (status === "active" || (!status && expiry && new Date() <= expiry))
     )).length
   ), 0);
-
-  const hasWarrantyData = (order) => {
-    if (!order) return false;
-    return Boolean(
-      order.warranty_expiry_date ||
-      order.warrantyExpiryDate ||
-      order.warranty_start_date ||
-      order.warranty_status ||
-      (order.items || []).some((item) => {
-        const status = String(item.warranty_status || "").toLowerCase();
-        return ["active", "expired", "no_warranty"].includes(status) || (!status && (item.warranty_start_date || item.warranty_expiry_date));
-      })
-    );
-  };
-
-  const canCreateWarranty = (order) => isCompletedProject(order) && !hasWarrantyData(order);
-
-  const computeWarrantyExpiryDate = (start, periodValue) => {
-    const startDate = start ? new Date(start) : new Date();
-    const parsed = parseWarrantyPeriod(periodValue) || { days: 365 };
-    const expiry = new Date(startDate);
-    expiry.setDate(expiry.getDate() + parsed.days);
-    return expiry;
-  };
-
-  const openWarrantyModal = (order) => {
-    const completionDate = getInstallationCompletionDate(order);
-    if (!completionDate) {
-      toast.error("Complete project installation before creating a warranty.");
-      return;
-    }
-    const defaultExpiry = order.warranty_expiry_date
-      ? new Date(order.warranty_expiry_date)
-      : computeWarrantyExpiryDate(completionDate, "1 year");
-
-    setWarrantyOrder(order);
-    setWarrantyTerms(order.warranty_terms || "Standard parts and workmanship warranty for one year.");
-    setWarrantyStartDate(completionDate.toISOString().slice(0, 10));
-    setWarrantyExpiryDate(defaultExpiry.toISOString().slice(0, 10));
-    setShowWarrantyModal(true);
-  };
-
-  const closeWarrantyModal = () => {
-    setShowWarrantyModal(false);
-    setWarrantyOrder(null);
-    setWarrantySaving(false);
-    setWarrantyTerms("Standard parts and workmanship warranty for one year.");
-    setWarrantyStartDate("");
-    setWarrantyExpiryDate("");
-  };
-
-  const handleWarrantyExpiryDateChange = (value) => {
-    setWarrantyExpiryDate(value);
-  };
-
-  const formatWarrantyPeriodFromDates = (start, expiry) => {
-    const startDate = start ? new Date(start) : null;
-    const expiryDate = expiry ? new Date(expiry) : null;
-    if (!startDate || !expiryDate || expiryDate <= startDate) return "";
-    const diffDays = Math.ceil((expiryDate - startDate) / (1000 * 60 * 60 * 24));
-    if (diffDays % 365 === 0) return `${diffDays / 365} year${diffDays / 365 === 1 ? "" : "s"}`;
-    if (diffDays % 30 === 0) return `${diffDays / 30} month${diffDays / 30 === 1 ? "" : "s"}`;
-    return `${diffDays} day${diffDays === 1 ? "" : "s"}`;
-  };
-
-  const handleCreateWarranty = async () => {
-    if (!warrantyOrder) return;
-    setWarrantySaving(true);
-    const orderId = warrantyOrder._id || warrantyOrder.id;
-    try {
-      const start = getInstallationCompletionDate(warrantyOrder);
-      if (!start || start > new Date()) {
-        toast.error("Complete project installation before activating its warranty.");
-        setWarrantySaving(false);
-        return;
-      }
-      const expiry = warrantyExpiryDate ? new Date(warrantyExpiryDate) : computeWarrantyExpiryDate(start, "1 year");
-      if (!isSameOrAfter(expiry, start) || expiry.getTime() === start.getTime()) {
-        toast.error("Warranty End Date must be later than the Warranty Start Date.");
-        setWarrantySaving(false);
-        return;
-      }
-      const isPerProductWarranty = warrantyOrder.warranty_assignment_mode === "per_product";
-      const items = (warrantyOrder.items || []).map((item) => {
-        const itemStart = isPerProductWarranty
-          ? getInstallationCompletionDate(warrantyOrder, item) || start
-          : start;
-        const periodValue = isPerProductWarranty
-          ? item.warranty_period || warrantyOrder.warranty_period || 90
-          : warrantyOrder.warranty_period || 90;
-        const parsedPeriodDays = parseWarrantyPeriod(periodValue)?.days || Number(periodValue);
-        const customDays = isPerProductWarranty
-          ? Number(item.custom_warranty_days) || parsedPeriodDays || 90
-          : Number(warrantyOrder.custom_warranty_days) || parsedPeriodDays || 90;
-        const itemExpiry = periodValue === "No Warranty"
-          ? null
-          : isPerProductWarranty
-            ? computeWarrantyExpiryDate(itemStart, periodValue === "Custom" ? customDays : periodValue)
-            : expiry;
-        return {
-          ...item,
-          warranty_period: periodValue === "No Warranty"
-            ? "No Warranty"
-            : formatWarrantyPeriodFromDates(start, itemExpiry),
-          custom_warranty_days: periodValue === "No Warranty" ? null : customDays,
-          warranty_start_date: periodValue === "No Warranty" ? null : itemStart.toISOString(),
-          warranty_expiry_date: itemExpiry ? itemExpiry.toISOString() : null,
-          warranty_status: periodValue === "No Warranty"
-            ? "no_warranty"
-            : itemExpiry > new Date() ? "active" : "expired",
-        };
-      });
-      const activeExpiries = items
-        .filter((item) => item.warranty_expiry_date)
-        .map((item) => new Date(item.warranty_expiry_date));
-      const hasActiveCoverage = items.some((item) => item.warranty_status === "active");
-      const orderExpiry = !hasActiveCoverage
-        ? null
-        : isPerProductWarranty && activeExpiries.length
-        ? new Date(Math.max(...activeExpiries.map((date) => date.getTime())))
-        : expiry;
-      const payload = {
-        warranty_period: isPerProductWarranty
-          ? "Per product"
-          : hasActiveCoverage ? formatWarrantyPeriodFromDates(start, expiry) : "No Warranty",
-        warranty_start_date: hasActiveCoverage ? start.toISOString() : null,
-        warranty_expiry_date: orderExpiry?.toISOString() || null,
-        warranty_status: hasActiveCoverage ? "active" : "no_warranty",
-        warranty_terms: warrantyTerms,
-        items,
-      };
-
-      const response = await updateOrderStatus(orderId, payload);
-      recordActivity(user, `Created warranty for order ${orderId}.`, "Transactions");
-      const updated = response?.order || {};
-      updateOrderLocally(orderId, {
-        ...updated,
-        ...payload,
-      });
-      toast.success("Warranty created successfully.");
-      closeWarrantyModal();
-    } catch (error) {
-      console.error("Create warranty failed", error);
-      toast.error(error?.data?.message || error?.message || "Unable to create warranty.");
-    } finally {
-      setWarrantySaving(false);
-    }
-  };
 
   const updateOrderLocally = (orderId, patch) => {
     setOrders((prev) =>
@@ -491,7 +372,7 @@ function Transactions() {
   const buildContractDataFromOrder = (order) => {
     if (!order) return null;
 
-    const amount = Number(order.contract_amount || order.total_amount || 0);
+    const amount = getPaymentSummary(order).totalAmount;
     const downPayment = getPaymentSummary(order).requiredAmount;
     const items = (order.items || []).map((item) => ({
       name: item.name || "Item",
@@ -798,21 +679,40 @@ function Transactions() {
   };
 
   useEffect(() => {
-    const fetchOrders = async () => {
-      setLoading(true);
+    let active = true;
+    let requestInFlight = false;
+    const fetchOrders = async (showLoading = true) => {
+      if (requestInFlight) return;
+      requestInFlight = true;
+      if (showLoading) setLoading(true);
       try {
         const res = await getAdminOrders({ module: "transactions" });
-        if (res && res.orders) {
+        if (active && res && res.orders) {
           setOrders(res.orders);
         }
       } catch (err) {
         console.error("Failed to fetch orders", err);
       } finally {
-        setLoading(false);
+        if (active && showLoading) setLoading(false);
+        requestInFlight = false;
       }
     };
 
     fetchOrders();
+
+    const refreshOrders = () => {
+      if (document.visibilityState === "visible") fetchOrders(false);
+    };
+    const interval = window.setInterval(refreshOrders, 15000);
+    window.addEventListener("focus", refreshOrders);
+    document.addEventListener("visibilitychange", refreshOrders);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshOrders);
+      document.removeEventListener("visibilitychange", refreshOrders);
+    };
   }, []);
 
   // Receipts & Contracts: orders that have a contract and are not cancelled/declined
@@ -1250,7 +1150,7 @@ function Transactions() {
                 className={inputClass}
               />
               <div className={`mt-2 text-xs ${tertiaryTextClass}`}>
-                Already paid: ₱{getPaymentSummary(editPaymentOrder).paidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · Required downpayment: ₱{getPaymentSummary(editPaymentOrder).requiredAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                Already paid: ₱{getPaymentSummary(editPaymentOrder).paidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · Downpayment to be Paid: ₱{getPaymentSummary(editPaymentOrder).requiredAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               {editPaymentOrder.payment_proof_submitted_at && !isPaymentProofConfirmed(editPaymentOrder) && (
                 <div className={`mt-1 text-xs ${tertiaryTextClass}`}>
@@ -1453,6 +1353,7 @@ function Transactions() {
                         <th className="p-4 text-left">Customer Type</th>
                         <th className="p-4 text-left">Install Date</th>
                         <th className="p-4 text-left">Project Progress</th>
+                        {activeTable === "receipts" && <th className="p-4 text-left">Warranty Status</th>}
                         <th className="p-4 text-left">Status</th>
                         <th className="p-4 text-center">Actions</th>
                       </tr>
@@ -1476,6 +1377,7 @@ function Transactions() {
                       const statusLabel = paymentSummary.status.label;
                       const isFullyPaid = paymentSummary.status.key === "paid";
                       const showNeedsConfirmation = Boolean(order.payment_proof_submitted_at && !isPaymentProofConfirmed(order));
+                      const warrantyStatus = getWarrantyStatus(order);
 
                       return (
                         <tr
@@ -1534,8 +1436,9 @@ function Transactions() {
                               <td className="p-4"><span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">{orderType}</span></td>
                               <td className="p-4 text-sm text-slate-600">{installDate}</td>
                               <td className="p-4"><span className={`inline-flex rounded-md px-3 py-1 text-xs font-semibold ${projectCategory === "Completed" ? "bg-rose-50 text-rose-700" : "bg-violet-50 text-violet-700"}`}>{projectCategory}</span></td>
+                              {activeTable === "receipts" && <td className="p-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getWarrantyStatusClass(warrantyStatus)}`}>{warrantyStatus}</span></td>}
                               <td className="p-4"><div className="flex flex-col items-start gap-1.5"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${isFullyPaid ? (darkMode ? "border border-emerald-400/40 bg-emerald-500/15 text-emerald-300" : "bg-emerald-100 text-emerald-700") : (darkMode ? "border border-amber-400/40 bg-amber-500/15 text-amber-300" : "bg-amber-50 text-amber-700")}`}>{statusLabel}</span>{showNeedsConfirmation && (<span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-rose-400/40 bg-rose-500/15 text-rose-300" : "bg-rose-100 text-rose-700"}`}><span aria-hidden="true">🔔</span>Needs Confirmation</span>)}</div></td>
-                              <td className="p-4"><div className="flex flex-wrap justify-center gap-2">{activeTable === "projects" && canCreateWarranty(order) && (<button title="Create Warranty" onClick={() => openWarrantyModal(order)} className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition"><ShieldCheck size={20} /></button>)}<button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>{isFullyPaid ? (<button type="button" title="Fully paid" aria-label="Fully paid. Payment editing is locked." disabled className={`cursor-not-allowed rounded-lg p-2 ${darkMode ? "bg-slate-700 text-slate-400" : "bg-slate-100 text-slate-500"}`}><Lock size={18} aria-hidden="true" /></button>) : (<button type="button" title="Add Payment" aria-label="Add Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>)}<button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button></div></td>
+                              <td className="p-4"><div className="flex flex-wrap justify-center gap-2"><button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>{isFullyPaid ? (<button type="button" title="Fully paid" aria-label="Fully paid. Payment editing is locked." disabled className={`cursor-not-allowed rounded-lg p-2 ${darkMode ? "bg-slate-700 text-slate-400" : "bg-slate-100 text-slate-500"}`}><Lock size={18} aria-hidden="true" /></button>) : (<button type="button" title="Add Payment" aria-label="Add Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>)}<button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button></div></td>
                             </>
                           )}
                         </tr>
@@ -1612,6 +1515,14 @@ function Transactions() {
                         <p className="mt-1 font-semibold text-slate-900">₱{Number(amountVal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                       </div>
                     </div>
+                    {activeTable === "receipts" && (
+                      <div className="mt-3 flex items-center justify-between gap-3 border-t border-gray-200 pt-3 text-xs">
+                        <span className="text-slate-500">Warranty Status</span>
+                        <span className={`inline-flex rounded-full px-2.5 py-1 font-semibold ${getWarrantyStatusClass(getWarrantyStatus(order))}`}>
+                          {getWarrantyStatus(order)}
+                        </span>
+                      </div>
+                    )}
                     <div className="mt-3 flex justify-end gap-2">
                       <button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>
                       {isFullyPaid ? (
@@ -1621,7 +1532,6 @@ function Transactions() {
                       ) : (
                         <button type="button" title="Add Payment" aria-label="Add Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>
                       )}
-                      {activeTable === "projects" && canCreateWarranty(order) && (<button title="Create Warranty" onClick={() => openWarrantyModal(order)} className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition"><ShieldCheck size={20} /></button>)}
                       <button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button>
                     </div>
                   </div>
@@ -1680,329 +1590,13 @@ function Transactions() {
 
           <Toaster position="bottom-right" />
 
-          {showContractModal && contractPreviewOrder && (() => {
-            const savedWarrantyStart = contractPreviewOrder.warranty_start_date
-              || contractPreviewOrder.warrantyStartDate
-              || contractPreviewOrder.warranty_start
-              || getInstallationCompletionDate(contractPreviewOrder)
-              || contractPreviewOrder.estimated_installation_date
-              || null;
-            const warrantyDays = Number(contractPreviewOrder.warranty_period || contractPreviewOrder.warranty_period_value || contractPreviewOrder.warranty_days || 90) || 90;
-            const derivedWarrantyExpiry = savedWarrantyStart ? new Date(savedWarrantyStart) : null;
-            if (derivedWarrantyExpiry) derivedWarrantyExpiry.setDate(derivedWarrantyExpiry.getDate() + warrantyDays);
-            const previewWarrantyExpiry = contractPreviewOrder.warranty_expiry_date || contractPreviewOrder.warrantyExpiryDate || contractPreviewOrder.warranty_end_date || contractPreviewOrder.warranty_end || getWarrantyExpiry(contractPreviewOrder) || derivedWarrantyExpiry;
-            const warrantyPeriodText = contractPreviewOrder.warranty_period || (contractPreviewOrder.warranty_period_value ? `${contractPreviewOrder.warranty_period_value}-day warranty` : `${warrantyDays}-day warranty`);
-            const remainingWarrantyDays = previewWarrantyExpiry
-              ? Math.max(0, Math.ceil((new Date(previewWarrantyExpiry) - new Date()) / (1000 * 60 * 60 * 24)))
-              : 0;
-            const formattedStart = formatDateToMMMDDYYYY(savedWarrantyStart) || "TBD";
-            const formattedExpiry = formatDateToMMMDDYYYY(previewWarrantyExpiry) || "TBD";
-            const contractNo = contractPreviewOrder.contract_number || contractPreviewOrder.contractId || contractPreviewOrder.tracking || contractPreviewOrder._id || "N/A";
-            const createdDate = contractPreviewOrder.createdAt || contractPreviewOrder.updatedAt || contractPreviewOrder.contract_date || new Date();
-            const inspectionDate = formatDateToMMMDDYYYY(contractPreviewOrder.inspection_date) || "TBD";
-            const paymentTermsText = contractPreviewOrder.payment_terms || "50% downpayment, 50% upon completion";
-            const previewItems = Array.isArray(contractPreviewOrder.items) ? contractPreviewOrder.items : [];
-            const hasBatchItems = previewItems.length > 1;
-            const perProductWarranty = contractPreviewOrder.warranty_assignment_mode === "per_product";
-            const getPreviewItemWarranty = (item) => {
-              const itemStatus = String(item.warranty_status || contractPreviewOrder.warranty_status || "").toLowerCase();
-              const period = item.warranty_period || (perProductWarranty ? "" : contractPreviewOrder.warranty_period);
-              const isNoWarranty = period === "No Warranty" || itemStatus === "no_warranty";
-              const customDays = Number(item.custom_warranty_days || contractPreviewOrder.custom_warranty_days) || 0;
-              const durationDays = period === "Custom"
-                ? customDays || 90
-                : parseWarrantyPeriod(period)?.days || Number(period) || null;
-              const installationDate = getInstallationCompletionDate(contractPreviewOrder, item);
-              const isInstalled = Boolean(installationDate && installationDate <= new Date());
-              const storedStart = item.warranty_status === "pending" ? null : item.warranty_start_date;
-              const startDate = isNoWarranty
-                ? null
-                : storedStart ? new Date(storedStart) : installationDate;
-              const storedExpiry = item.warranty_status === "pending" ? null : item.warranty_expiry_date;
-              const expiryDate = isNoWarranty || !startDate || !durationDays
-                ? null
-                : storedExpiry
-                  ? new Date(storedExpiry)
-                  : computeWarrantyExpiryDate(startDate, durationDays);
-              const startsInFuture = Boolean(startDate && startDate > new Date());
-              const isActive = itemStatus === "active" && !startsInFuture && (!expiryDate || expiryDate > new Date());
-              const statusLabel = isNoWarranty
-                ? "No warranty"
-                : isActive
-                  ? "Active"
-                  : itemStatus === "expired" || (expiryDate && expiryDate <= new Date())
-                    ? "Expired"
-                    : isInstalled ? "Pending activation" : "Pending installation";
-
-              return {
-                periodLabel: isNoWarranty ? "No Warranty" : durationDays ? `${durationDays} days` : "Not assigned",
-                startLabel: isNoWarranty ? "—" : startDate ? formatDateToMMMDDYYYY(startDate) || "TBD" : "Pending installation",
-                expiryLabel: isNoWarranty ? "—" : expiryDate ? formatDateToMMMDDYYYY(expiryDate) || "TBD" : isInstalled ? "Pending activation" : "Pending installation",
-                statusLabel,
-              };
-            };
-            const paymentSummary = getPaymentSummary(contractPreviewOrder);
-            const orderIdentifier = contractPreviewOrder.tracking || contractPreviewOrder._id || contractPreviewOrder.id || "—";
-
-            return (
-              <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/40 px-3 py-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:items-center sm:p-5">
-                <div className="mobile-fullscreen-dialog relative flex max-h-[calc(100dvh-1.5rem)] min-h-0 w-full max-w-[620px] flex-col overflow-hidden rounded-lg border border-slate-200 bg-slate-100 shadow-[0_18px_50px_rgba(15,23,42,0.22)] sm:max-h-[90dvh]">
-                  <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2.5">
-                  <div className="min-w-0">
-                    <div className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-500">TRANSACTION DETAILS</div>
-                    <div className="mt-1 text-[17px] font-bold leading-tight text-slate-800">
-                      {contractPreviewOrder.customer_name || `${contractPreviewOrder.customer?.first_name || ""} ${contractPreviewOrder.customer?.last_name || ""}`.trim() || "Customer"}
-                    </div>
-                    <div className="text-[11px] text-slate-500">
-                      Order ID: {orderIdentifier}
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={closeContractModal}
-                    className="rounded-md p-1.5 text-slate-500 transition hover:bg-slate-200 hover:text-slate-800"
-                    aria-label="Close transaction details"
-                  >
-                    <XCircle size={16} />
-                  </button>
-                </div>
-
-                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-100 p-3">
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${paymentSummary.status.key === "paid" ? "border-emerald-200 bg-emerald-100 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
-                      {paymentSummary.status.label}
-                    </span>
-                    <span className="rounded-md border border-blue-200 bg-blue-100 px-2 py-1 text-[10px] font-semibold text-blue-700">
-                      Completed Project
-                    </span>
-                    <span className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-700">
-                      Website Order
-                    </span>
-                  </div>
-
-                  <section className="rounded-md border border-slate-200 bg-white p-3">
-                    <h3 className="mb-3 border-b border-slate-200 pb-2 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-500">
-                      CLIENT INFORMATION
-                    </h3>
-
-                    <div className="grid gap-2 md:grid-cols-2">
-                      <div className="space-y-1">
-                        <div className="text-[10px] font-semibold text-slate-500">Full Name</div>
-                        <div className="text-[13px] font-semibold text-slate-800">
-                          {contractPreviewOrder.customer_name || `${contractPreviewOrder.customer?.first_name || ""} ${contractPreviewOrder.customer?.last_name || ""}`.trim() || "N/A"}
-                        </div>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="text-[10px] font-semibold text-slate-500">Order ID</div>
-                        <div className="break-all text-[13px] font-semibold text-slate-800">{orderIdentifier}</div>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="text-[10px] font-semibold text-slate-500">Email</div>
-                        <div className="text-[13px] text-slate-700">{contractPreviewOrder.customer?.email || contractPreviewOrder.customer_email || "N/A"}</div>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="text-[10px] font-semibold text-slate-500">Phone</div>
-                        <div className="text-[13px] text-slate-700">{contractPreviewOrder.customer?.phone || contractPreviewOrder.customer_phone || "N/A"}</div>
-                      </div>
-                      <div className="space-y-1 md:col-span-2">
-                        <div className="text-[10px] font-semibold text-slate-500">Address</div>
-                        <div className="text-[13px] text-slate-700">
-                          {contractPreviewOrder.shipping_address || contractPreviewOrder.address || "N/A"}
-                        </div>
-                      </div>
-                    </div>
-                  </section>
-
-                  <section className="mt-3 rounded-md border border-slate-200 bg-white p-3">
-                    <h3 className="mb-3 border-b border-slate-200 pb-2 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-500">
-                      MEASUREMENTS &amp; PROGRESS MATRIX
-                    </h3>
-
-                    {previewItems.length > 0 ? (
-                      <div className="space-y-2">
-                        {previewItems.map((item, index) => {
-                          const itemName = item.name || item.product_name || `Item ${index + 1}`;
-                          const warranty = getPreviewItemWarranty(item);
-                          return (
-                            <div key={`${itemName}-${index}`} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[13px]">
-                              <div className="font-semibold text-slate-800">{itemName}</div>
-                              <div className="mt-1 text-slate-600">
-                                Size: {item.width || "—"}W x {item.height || "—"}H | Qty: {item.quantity || 1} | Base Rate: ₱{Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/sqft
-                              </div>
-                              {hasBatchItems && (
-                                <div className="mt-2 border-t border-slate-200 pt-2 text-xs text-slate-600">
-                                  <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <span className="font-semibold">Warranty: {warranty.periodLabel}</span>
-                                    <span className={`rounded-full px-2 py-0.5 font-semibold ${warranty.statusLabel === "Active" ? "bg-emerald-100 text-emerald-700" : warranty.statusLabel === "Expired" ? "bg-slate-200 text-slate-700" : "bg-amber-100 text-amber-700"}`}>
-                                      {warranty.statusLabel}
-                                    </span>
-                                  </div>
-                                  <div className="mt-1 grid grid-cols-2 gap-2">
-                                    <span>Start: {warranty.startLabel}</span>
-                                    <span>End: {warranty.expiryLabel}</span>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] text-slate-600">
-                        No item measurements available.
-                      </div>
-                    )}
-                  </section>
-
-                  <section className="mt-3 rounded-md border border-slate-200 bg-white p-3">
-                    <h3 className="mb-3 border-b border-slate-200 pb-2 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-500">
-                      PAYMENT BREAKDOWN
-                    </h3>
-
-                    <div className="space-y-2 text-[13px]">
-                      <div className="flex items-center justify-between gap-4 border-b border-slate-200 pb-2">
-                        <span className="text-slate-600">Total Project Amount</span>
-                        <span className="font-semibold text-slate-800">₱{paymentSummary.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-4 border-b border-slate-200 pb-2">
-                        <span className="text-slate-600">Amount Paid</span>
-                        <span className="font-semibold text-slate-800">₱{paymentSummary.paidAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-4">
-                        <span className="text-slate-600">Remaining Balance</span>
-                        <span className="font-bold text-red-600">
-                          ₱{paymentSummary.remainingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-emerald-100">
-                        <div className="h-full rounded-full bg-emerald-500" style={{ width: `${paymentSummary.totalAmount > 0 ? Math.min((paymentSummary.paidAmount / paymentSummary.totalAmount) * 100, 100) : 0}%` }} />
-                      </div>
-                    </div>
-                  </section>
-
-                  <section className="mt-3 rounded-md border border-slate-200 bg-white p-3">
-                    <h3 className="mb-3 border-b border-slate-200 pb-2 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-500">
-                      PAYMENT INFORMATION
-                    </h3>
-
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div className="space-y-1">
-                        <div className="text-[10px] font-semibold text-slate-500">Payment Terms</div>
-                        <div className="text-[13px] text-slate-700">{paymentTermsText}</div>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="text-[10px] font-semibold text-slate-500">Payment Date</div>
-                        <div className="text-[13px] text-slate-700">—</div>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 space-y-3">
-                      <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                        <h4 className="mb-3 border-b border-slate-200 pb-2 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-500">
-                          CONTRACT INFORMATION
-                        </h4>
-
-                        <div className="space-y-2 text-[13px] text-slate-700">
-                          <div className="flex items-center justify-between gap-4 border-b border-slate-200 pb-2">
-                            <span className="text-slate-600">Contract No.</span>
-                            <span className="font-semibold text-slate-800">{contractNo}</span>
-                          </div>
-                          <div className="flex items-center justify-between gap-4 border-b border-slate-200 pb-2">
-                            <span className="text-slate-600">Date Created</span>
-                            <span className="font-semibold text-slate-800">{formatDateToMMMDDYYYY(createdDate)}</span>
-                          </div>
-                          <div className="flex items-center justify-between gap-4 border-b border-slate-200 pb-2">
-                            <span className="text-slate-600">Inspection Date</span>
-                            <span className="font-semibold text-slate-800">{inspectionDate}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                        <h4 className="mb-3 border-b border-slate-200 pb-2 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-500">
-                          WARRANTY INFORMATION
-                        </h4>
-
-                        <div className={hasBatchItems ? "space-y-3" : "space-y-2 text-[13px] text-slate-700"}>
-                          {hasBatchItems ? previewItems.map((item, index) => {
-                            const itemName = item.name || item.product_name || `Product ${index + 1}`;
-                            const warranty = getPreviewItemWarranty(item);
-                            const statusClass = warranty.statusLabel === "Active"
-                              ? "bg-emerald-50 text-emerald-700"
-                              : warranty.statusLabel === "Expired"
-                                ? "bg-slate-100 text-slate-600"
-                                : warranty.statusLabel === "No warranty"
-                                  ? "bg-slate-100 text-slate-600"
-                                  : "bg-amber-50 text-amber-700";
-                            return (
-                              <div key={`${itemName}-warranty-${index}`} className="min-w-0 rounded-lg border border-slate-200 bg-white p-3">
-                                <div className="flex flex-wrap items-start justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <h5 className="break-words text-sm font-semibold text-slate-900">{itemName}</h5>
-                                    <p className="mt-1 text-xs text-slate-500">{warranty.periodLabel}</p>
-                                  </div>
-                                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold ${statusClass}`}>
-                                    {warranty.statusLabel}
-                                  </span>
-                                </div>
-                                <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2">
-                                  <div className="min-w-0 rounded-md bg-slate-50 px-3 py-2">
-                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Warranty Start</p>
-                                    <p className="mt-1 break-words text-sm font-medium text-slate-800">{warranty.startLabel}</p>
-                                  </div>
-                                  <div className="min-w-0 rounded-md bg-slate-50 px-3 py-2">
-                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Warranty End</p>
-                                    <p className="mt-1 break-words text-sm font-medium text-slate-800">{warranty.expiryLabel}</p>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          }) : (
-                            <>
-                              <div className="flex items-center justify-between gap-4 border-b border-slate-200 pb-2">
-                                <span className="text-slate-600">Warranty Start</span>
-                                <span className="font-semibold text-slate-800">{formattedStart}</span>
-                              </div>
-                              <div className="flex items-center justify-between gap-4 border-b border-slate-200 pb-2">
-                                <span className="text-slate-600">Warranty End</span>
-                                <span className="font-semibold text-slate-800">{formattedExpiry}</span>
-                              </div>
-                              <div className="flex items-center justify-between gap-4">
-                                <span className="text-slate-600">Remaining Warranty Days ({warrantyPeriodText})</span>
-                                <span className="inline-flex rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700">{remainingWarrantyDays} days remaining</span>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </section>
-                </div>
-
-                  <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200 bg-white px-4 py-3 sm:flex-row sm:justify-end">
-                    <button
-                      type="button"
-                      onClick={closeContractModal}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100 sm:w-auto sm:py-1.5"
-                    >
-                      Close
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        openFullContractModal();
-                        setShowWarrantyModal(false);
-                      }}
-                      className="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm font-semibold text-red-700 hover:bg-red-100 sm:w-auto sm:py-1.5"
-                    >
-                      View Contract
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
+          {showContractModal && contractPreviewOrder && (
+            <TransactionDetailsModal
+              order={contractPreviewOrder}
+              onClose={closeContractModal}
+              onViewContract={openFullContractModal}
+            />
+          )}
 
           {editPaymentModalContent}
 
@@ -2012,120 +1606,9 @@ function Transactions() {
               onClose={closeContractModal}
               inspection={contractPreviewOrder}
               contractData={contractPreviewData}
+              onDownload={downloadContractPDF}
+              onPrint={printContract}
             />
-          )}
-
-          {showWarrantyModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center">
-              <div className="absolute inset-0 bg-black/40" onClick={closeWarrantyModal} />
-              <div className="relative w-full max-w-2xl rounded-3xl bg-white p-6 shadow-xl">
-                <h2 className="text-2xl font-bold text-slate-900 mb-3">Create Warranty</h2>
-                <p className="text-sm text-slate-600 mb-6">
-                  Warranty coverage starts when project installation is completed.
-                </p>
-
-                <div className="grid gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Customer</label>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-800">
-                      {warrantyOrder?.customer_name || `${warrantyOrder?.customer?.first_name || ''} ${warrantyOrder?.customer?.last_name || ''}`.trim() || "N/A"}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">{warrantyOrder?.items?.length > 1 ? "Products & Warranty" : "Project"}</label>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-800">
-                      {warrantyOrder?.items?.length > 1 ? (
-                        <div className="space-y-2">
-                          {warrantyOrder.items.map((item, index) => {
-                            const perProduct = warrantyOrder.warranty_assignment_mode === "per_product";
-                            const period = perProduct
-                              ? item.warranty_period || warrantyOrder.warranty_period || 90
-                              : warrantyOrder.warranty_period || 90;
-                            const customDays = perProduct
-                              ? Number(item.custom_warranty_days) || Number(period) || 90
-                              : Number(warrantyOrder.custom_warranty_days) || Number(period) || 90;
-                            const periodDays = period === "Custom"
-                              ? customDays
-                              : parseWarrantyPeriod(period)?.days || Number(period) || customDays;
-                            const itemStart = perProduct
-                              ? getInstallationCompletionDate(warrantyOrder, item) || getInstallationCompletionDate(warrantyOrder)
-                              : warrantyStartDate ? new Date(warrantyStartDate) : getInstallationCompletionDate(warrantyOrder);
-                            const expiry = period === "No Warranty"
-                              ? null
-                              : perProduct
-                                ? computeWarrantyExpiryDate(itemStart, period === "Custom" ? customDays : period)
-                                : warrantyExpiryDate ? new Date(warrantyExpiryDate) : computeWarrantyExpiryDate(warrantyStartDate, period);
-                            return (
-                              <div key={`${item.product_id || item.name || "product"}-${index}`} className="flex flex-col gap-1 border-b border-slate-200 pb-2 last:border-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between">
-                                <span className="font-medium">{item.name || item.product_id?.name || `Product ${index + 1}`}</span>
-                                <span className="text-sm text-slate-600">
-                                  {period === "No Warranty" ? "No Warranty" : `${periodDays} days`}
-                                  {period !== "No Warranty" && itemStart ? ` · Starts ${formatDateToMMMDDYYYY(itemStart)}` : ""}
-                                  {expiry ? ` · Ends ${formatDateToMMMDDYYYY(expiry)}` : ""}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        warrantyOrder?.items?.[0]?.name || "N/A"
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Warranty Start</label>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-slate-800">
-                        {formatDateToMMMDDYYYY(warrantyStartDate) || "Installation completion date required"}
-                      </div>
-                    </div>
-
-                    {warrantyOrder?.warranty_assignment_mode !== "per_product" && (
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-2">Warranty Expiry</label>
-                        <input
-                          type="date"
-                          min={warrantyStartDate || today}
-                          value={warrantyExpiryDate}
-                          onChange={(e) => handleWarrantyExpiryDateChange(e.target.value)}
-                          className="w-full rounded-xl border border-slate-300 px-4 py-2"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Terms</label>
-                    <textarea
-                      rows={4}
-                      value={warrantyTerms}
-                      onChange={(e) => setWarrantyTerms(e.target.value)}
-                      className="w-full rounded-xl border border-slate-300 px-4 py-3"
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
-                  <button
-                    type="button"
-                    onClick={closeWarrantyModal}
-                    className="rounded-2xl px-5 py-3 bg-gray-100 text-slate-700 hover:bg-gray-200 transition"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCreateWarranty}
-                    disabled={warrantySaving}
-                    className={`rounded-2xl px-5 py-3 text-white transition ${warrantySaving ? "bg-amber-300" : "bg-amber-600 hover:bg-amber-700"}`}
-                  >
-                    {warrantySaving ? "Saving..." : "Create Warranty"}
-                  </button>
-                </div>
-              </div>
-            </div>
           )}
 
           {feedbackPreviewOrder && (
@@ -2192,7 +1675,7 @@ function Transactions() {
                       </div>
                       <div className="flex items-center justify-between gap-4">
                         <dt className={darkMode ? "text-slate-400" : "text-slate-500"}>Total Amount</dt>
-                        <dd className="text-right font-semibold">₱{Number(feedbackPreviewOrder.contract_amount || feedbackPreviewOrder.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
+                        <dd className="text-right font-semibold">₱{getPaymentSummary(feedbackPreviewOrder).totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</dd>
                       </div>
                     </dl>
                   </section>

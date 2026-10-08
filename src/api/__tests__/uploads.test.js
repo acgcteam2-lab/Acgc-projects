@@ -135,6 +135,64 @@ describe("uploadFiles", () => {
     expect(result.files[0].url).toContain("res.cloudinary.com");
   });
 
+  it("uploads review photos through the authenticated backend endpoint", async () => {
+    let sentFormData;
+    let requestUrl;
+
+    function FakeXHR() {
+      this.upload = {};
+      this.open = vi.fn((_method, url) => { requestUrl = url; });
+      this.setRequestHeader = vi.fn();
+      this.send = (formData) => {
+        sentFormData = formData;
+        this.status = 201;
+        this.responseText = JSON.stringify({
+          success: true,
+          files: [{ key: "files", url: "https://res.cloudinary.com/demo/image/upload/review.jpg", originalName: "review.jpg" }],
+        });
+        this.onload();
+      };
+    }
+
+    globalThis.XMLHttpRequest = FakeXHR;
+
+    const reviewPhoto = new File(["review photo"], "review.jpg", { type: "image/jpeg" });
+    const result = await uploadFiles([reviewPhoto], undefined, { purpose: "review-photos" });
+
+    expect(requestUrl).toMatch(/\/api\/uploads\/review-photos$/);
+    expect(sentFormData.get("files").name).toBe(reviewPhoto.name);
+    expect(result.files[0].url).toContain("res.cloudinary.com");
+  });
+
+  it("uploads progress proof files through the authenticated backend endpoint", async () => {
+    let sentFormData;
+    let requestUrl;
+
+    function FakeXHR() {
+      this.upload = {};
+      this.open = vi.fn((_method, url) => { requestUrl = url; });
+      this.setRequestHeader = vi.fn();
+      this.send = (formData) => {
+        sentFormData = formData;
+        this.status = 201;
+        this.responseText = JSON.stringify({
+          success: true,
+          files: [{ key: "files", url: "https://res.cloudinary.com/demo/image/upload/progress.jpg", originalName: "progress.jpg" }],
+        });
+        this.onload();
+      };
+    }
+
+    globalThis.XMLHttpRequest = FakeXHR;
+
+    const proof = new File(["progress proof"], "progress.jpg", { type: "image/jpeg" });
+    const result = await uploadFiles([proof], undefined, { purpose: "progress-media" });
+
+    expect(requestUrl).toMatch(/\/api\/uploads\/progress-media$/);
+    expect(sentFormData.get("files").name).toBe(proof.name);
+    expect(result.files[0].url).toContain("res.cloudinary.com");
+  });
+
   it("rejects product photo uploads larger than 4 MB before sending", async () => {
     vi.stubEnv("PROD", false);
     const oversizedImage = new File([new Uint8Array(4 * 1024 * 1024 + 1)], "large.jpg", { type: "image/jpeg" });

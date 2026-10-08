@@ -17,9 +17,11 @@ import { toJpeg } from "html-to-image";
 import jsPDF from "jspdf";
 
 import { getAdminOrders, getAdminOrder, generateContract, updateOrderInspection, updateOrderStatus, createInspection, sendWalkInApprovalEmail } from "@/api/orders";
-import { buildContractSnapshot, hasContractSnapshotChanged } from "./contractState";
+import { buildContractSnapshot, hasContractSnapshotChanged, hasExistingContract } from "./contractState";
 import { getCustomerPaymentProof, getPaymentSummary } from "@/pages/Transactions/paymentProofUtils";
 import { getProducts } from "@/api/products";
+import { toSquareFeet } from "@/lib/estimator";
+import { getMeasuredProductLineTotal } from "@/lib/productPricing";
 import { searchCustomers } from "@/api/users";
 import { uploadFiles } from "@/api/uploads";
 import Sidebar from "../../components/layout/Sidebar";
@@ -27,6 +29,8 @@ import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import ContractModal from "../../components/ContractModal";
 import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, formatDateToMMMDDYYYY } from "@/lib/dateUtils";
+import { getInstallationDateError, getMinimumInstallationDate } from "@/lib/installationSchedule";
+import { calculateRequiredDownpayment, getFinalProjectCost } from "@/lib/orderPricing";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import { recordActivity } from "@/lib/activityLog";
@@ -54,7 +58,7 @@ const getDefaultInspection = () => ({
   required_downpayment_amount: "",
   manual_override: "",
   items: [
-    { id: Date.now() + Math.random(), product_id: "", name: "", width: 1, height: 1, qty: 1, unit_price: 0, area: 0, unit: "sqft", estimation_mode: "auto" },
+    { id: Date.now() + Math.random(), product_id: "", name: "", width: 1, height: 1, qty: 1, measurement_unit: "in", unit_price: 0, area: 0, unit: "sqft", estimation_mode: "auto" },
   ],
   payment_terms: "50%_down_payment",
   agreed_payment_date: "",
@@ -143,6 +147,11 @@ export const getEstimatedInstallationDate = (inspection) => (
   ""
 );
 
+export const hasValidEstimatedInstallationDate = (inspection) => {
+  const value = getEstimatedInstallationDate(inspection);
+  return Boolean(value && !getInstallationDateError(inspection?.inspection_date, value));
+};
+
 const toApiDate = (value) => {
   if (!value) return null;
   const date = value instanceof Date
@@ -177,38 +186,33 @@ export const calculateWarrantyExpiry = (startDate, period, customDays) => {
   return expiry.toISOString();
 };
 
-export const calculateMeasurementArea = (width, height, quantity = 1) => {
-  const area = ((Number(width) || 0) * (Number(height) || 0) * (Number(quantity) || 1)) / 144;
+export const calculateMeasurementArea = (width, height, quantity = 1, unit = "in") => {
+  const area = toSquareFeet(Number(width) || 0, Number(height) || 0, unit) * (Number(quantity) || 1);
   return Math.round(area * 100) / 100;
 };
 
 export const calculateMeasurementSubtotal = (item, product = null) => {
   const quantity = Number(item.quantity ?? item.qty ?? 1) || 1;
-  const area = Number(item.area) || calculateMeasurementArea(item.width, item.height, quantity);
-  const unitPrice = Number(product?.unit_price) || Number(item.unit_price ?? item.price) || 0;
-  const customizationFee = Number(product?.customization_fee) || 0;
+  const measurementUnit = item.measurement_unit || item.measurementUnit || item.dimensions?.unit || "in";
+  const inferredMethod = item.pricing_method || (
+    Number(item.base_price) > 0 ? "fixed" :
+      Number(item.price_per_blade) > 0 ? "blade" :
+        "sqft"
+  );
+  const pricingProduct = product || {
+    ...item,
+    pricing_method: inferredMethod,
+    price_per_sqft: Number(item.price_per_sqft) || (inferredMethod === "sqft" ? Number(item.unit_price || item.price) || 0 : 0),
+  };
 
-  if (!product) return Math.round(area * unitPrice * 100) / 100;
-
-  let subtotal = 0;
-  switch (product.pricing_method || "") {
-    case "sqft":
-      subtotal = area * (Number(product.price_per_sqft) || 0) + customizationFee;
-      break;
-    case "blade":
-      subtotal = quantity * (Number(product.price_per_blade) || 0) + customizationFee;
-      break;
-    case "fixed":
-      subtotal = (Number(product.base_price) || 0) + customizationFee;
-      break;
-    case "per_piece":
-      subtotal = quantity * unitPrice + customizationFee;
-      break;
-    default:
-      subtotal = (area > 0 ? area * unitPrice : quantity * unitPrice) + customizationFee;
-  }
-
-  return Math.round(subtotal * 100) / 100;
+  return getMeasuredProductLineTotal(pricingProduct, {
+    ...item,
+    quantity,
+    width: Number(item.width) || 0,
+    height: Number(item.height) || 0,
+    measurement_unit: measurementUnit,
+    customized: Boolean(item.customized ?? item.is_estimate ?? true),
+  });
 };
 
 const createContractPrintClone = (element) => {
@@ -248,7 +252,8 @@ export const validateInspectionPayload = (payload = {}) => {
   if (!payload.phone?.trim()) nextErrors.phone = "Phone number is required.";
   if (!payload.siteAddress?.trim()) nextErrors.siteAddress = "Site address is required.";
   if (!payload.inspection_date) nextErrors.inspection_date = "Inspection date is required.";
-  if (!payload.estimated_installation_date) nextErrors.estimated_installation_date = "Estimated installation date is required.";
+  const installationDateError = getInstallationDateError(payload.inspection_date, payload.estimated_installation_date);
+  if (installationDateError) nextErrors.estimated_installation_date = installationDateError;
   if (!payload.items || payload.items.length === 0) nextErrors.items = "Add at least one measurement row.";
   if (
     payload.order_type === "walk_in_customer" &&
@@ -414,10 +419,7 @@ export const isOnlineCustomerInspection = (inspection = {}) => {
 };
 
 export const getInspectionDisplayTotal = (inspection = {}, itemTotal = 0) => {
-  const manualOverride = Number(inspection.manual_override);
-  if (Number.isFinite(manualOverride) && manualOverride > 0) return manualOverride;
-
-  const savedTotal = Number(inspection.total_amount) || Number(inspection.contract_amount) || 0;
+  const savedTotal = getFinalProjectCost(inspection);
   return savedTotal > 0 ? savedTotal : Number(itemTotal) || 0;
 };
 
@@ -551,14 +553,7 @@ function SiteInspection() {
   const shouldShowAgreedPaymentDate = (value = "") => paymentTermsWithAgreedDate.has(String(value).trim());
   const isFullPaymentPlan = (value = "") => String(value).trim() === "full_payment";
   const resolveRequiredPaymentAmount = (terms, total, configuredAmount) => {
-    const safeTotal = Math.max(Number(total) || 0, 0);
-    if (isFullPaymentPlan(terms)) return safeTotal;
-
-    const enteredAmount = Number(configuredAmount);
-    const amount = configuredAmount !== undefined && configuredAmount !== null && configuredAmount !== "" && Number.isFinite(enteredAmount)
-      ? enteredAmount
-      : safeTotal * 0.5;
-    return Math.min(safeTotal, Math.max(Math.round(amount * 100) / 100, 0));
+    return calculateRequiredDownpayment(total, terms, configuredAmount);
   };
   const getPaymentTermsLabel = (value = "") => {
     switch (String(value).trim()) {
@@ -770,17 +765,20 @@ function SiteInspection() {
     const providedHeight = item.height !== undefined && item.height !== null ? Number(item.height) : 0;
     const widthValue = providedWidth > 0 ? providedWidth : Number(selectedProduct?.width || 0);
     const heightValue = providedHeight > 0 ? providedHeight : Number(selectedProduct?.height || 0);
+    const measurementUnit = item.measurement_unit || item.measurementUnit || item.dimensions?.unit || selectedProduct?.measurement_unit || "in";
     const areaValue = item.area !== undefined && item.area !== null && Number(item.area) > 0
       ? Number(item.area)
-      : Math.round(((widthValue * heightValue * quantity) / 144) * 100) / 100;
+      : calculateMeasurementArea(widthValue, heightValue, quantity, measurementUnit);
     const productUnitPrice = deriveUnitPriceForPayload({
       ...item,
       product_id: normalizedProductId,
       unit_price: item.unit_price,
     });
-    const unitPriceValue = item.unit_price !== undefined && item.unit_price !== null && Number(item.unit_price) > 0
-      ? Number(item.unit_price)
-      : productUnitPrice;
+    const unitPriceValue = selectedProduct
+      ? productUnitPrice
+      : item.unit_price !== undefined && item.unit_price !== null && Number(item.unit_price) > 0
+        ? Number(item.unit_price)
+        : productUnitPrice;
     const estimationMode = item.is_estimate ? (item.estimation_mode || "auto") : "auto";
 
     return {
@@ -790,6 +788,7 @@ function SiteInspection() {
       name: item.name || selectedProduct?.name || "",
       qty: quantity,
       quantity,
+      measurement_unit: measurementUnit,
       width: widthValue ? String(widthValue) : "",
       height: heightValue ? String(heightValue) : "",
       area: areaValue,
@@ -799,27 +798,32 @@ function SiteInspection() {
       manual_estimated_total: item.manual_estimated_total ?? (estimationMode === "manual" ? String(item.estimated_price || "") : ""),
       category: selectedProduct?.category || item.category || item.product_type || "",
       product_type: selectedProduct?.product_type || item.product_type || "",
-      base_price: selectedProduct?.base_price || item.base_price || 0,
-      price_per_sqft: selectedProduct?.price_per_sqft || item.price_per_sqft || 0,
-      price_per_blade: selectedProduct?.price_per_blade || item.price_per_blade || 0,
-      customization_fee: selectedProduct?.customization_fee || item.customization_fee || 0,
+      base_price: selectedProduct ? Number(selectedProduct.base_price) || 0 : Number(item.base_price) || 0,
+      price_per_sqft: selectedProduct ? Number(selectedProduct.price_per_sqft) || 0 : Number(item.price_per_sqft) || 0,
+      price_per_blade: selectedProduct ? Number(selectedProduct.price_per_blade) || 0 : Number(item.price_per_blade) || 0,
+      customization_fee: selectedProduct ? Number(selectedProduct.customization_fee) || 0 : Number(item.customization_fee) || 0,
       variant: selectedProduct?.variant || item.variant || "",
     };
   };
 
   const calculateItemArea = (item) => {
-    return calculateMeasurementArea(item.width, item.height, item.quantity ?? item.qty ?? 1);
+    return calculateMeasurementArea(
+      item.width,
+      item.height,
+      item.quantity ?? item.qty ?? 1,
+      item.measurement_unit || item.measurementUnit || item.dimensions?.unit || "in",
+    );
   };
 
   const getInspectionItemTotal = (item) => {
-    const explicitTotal = Number(item.estimated_price ?? item.total_price ?? item.amount ?? item.line_total ?? 0);
-    if (Number.isFinite(explicitTotal) && explicitTotal > 0) return explicitTotal;
-
     const manualTotal = Number(item.manual_estimated_total ?? 0);
-    if (Number.isFinite(manualTotal) && manualTotal > 0) return manualTotal;
+    if (item.estimation_mode === "manual" && Number.isFinite(manualTotal) && manualTotal > 0) return manualTotal;
 
     const subtotal = calculateRowSubtotal(item);
     if (subtotal > 0) return subtotal;
+
+    const savedEstimate = Number(item.estimated_price ?? item.total_price ?? item.amount ?? item.line_total ?? 0);
+    if (Number.isFinite(savedEstimate) && savedEstimate > 0) return savedEstimate;
 
     const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
     const unitPrice = Number(item.unit_price ?? item.price ?? 0) || 0;
@@ -847,12 +851,19 @@ function SiteInspection() {
     const perBlade = Number(product.price_per_blade) || 0;
     const base = Number(product.base_price) || 0;
     const unitPrice = Number(product.unit_price) || 0;
+    const estimatedOverride = Number(product.estimated_price_override) || 0;
+    const standardArea = Number(product.width) > 0 && Number(product.height) > 0
+      ? toSquareFeet(Number(product.width), Number(product.height), product.measurement_unit || "in")
+      : 0;
     switch (pricingMethod) {
       case "sqft":
         return `₱${perSqft.toLocaleString()} / sq.ft`;
       case "blade":
         return `₱${perBlade.toLocaleString()} / blade`;
       case "fixed":
+        if ((estimatedOverride || base) > 0 && standardArea > 0) {
+          return `₱${((estimatedOverride || base) / standardArea).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / sq.ft`;
+        }
         return `Base ₱${base.toLocaleString()}`;
       case "per_piece":
         return `₱${unitPrice.toLocaleString()} / pc`;
@@ -882,7 +893,7 @@ function SiteInspection() {
         const warrantyPeriod = itemWarrantyPeriod === "Custom"
           ? Number(itemCustomWarrantyDays) || 90
           : itemWarrantyPeriod;
-        const warrantyStartDate = payload.estimated_installation_date || "";
+        const warrantyStartDate = null;
 
         return {
           _id: null,
@@ -890,6 +901,7 @@ function SiteInspection() {
           name: item.name || payload.productName || "Inspection Item",
           quantity: Number(item.qty) || 1,
           unit_price: deriveUnitPriceForPayload(item),
+          measurement_unit: item.measurement_unit || item.measurementUnit || item.dimensions?.unit || "in",
           width: Number(item.width) || 0,
           height: Number(item.height) || 0,
           area: Number(item.area) || 0,
@@ -924,6 +936,8 @@ function SiteInspection() {
       manual_override: payload.manual_override || "",
       total_amount: computedTotal,
       contract_amount: computedTotal,
+      estimated_cost: computeTotals().totalEstimate,
+      final_project_cost: computedTotal,
       required_downpayment_amount: requiredDownpaymentAmount,
       downpayment_received: Boolean(payload.downpayment_received),
     };
@@ -976,7 +990,7 @@ function SiteInspection() {
         const updated = { ...item, [field]: value };
         return {
           ...updated,
-          area: calculateMeasurementArea(updated.width, updated.height, updated.qty),
+          area: calculateMeasurementArea(updated.width, updated.height, updated.qty, updated.measurement_unit || updated.measurementUnit || "in"),
         };
       }),
     }));
@@ -1023,13 +1037,14 @@ function SiteInspection() {
           price_per_sqft: productSnapshot.price_per_sqft,
           price_per_blade: productSnapshot.price_per_blade,
           customization_fee: productSnapshot.customization_fee,
+          measurement_unit: item.measurement_unit || item.measurementUnit || selectedProduct?.measurement_unit || "in",
           width: productSnapshot.width || item.width || 1,
           height: productSnapshot.height || item.height || 1,
           unit: selectedProduct?.unit || item.unit || "sqft",
         };
         return {
           ...updated,
-          area: calculateMeasurementArea(updated.width, updated.height, updated.qty),
+          area: calculateMeasurementArea(updated.width, updated.height, updated.qty, updated.measurement_unit),
           estimation_mode: item.estimation_mode || "auto",
         };
       }),
@@ -1044,7 +1059,7 @@ function SiteInspection() {
         const updated = { ...item, [field]: value };
         return {
           ...updated,
-          area: calculateMeasurementArea(updated.width, updated.height, updated.qty ?? updated.quantity),
+          area: calculateMeasurementArea(updated.width, updated.height, updated.qty ?? updated.quantity, updated.measurement_unit || updated.measurementUnit || updated.dimensions?.unit || "in"),
         };
       }),
     }));
@@ -1085,13 +1100,14 @@ function SiteInspection() {
           price_per_sqft: productSnapshot.price_per_sqft,
           price_per_blade: productSnapshot.price_per_blade,
           customization_fee: productSnapshot.customization_fee,
+          measurement_unit: item.measurement_unit || item.measurementUnit || item.dimensions?.unit || selectedProduct?.measurement_unit || "in",
           width: productSnapshot.width || item.width || 1,
           height: productSnapshot.height || item.height || 1,
           unit: selectedProduct?.unit || item.unit || "sqft",
         };
         return {
           ...updated,
-          area: calculateMeasurementArea(updated.width, updated.height, updated.qty ?? updated.quantity),
+          area: calculateMeasurementArea(updated.width, updated.height, updated.qty ?? updated.quantity, updated.measurement_unit),
           estimation_mode: item.estimation_mode || "auto",
         };
       }),
@@ -1103,7 +1119,7 @@ function SiteInspection() {
       ...prev,
       items: [
         ...prev.items,
-        { id: Date.now() + Math.random(), product_id: "", name: "", width: 1, height: 1, qty: 1, area: 0, unit: "sqft", unit_price: 0, estimation_mode: "auto" },
+        { id: Date.now() + Math.random(), product_id: "", name: "", width: 1, height: 1, qty: 1, measurement_unit: "in", area: 0, unit: "sqft", unit_price: 0, estimation_mode: "auto" },
       ],
     }));
   };
@@ -1113,7 +1129,7 @@ function SiteInspection() {
       ...prev,
       items: [
         ...(prev.items || []),
-        { id: Date.now() + Math.random(), product_id: "", name: "", width: 1, height: 1, qty: 1, area: 0, unit: "sqft", unit_price: 0, estimation_mode: "auto", manual_estimated_total: "" },
+        { id: Date.now() + Math.random(), product_id: "", name: "", width: 1, height: 1, qty: 1, measurement_unit: "in", area: 0, unit: "sqft", unit_price: 0, estimation_mode: "auto", manual_estimated_total: "" },
       ],
     }));
   };
@@ -1259,6 +1275,7 @@ function SiteInspection() {
     }
     if (!order.customer_phone && !order.customer?.phone) errors.push("Customer contact number is required.");
     if (!order.shipping_address) errors.push("Order shipping address is required.");
+    if (!hasValidEstimatedInstallationDate(order)) errors.push("An estimated installation date is required before generating a contract.");
     if (!Array.isArray(order.items) || order.items.length === 0) errors.push("Order must contain at least one product.");
 
     if (Array.isArray(order.items)) {
@@ -1324,7 +1341,7 @@ function SiteInspection() {
     const paymentTermsKey = String(order.payment_terms || "").trim();
     const agreedPaymentDate = order.agreed_payment_date ? formatDateToMMDDYYYY(order.agreed_payment_date) : null;
     const contractTerms = order.contract_terms || "The terms and conditions outlined by ACGC Glass & Aluminum Services apply to this agreement.";
-    const totalProjectCost = Number(order.contract_amount || order.total_amount || 0);
+    const totalProjectCost = getFinalProjectCost(order);
     const downPayment = getPaymentSummary(order).requiredAmount;
     const paymentTerms = isFullPaymentPlan(paymentTermsKey)
       ? "Full payment is required before project commences."
@@ -1408,7 +1425,7 @@ function SiteInspection() {
       }
 
       const snapshot = buildContractSnapshot(order);
-      const alreadyGenerated = Boolean(order.contractGenerated);
+      const alreadyGenerated = hasExistingContract(order);
       const shouldRegenerate = alreadyGenerated && hasContractSnapshotChanged(order);
 
       if (alreadyGenerated && !shouldRegenerate) {
@@ -1580,6 +1597,35 @@ function SiteInspection() {
     } catch (error) {
       console.error("Download contract failed:", error);
       toast.error("Unable to download the contract PDF.");
+    }
+  };
+
+  const handlePrintContract = async () => {
+    const contractElement = document.getElementById("contract-content");
+    if (!contractElement) {
+      toast.error("Unable to locate contract content for printing.");
+      return;
+    }
+
+    const { wrapper, clone } = createContractPrintClone(contractElement);
+    try {
+      const image = await toJpeg(clone, { pixelRatio: 2, quality: 0.92, backgroundColor: "#ffffff" });
+      const printWindow = window.open("", "_blank");
+      if (!printWindow) {
+        toast.error("Please allow popups to print the contract.");
+        return;
+      }
+      printWindow.document.write(`<!doctype html><html><head><title>ACGC Contract</title><style>html,body{margin:0;padding:0;background:#fff;}img{display:block;width:100%;height:auto;}@media print{body{padding:0;}}</style></head><body><img src="${image}" alt="ACGC contract" /></body></html>`);
+      printWindow.document.close();
+      printWindow.onload = () => {
+        printWindow.focus();
+        printWindow.print();
+      };
+    } catch (error) {
+      console.error("Print contract failed:", error);
+      toast.error("Unable to print the contract.");
+    } finally {
+      wrapper.remove();
     }
   };
 
@@ -1855,7 +1901,7 @@ function SiteInspection() {
         return;
       }
 
-      if (!order.contractGenerated) {
+      if (!hasExistingContract(order)) {
         requestGenerateContract(orderId);
         return;
       }
@@ -1972,7 +2018,7 @@ function SiteInspection() {
 
   const handleEditChange = (name, value) => {
     setEditInspection((prev) => {
-      if (prev.isOnlineCustomer && ["customerName", "phone", "siteAddress", "customerEmail", "has_account_on_website", "order_type"].includes(name)) {
+      if (prev.isOnlineCustomer && ["customerName", "phone", "customerEmail", "has_account_on_website", "order_type"].includes(name)) {
         return prev;
       }
 
@@ -2053,12 +2099,13 @@ function SiteInspection() {
           const warrantyPeriod = itemWarrantyPeriod === "Custom"
             ? itemCustomWarrantyDays
             : itemWarrantyPeriod;
-          const warrantyStartDate = item.warranty_start_date || editInspection.warranty_start_date || editInspection.estimated_installation_date;
+          const warrantyStartDate = item.warranty_start_date || editInspection.warranty_start_date || null;
           return {
             product_id: finalProductId,
             name: item.name || "",
             quantity: Number(item.qty) || Number(item.quantity) || 1,
             unit_price: deriveUnitPriceForPayload(item),
+            measurement_unit: item.measurement_unit || item.measurementUnit || item.dimensions?.unit || "in",
             width: Number(item.width) || 0,
             height: Number(item.height) || 0,
             area: Number(item.area) || 0,
@@ -2072,10 +2119,12 @@ function SiteInspection() {
               custom_warranty_days: itemWarrantyPeriod === "Custom" || isCustomItemWarranty ? itemCustomWarrantyDays : null,
               warranty_start_date: toApiDate(warrantyStartDate),
               warranty_expiry_date: calculateWarrantyExpiry(warrantyStartDate, itemWarrantyPeriod, itemCustomWarrantyDays),
-              warranty_status: item.warranty_status || editInspection.warranty_status || "pending",
+              warranty_status: item.warranty_status || (editInspection.warranty_start_date ? editInspection.warranty_status : "pending") || "pending",
             } : {}),
           };
         }),
+        estimated_cost: computeEditTotals().totalEstimate,
+        final_project_cost: Number(editInspection.manual_override) || computeEditTotals().totalEstimate,
         total_amount: Number(editInspection.manual_override) || computeEditTotals().totalEstimate,
       };
 
@@ -2186,6 +2235,12 @@ function SiteInspection() {
   const getInspectionActionButtons = (inspection) => {
     const inspectionId = inspection._id || inspection.id;
     const isCancelledTab = activeTab === "cancelled";
+    const contractExists = hasExistingContract(inspection);
+    const hasEstimatedInstallDate = hasValidEstimatedInstallationDate(inspection);
+    const generationDisabled = !contractExists && !hasEstimatedInstallDate;
+    const contractButtonTitle = generationDisabled
+      ? "Set the Est. Install Date first before generating the contract."
+      : contractExists ? "View contract" : "Generate or view contract";
     const isWalkIn = inspection.order_type === "walk_in_customer"
       || ["walk-in", "Walk-in Customer", "walk_in_customer"].includes(inspection.customerType);
 
@@ -2212,16 +2267,23 @@ function SiteInspection() {
               <Pencil size={18} strokeWidth={2.2} />
             </button>
             {hasValidInspectionDate(inspection) && (
-              <button
-                type="button"
-                title="Generate or view contract"
-                aria-label="Generate or view contract"
-                className={`${actionButtonClass} disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`}
-                onClick={() => openContractButtonHandler(inspection)}
-                disabled={generatingId === inspectionId}
+              <span
+                className="inline-flex"
+                title={contractButtonTitle}
+                aria-label={generationDisabled ? contractButtonTitle : undefined}
+                tabIndex={generationDisabled ? 0 : undefined}
               >
-                {generatingId === inspectionId ? <span className="text-[10px] font-bold">…</span> : <FileText size={18} strokeWidth={2.2} />}
-              </button>
+                <button
+                  type="button"
+                  title={contractButtonTitle}
+                  aria-label={contractButtonTitle}
+                  className={`${actionButtonClass} disabled:cursor-not-allowed disabled:opacity-40 ${darkMode ? "bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25" : "bg-emerald-100 text-emerald-700 hover:bg-emerald-200"}`}
+                  onClick={() => openContractButtonHandler(inspection)}
+                  disabled={generatingId === inspectionId || generationDisabled}
+                >
+                  {generatingId === inspectionId ? <span className="text-[10px] font-bold">…</span> : <FileText size={18} strokeWidth={2.2} />}
+                </button>
+              </span>
             )}
             {isWalkIn && (
               <button
@@ -2525,7 +2587,7 @@ function SiteInspection() {
                         const inspectionDate = formatDateToMMMDDYYYY(inspection.inspection_date) || "—";
                         const installDateValue = getEstimatedInstallationDate(inspection);
                         const installDate = formatDateToMMMDDYYYY(installDateValue) || "—";
-                        const total = Number(inspection.total_amount || inspection.contract_amount || 0) || (Array.isArray(inspection.items)
+                        const total = getFinalProjectCost(inspection) || (Array.isArray(inspection.items)
                           ? inspection.items.reduce((sum, item) => sum + getInspectionItemTotal(item), 0)
                           : 0);
                         const statusDisplay = getInspectionStatusDisplay(inspection);
@@ -2570,7 +2632,7 @@ function SiteInspection() {
                 const installDateValue = getEstimatedInstallationDate(inspection);
                 const installDate = formatDateToMMMDDYYYY(installDateValue) || "—";
                 const statusDisplay = getInspectionStatusDisplay(inspection);
-                const total = Number(inspection.total_amount || inspection.contract_amount || 0) || (Array.isArray(inspection.items) ? inspection.items.reduce((sum, item) => sum + getInspectionItemTotal(item), 0) : 0);
+                const total = getFinalProjectCost(inspection) || (Array.isArray(inspection.items) ? inspection.items.reduce((sum, item) => sum + getInspectionItemTotal(item), 0) : 0);
                 return (
                   <div
                     key={inspection._id || inspection.id || index}
@@ -2730,10 +2792,9 @@ function SiteInspection() {
                         <input
                           type="text"
                           placeholder="e.g. 45 Magsaysay Dr."
-                          className={selectedCustomer ? lockedFieldClass : fieldClass}
+                          className={fieldClass}
                           value={newInspection.siteAddress}
                           onChange={(e) => handleInspectionFieldChange("siteAddress", e.target.value)}
-                          readOnly={!!selectedCustomer}
                         />
                         {errors.siteAddress && <p className="mt-2 text-xs text-red-400">{errors.siteAddress}</p>}
                       </div>
@@ -2747,18 +2808,24 @@ function SiteInspection() {
                           className={fieldClass}
                           value={newInspection.inspection_date}
                           min={today}
-                          onChange={(e) => handleInspectionFieldChange("inspection_date", e.target.value)}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            handleInspectionFieldChange("inspection_date", value);
+                            if (getInstallationDateError(value, newInspection.estimated_installation_date)) {
+                              handleInspectionFieldChange("estimated_installation_date", "");
+                            }
+                          }}
                         />
                         {errors.inspection_date && <p className="mt-2 text-xs text-red-400">{errors.inspection_date}</p>}
                       </div>
 
                       <div>
-                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Est. Installation Date <span className="text-red-400">*</span></label>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Est. Installation Date</label>
                         <input
                           type="date"
                           className={fieldClass}
                           value={newInspection.estimated_installation_date || ""}
-                          min={today}
+                          min={getMinimumInstallationDate(newInspection.inspection_date)}
                           onChange={(e) => handleInspectionFieldChange("estimated_installation_date", e.target.value)}
                         />
                         {errors.estimated_installation_date && <p className="mt-2 text-xs text-red-400">{errors.estimated_installation_date}</p>}
@@ -2937,7 +3004,7 @@ function SiteInspection() {
                         <div>Height</div>
                         <div>Unit</div>
                         <div>Qty</div>
-                        <div>Price/ Sqft</div>
+                        <div>Rate / Unit</div>
                         <div>Total</div>
                       </div>
 
@@ -3010,9 +3077,17 @@ function SiteInspection() {
                               onChange={(e) => handleItemFieldChange(item.id, "height", e.target.value)}
                               className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
                             />
-                            <div className={`flex items-center justify-center rounded-lg border px-2 py-2 text-sm font-medium ${darkMode ? "border-slate-600 bg-[#0d2033] text-slate-200" : "border-slate-200 bg-slate-100 text-slate-700"}`}>
-                              {item.unit || "sqft"}
-                            </div>
+                            <select
+                              aria-label={`Measurement unit for product ${index + 1}`}
+                              value={item.measurement_unit || item.measurementUnit || "in"}
+                              onChange={(event) => handleItemFieldChange(item.id, "measurement_unit", event.target.value)}
+                              className={fieldClass}
+                            >
+                              <option value="in">in</option>
+                              <option value="ft">ft</option>
+                              <option value="cm">cm</option>
+                              <option value="m">m</option>
+                            </select>
                             <input
                               type="number"
                               min="1"
@@ -3021,7 +3096,7 @@ function SiteInspection() {
                               className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
                             />
                             <div className={`flex items-center justify-center rounded-lg border px-2 py-2 text-sm font-bold ${darkMode ? "border-slate-600 bg-[#0d2033] text-slate-100" : "border-slate-200 bg-slate-100 text-slate-800"}`}>
-                              {formatCurrency(Number(item.unit_price) || 0)}
+                              {formatRateLabel(item)}
                             </div>
                             <div className="flex items-center justify-between gap-2">
                               <span className={`text-sm font-bold ${darkMode ? "text-slate-100" : "text-slate-800"}`}>{formatCurrency(rowSubtotal)}</span>
@@ -3108,10 +3183,15 @@ function SiteInspection() {
                                 <span className={labelClasses}>Height</span>
                                 <input type="number" min="0" inputMode="decimal" aria-label={`Height for measurement ${index + 1}`} value={getDimensionInputValue(item.height)} onFocus={() => clearDefaultDimensionZero(item.id, "height", item.height, handleItemFieldChange)} onChange={(event) => handleItemFieldChange(item.id, "height", event.target.value)} className={inputClasses} />
                               </label>
-                              <div className="min-w-0">
-                                <span className={labelClasses}>Area Unit</span>
-                                <div className={`flex min-h-10 items-center rounded-lg border px-3 py-2.5 text-sm font-medium ${darkMode ? "border-slate-600 bg-[#0d2033] text-slate-200" : "border-slate-200 bg-white text-slate-700"}`}>{item.unit || "sqft"}</div>
-                              </div>
+                              <label className="min-w-0">
+                                <span className={labelClasses}>Measurement Unit</span>
+                                <select aria-label={`Measurement unit for measurement ${index + 1}`} value={item.measurement_unit || item.measurementUnit || "in"} onChange={(event) => handleItemFieldChange(item.id, "measurement_unit", event.target.value)} className={inputClasses}>
+                                  <option value="in">in</option>
+                                  <option value="ft">ft</option>
+                                  <option value="cm">cm</option>
+                                  <option value="m">m</option>
+                                </select>
+                              </label>
                               <label className="min-w-0">
                                 <span className={labelClasses}>Quantity</span>
                                 <input type="number" min="1" inputMode="numeric" aria-label={`Quantity for measurement ${index + 1}`} value={item.qty || 1} onChange={(event) => handleItemFieldChange(item.id, "qty", event.target.value)} className={inputClasses} />
@@ -3119,8 +3199,8 @@ function SiteInspection() {
                             </div>
                             <div className={`mt-3 grid grid-cols-2 gap-3 border-t pt-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                               <div className="min-w-0">
-                                <span className={labelClasses}>Price / Sqft</span>
-                                <p className={`truncate text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{formatCurrency(Number(item.unit_price) || 0)}</p>
+                                <span className={labelClasses}>Rate / Unit</span>
+                                <p className={`truncate text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{formatRateLabel(item)}</p>
                               </div>
                               <div className="min-w-0 text-right">
                                 <span className={labelClasses}>Row Total</span>
@@ -3146,19 +3226,19 @@ function SiteInspection() {
                     <h3 className={modalSectionTitleClass}>Payment Information</h3>
                     <div className={`mb-5 rounded-xl border px-4 py-3 text-sm font-medium ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
                       <span className="mr-2 text-base">💡</span>
-                      Business Policy: {isFullPaymentPlan(newInspection.payment_terms) ? "Full payment is required before project commences." : `A downpayment of ${formatCurrency(resolveRequiredPaymentAmount(newInspection.payment_terms, Number(newInspection.manual_override) || computeTotals().totalEstimate, newInspection.required_downpayment_amount))} is required before project commences.`}
+                      Business Policy: {isFullPaymentPlan(newInspection.payment_terms) ? "Full payment is required before project commences." : `Downpayment to be paid: ${formatCurrency(resolveRequiredPaymentAmount(newInspection.payment_terms, Number(newInspection.manual_override) || computeTotals().totalEstimate, newInspection.required_downpayment_amount))}.`}
                     </div>
 
                     <div className="grid gap-5 md:grid-cols-2">
                       <div>
-                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Computed Total</label>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Estimated Cost</label>
                         <div className={`rounded-xl border px-3 py-3 text-xl font-black ${darkMode ? "border-slate-600 bg-[#122d42] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
                           {formatCurrency(computeTotals().totalEstimate)}
                         </div>
                       </div>
 
                       <div>
-                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Manual Override (optional)</label>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Manual Price Override (optional)</label>
                         <input
                           type="number"
                           min="0"
@@ -3172,13 +3252,13 @@ function SiteInspection() {
 
                     <div className={`mt-5 rounded-xl border border-dashed px-4 py-4 ${darkMode ? "border-slate-600 bg-[#102838] text-slate-200" : "border-slate-200 bg-slate-50 text-slate-700"}`}>
                       <div className="flex items-center justify-between gap-4 text-[14px] font-bold">
-                        <span>Final Estimated Total</span>
+                        <span>Final Project Cost</span>
                         <span className={`text-[18px] font-black ${darkMode ? "text-white" : "text-slate-900"}`}>
                           {formatCurrency(Number(newInspection.manual_override) || computeTotals().totalEstimate)}
                         </span>
                       </div>
                       <div className={`mt-3 flex items-center justify-between gap-4 border-t pt-3 text-[14px] font-bold ${darkMode ? "border-slate-700 text-red-400" : "border-slate-200 text-red-600"}`}>
-                        <label htmlFor="required-downpayment-amount" className="shrink-0">Required Downpayment</label>
+                        <label htmlFor="required-downpayment-amount" className="shrink-0">Downpayment to be Paid</label>
                         <input
                           id="required-downpayment-amount"
                           type="number"
@@ -3188,7 +3268,7 @@ function SiteInspection() {
                           inputMode="decimal"
                           value={resolveRequiredPaymentAmount(newInspection.payment_terms, Number(newInspection.manual_override) || computeTotals().totalEstimate, newInspection.required_downpayment_amount)}
                           onChange={(event) => handleInspectionFieldChange("required_downpayment_amount", event.target.value)}
-                          disabled={isFullPaymentPlan(newInspection.payment_terms)}
+                          disabled={isFullPaymentPlan(newInspection.payment_terms) || newInspection.payment_terms === "50%_down_payment"}
                           className={`w-full max-w-[220px] rounded-lg border px-3 py-2 text-right text-base font-black outline-none focus:border-red-500 disabled:opacity-70 ${darkMode ? "border-slate-600 bg-[#122d42] text-red-300" : "border-slate-200 bg-white text-red-600"}`}
                         />
                       </div>
@@ -3298,8 +3378,14 @@ function SiteInspection() {
             const installDateValue = getEstimatedInstallationDate(viewInspection);
             const installDate = installDateValue ? formatDateToMMDDYYYY(installDateValue) : "—";
             const orderReference = viewInspection.order_number || viewInspection.tracking || viewInspection.contract_number || `SI-ORD-${String(orderId || "NEW").slice(-10).toUpperCase()}`;
+            const contractExists = hasExistingContract(viewInspection);
             const readinessIssues = [];
-            if (!viewInspection.inspection_date) readinessIssues.push("Inspection Date");
+            if (!contractExists && !viewInspection.inspection_date) readinessIssues.push("Inspection Date");
+            if (!contractExists && !hasValidEstimatedInstallationDate(viewInspection)) readinessIssues.push("Estimated Installation Date");
+            const generationDisabled = !contractExists && !hasValidEstimatedInstallationDate(viewInspection);
+            const contractButtonTitle = generationDisabled
+              ? "Set the Est. Install Date first before generating the contract."
+              : contractExists ? "View existing contract" : "Generate contract";
             const inspectionItems = Array.isArray(viewInspection.items) ? viewInspection.items : [];
             const estimatedTotal = getInspectionDisplayTotal(
               viewInspection,
@@ -3360,7 +3446,7 @@ function SiteInspection() {
                 : getWarrantyPeriodDays(itemWarrantyPeriod) || 90;
               const warrantyStartDate = isNoItemWarranty
                 ? null
-                : item.warranty_start_date || viewInspection.warranty_start_date || getEstimatedInstallationDate(viewInspection);
+                : item.warranty_start_date || viewInspection.warranty_start_date || null;
               const warrantyExpiryDate = isNoItemWarranty
                 ? null
                 : item.warranty_expiry_date || calculateWarrantyExpiry(warrantyStartDate, itemWarrantyPeriod, item.custom_warranty_days ?? viewInspection.custom_warranty_days);
@@ -3377,8 +3463,12 @@ function SiteInspection() {
                   ? explicitLineTotal
                   : qty * unitPrice,
                 warrantyPeriod: isNoItemWarranty ? "No Warranty" : `${itemWarrantyDays} days`,
-                warrantyStartDate: warrantyStartDate ? formatDateToMMDDYYYY(warrantyStartDate) || "TBD" : "TBD",
-                warrantyExpiryDate: warrantyExpiryDate ? formatDateToMMDDYYYY(warrantyExpiryDate) || "TBD" : "TBD",
+                warrantyStartDate: isNoItemWarranty
+                  ? "—"
+                  : warrantyStartDate ? formatDateToMMDDYYYY(warrantyStartDate) || "Pending installation" : "Pending installation",
+                warrantyExpiryDate: isNoItemWarranty
+                  ? "—"
+                  : warrantyExpiryDate ? formatDateToMMDDYYYY(warrantyExpiryDate) || "Pending installation" : "Pending installation",
               };
             });
             const measurementLabelClass = `text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`;
@@ -3398,15 +3488,25 @@ function SiteInspection() {
                     </div>
 
                     <div className="flex w-full items-center gap-2 sm:w-auto sm:gap-3">
-                      <button
-                        type="button"
-                        onClick={() => handleGenerateContract(orderId)}
-                        disabled={!orderId || generatingId === orderId || readinessIssues.length > 0}
-                        className="inline-flex min-h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-600/90 px-3 py-2 text-center text-xs font-bold uppercase tracking-[0.12em] leading-tight text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:px-4"
+                      <span
+                        className="inline-flex min-w-0 flex-1 sm:flex-none"
+                        title={contractButtonTitle}
+                        aria-label={generationDisabled ? contractButtonTitle : undefined}
+                        tabIndex={generationDisabled ? 0 : undefined}
                       >
-                        <span>✓</span>
-                        {generatingId === orderId ? "Generating..." : "Generate Contract"}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => contractExists
+                            ? openContractButtonHandler(viewInspection)
+                            : handleGenerateContract(orderId)}
+                          disabled={!orderId || generatingId === orderId || (!contractExists && readinessIssues.length > 0)}
+                          title={contractButtonTitle}
+                          className="inline-flex min-h-10 min-w-0 w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-600/90 px-3 py-2 text-center text-xs font-bold uppercase tracking-[0.12em] leading-tight text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto sm:px-4"
+                        >
+                          <span>✓</span>
+                          {generatingId === orderId ? "Loading..." : contractExists ? "View Contract" : "Generate Contract"}
+                        </button>
+                      </span>
 
                       <button
                         type="button"
@@ -3586,14 +3686,14 @@ function SiteInspection() {
 
                       <div className="space-y-3">
                         <div className="flex items-center justify-between text-sm font-semibold">
-                          <span className={darkMode ? "text-slate-200" : "text-slate-700"}>Estimated Total</span>
+                          <span className={darkMode ? "text-slate-200" : "text-slate-700"}>Final Project Cost</span>
                           <span className={darkMode ? "text-slate-100" : "text-slate-900"}>{formatCurrency(estimatedTotal)}</span>
                         </div>
 
                         <div className="relative h-10 overflow-hidden rounded-lg border border-rose-200 bg-rose-100">
                           <div className="absolute inset-y-0 left-0 w-1/2 bg-rose-200" />
                           <div className="relative flex h-full items-center justify-between px-3 text-sm font-semibold text-rose-700">
-                            <span>{isFullPaymentMethod ? "Full Payment Required" : "Required Downpayment"}</span>
+                            <span>{isFullPaymentMethod ? "Full Payment Required" : "Downpayment to be Paid"}</span>
                             <span>{formatCurrency(downPayment)}</span>
                           </div>
                         </div>
@@ -3700,11 +3800,9 @@ function SiteInspection() {
                         <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Site Address</label>
                         <input
                           type="text"
-                          className={editInspection.isOnlineCustomer ? lockedFieldClass : fieldClass}
+                          className={fieldClass}
                           value={editInspection.siteAddress || ""}
                           onChange={(e) => handleEditChange("siteAddress", e.target.value)}
-                          readOnly={Boolean(editInspection.isOnlineCustomer)}
-                          aria-readonly={Boolean(editInspection.isOnlineCustomer)}
                         />
                       </div>
                     </div>
@@ -3717,18 +3815,24 @@ function SiteInspection() {
                           className={fieldClass}
                           value={editInspection.inspection_date || ""}
                           min={today}
-                          onChange={(e) => handleEditChange("inspection_date", e.target.value)}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            handleEditChange("inspection_date", value);
+                            if (getInstallationDateError(value, editInspection.estimated_installation_date)) {
+                              handleEditChange("estimated_installation_date", "");
+                            }
+                          }}
                         />
                         {errors.inspection_date && <p className="mt-2 text-xs text-red-400">{errors.inspection_date}</p>}
                       </div>
 
                       <div>
-                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Est. Installation Date <span className="text-red-400">*</span></label>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Est. Installation Date</label>
                         <input
                           type="date"
                           className={fieldClass}
                           value={editInspection.estimated_installation_date || ""}
-                          min={today}
+                          min={getMinimumInstallationDate(editInspection.inspection_date)}
                           onChange={(e) => handleEditChange("estimated_installation_date", e.target.value)}
                         />
                         {errors.estimated_installation_date && <p className="mt-2 text-xs text-red-400">{errors.estimated_installation_date}</p>}
@@ -3897,7 +4001,7 @@ function SiteInspection() {
                         <div>Height</div>
                         <div>Unit</div>
                         <div>Qty</div>
-                        <div>Price / Sqft</div>
+                        <div>Rate / Unit</div>
                         <div>Total</div>
                       </div>
 
@@ -3964,9 +4068,17 @@ function SiteInspection() {
                               className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100 outline-none focus:border-red-500" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900 outline-none focus:border-red-500"}
                             />
 
-                            <div className={`flex items-center justify-center rounded-lg border px-2 py-2 text-sm font-medium ${darkMode ? "border-slate-600 bg-[#0d2033] text-slate-200" : "border-slate-200 bg-slate-100 text-slate-700"}`}>
-                              {item.unit || "sqft"}
-                            </div>
+                            <select
+                              aria-label={`Measurement unit for ${item.name || "item"}`}
+                              value={item.measurement_unit || item.measurementUnit || "in"}
+                              onChange={(event) => handleEditItemFieldChange(item.id, "measurement_unit", event.target.value)}
+                              className={fieldClass}
+                            >
+                              <option value="in">in</option>
+                              <option value="ft">ft</option>
+                              <option value="cm">cm</option>
+                              <option value="m">m</option>
+                            </select>
 
                             <input
                               type="number"
@@ -3977,7 +4089,7 @@ function SiteInspection() {
                             />
 
                             <div className={`flex items-center justify-center rounded-lg border px-2 py-2 text-sm font-bold ${darkMode ? "border-slate-600 bg-[#0d2033] text-slate-100" : "border-slate-200 bg-slate-100 text-slate-800"}`}>
-                              {formatCurrency(Number(item.unit_price) || 0)}
+                              {formatRateLabel(item)}
                             </div>
 
                             <div className="flex items-center justify-between gap-2">
@@ -4060,10 +4172,15 @@ function SiteInspection() {
                                 <span className={labelClasses}>Height</span>
                                 <input type="number" min="0" inputMode="decimal" aria-label={`Height for measurement ${index + 1}`} value={getDimensionInputValue(item.height)} onFocus={() => clearDefaultDimensionZero(item.id, "height", item.height, handleEditItemFieldChange)} onChange={(event) => handleEditItemFieldChange(item.id, "height", event.target.value)} className={inputClasses} />
                               </label>
-                              <div className="min-w-0">
-                                <span className={labelClasses}>Area Unit</span>
-                                <div className={`flex min-h-10 items-center rounded-lg border px-3 py-2.5 text-sm font-medium ${darkMode ? "border-slate-600 bg-[#0d2033] text-slate-200" : "border-slate-200 bg-white text-slate-700"}`}>{item.unit || "sqft"}</div>
-                              </div>
+                              <label className="min-w-0">
+                                <span className={labelClasses}>Measurement Unit</span>
+                                <select aria-label={`Measurement unit for ${item.name || `measurement ${index + 1}`}`} value={item.measurement_unit || item.measurementUnit || "in"} onChange={(event) => handleEditItemFieldChange(item.id, "measurement_unit", event.target.value)} className={inputClasses}>
+                                  <option value="in">in</option>
+                                  <option value="ft">ft</option>
+                                  <option value="cm">cm</option>
+                                  <option value="m">m</option>
+                                </select>
+                              </label>
                               <label className="min-w-0">
                                 <span className={labelClasses}>Quantity</span>
                                 <input type="number" min="1" inputMode="numeric" aria-label={`Quantity for measurement ${index + 1}`} value={item.qty || item.quantity || 1} onChange={(event) => handleEditItemFieldChange(item.id, "qty", event.target.value)} className={inputClasses} />
@@ -4071,8 +4188,8 @@ function SiteInspection() {
                             </div>
                             <div className={`mt-3 grid grid-cols-2 gap-3 border-t pt-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                               <div className="min-w-0">
-                                <span className={labelClasses}>Price / Sqft</span>
-                                <p className={`truncate text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{formatCurrency(Number(item.unit_price) || 0)}</p>
+                                <span className={labelClasses}>Rate / Unit</span>
+                                <p className={`truncate text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{formatRateLabel(item)}</p>
                               </div>
                               <div className="min-w-0 text-right">
                                 <span className={labelClasses}>Row Total</span>
@@ -4101,7 +4218,7 @@ function SiteInspection() {
 
                     <div className={`mb-5 rounded-xl border px-4 py-3 text-sm font-medium ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-100" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
                       <span className="mr-2 text-base">💡</span>
-                      Business Policy: {isFullPaymentPlan(editInspection.payment_terms || "") ? "Full payment is required before project commences." : `A downpayment of ${formatCurrency(resolveRequiredPaymentAmount(editInspection.payment_terms, Number(editInspection.manual_override) || computeEditTotals().totalEstimate, editInspection.required_downpayment_amount))} is required before project commences.`}
+                      Business Policy: {isFullPaymentPlan(editInspection.payment_terms || "") ? "Full payment is required before project commences." : `Downpayment to be paid: ${formatCurrency(resolveRequiredPaymentAmount(editInspection.payment_terms, Number(editInspection.manual_override) || computeEditTotals().totalEstimate, editInspection.required_downpayment_amount))}.`}
                     </div>
 
                     {(() => {
@@ -4193,14 +4310,14 @@ function SiteInspection() {
 
                     <div className="grid gap-5 md:grid-cols-2">
                       <div>
-                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Computed Total</label>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Estimated Cost</label>
                         <div className={`rounded-xl border px-3 py-3 text-xl font-black ${darkMode ? "border-slate-600 bg-[#122d42] text-white" : "border-slate-200 bg-white text-slate-900"}`}>
                           {formatCurrency(computeEditTotals().totalEstimate)}
                         </div>
                       </div>
 
                       <div>
-                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Manual Override (optional)</label>
+                        <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Manual Price Override (optional)</label>
                         <input
                           type="number"
                           min="0"
@@ -4214,13 +4331,13 @@ function SiteInspection() {
 
                     <div className={`mt-5 rounded-xl border border-dashed px-4 py-4 ${darkMode ? "border-slate-600 bg-[#102838] text-slate-200" : "border-slate-200 bg-slate-50 text-slate-700"}`}>
                       <div className="flex items-center justify-between gap-4 text-[14px] font-bold">
-                        <span>Final Estimated Total</span>
+                        <span>Final Project Cost</span>
                         <span className={`text-[18px] font-black ${darkMode ? "text-white" : "text-slate-900"}`}>
                           {formatCurrency(Number(editInspection.manual_override) || computeEditTotals().totalEstimate)}
                         </span>
                       </div>
                       <div className={`mt-3 flex items-center justify-between gap-4 border-t pt-3 text-[14px] font-bold ${darkMode ? "border-slate-700 text-red-400" : "border-slate-200 text-red-600"}`}>
-                        <label htmlFor="edit-required-downpayment-amount" className="shrink-0">Required Downpayment</label>
+                        <label htmlFor="edit-required-downpayment-amount" className="shrink-0">Downpayment to be Paid</label>
                         <input
                           id="edit-required-downpayment-amount"
                           type="number"
@@ -4230,7 +4347,7 @@ function SiteInspection() {
                           inputMode="decimal"
                           value={resolveRequiredPaymentAmount(editInspection.payment_terms, Number(editInspection.manual_override) || computeEditTotals().totalEstimate, editInspection.required_downpayment_amount)}
                           onChange={(event) => handleEditChange("required_downpayment_amount", event.target.value)}
-                          disabled={isFullPaymentPlan(editInspection.payment_terms || "")}
+                          disabled={isFullPaymentPlan(editInspection.payment_terms || "") || editInspection.payment_terms === "50%_down_payment"}
                           className={`w-full max-w-[220px] rounded-lg border px-3 py-2 text-right text-base font-black outline-none focus:border-red-500 disabled:opacity-70 ${darkMode ? "border-slate-600 bg-[#122d42] text-red-300" : "border-slate-200 bg-white text-red-600"}`}
                         />
                       </div>
@@ -4333,6 +4450,8 @@ function SiteInspection() {
           inspection={contractInspection}
           contractData={contractData}
           onDownload={handleDownloadContract}
+          onPrint={handlePrintContract}
+          onRegenerate={handleRegenerateContract}
           onSendToCustomer={contractInspection?.order_type === "walk_in_customer" ? undefined : handleSendToCustomer}
           isSendingToCustomer={sendingCustomerEmail}
           darkMode={darkMode}

@@ -212,6 +212,7 @@ describe("inspection measurement calculations", () => {
   it("recalculates row area when dimensions or quantity change", () => {
     expect(calculateMeasurementArea(48, 24, 1)).toBe(8);
     expect(calculateMeasurementArea(72, 36, 2)).toBe(36);
+    expect(calculateMeasurementArea(120, 150, 2, "cm")).toBe(38.75);
   });
 
   it("uses quantity-inclusive area once for square-foot and fallback pricing", () => {
@@ -228,6 +229,95 @@ describe("inspection measurement calculations", () => {
       price_per_sqft: 100,
     })).toBe(3600);
     expect(calculateMeasurementSubtotal(item)).toBe(3600);
+  });
+
+  it("applies fixed base price per unit", () => {
+    const item = {
+      width: 48,
+      height: 36,
+      quantity: 2,
+      qty: 2,
+      unit: "piece",
+      measurement_unit: "in",
+      pricing_method: "fixed",
+      base_price: 50000,
+      customization_fee: 2500,
+      customization: true,
+      customized: true,
+    };
+
+    expect(calculateMeasurementSubtotal(item, item)).toBe(100000);
+  });
+
+  it("adds the configured customization fee to square-foot pricing", () => {
+    const product = {
+      pricing_method: "sqft",
+      price_per_sqft: 100,
+      customization: true,
+      customization_fee: 2500,
+    };
+    const item = {
+      width: 48,
+      height: 72,
+      quantity: 2,
+      measurement_unit: "in",
+      customized: true,
+    };
+
+    expect(calculateMeasurementSubtotal(item, product)).toBe(7300);
+  });
+
+  it("recalculates a product estimate override when inspection dimensions differ from standard size", () => {
+    const product = {
+      pricing_method: "sqft",
+      width: 48,
+      height: 48,
+      measurement_unit: "in",
+      price_per_sqft: 1000,
+      estimated_price_override: 7500,
+    };
+
+    expect(calculateMeasurementSubtotal({
+      width: 324,
+      height: 324,
+      quantity: 1,
+      measurement_unit: "in",
+    }, product)).toBe(729000);
+  });
+
+  it("keeps the product estimate override when inspection matches standard size", () => {
+    const product = {
+      pricing_method: "sqft",
+      width: 48,
+      height: 48,
+      measurement_unit: "in",
+      price_per_sqft: 1000,
+      estimated_price_override: 7500,
+    };
+
+    expect(calculateMeasurementSubtotal({
+      width: 48,
+      height: 48,
+      quantity: 1,
+      measurement_unit: "in",
+    }, product)).toBe(7500);
+  });
+
+  it("scales a fixed product base price when batch inspection dimensions change", () => {
+    const product = {
+      pricing_method: "fixed",
+      width: 48,
+      height: 48,
+      measurement_unit: "in",
+      base_price: 12000,
+    };
+
+    expect(calculateMeasurementSubtotal({
+      width: 999,
+      height: 999,
+      quantity: 1,
+      measurement_unit: "in",
+    }, product)).toBe(5197921.88);
   });
 });
 

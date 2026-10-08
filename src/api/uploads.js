@@ -23,15 +23,27 @@ export const uploadFiles = async (files = [], onProgress, options = {}) => {
     throw new Error("Payment proof must be 4 MB or smaller.");
   }
 
-  if (["product-images", "payment-proofs"].includes(options.purpose)) {
+  if (["product-images", "review-photos", "payment-proofs", "progress-media"].includes(options.purpose)) {
     const fieldNames = options.fieldNames || [];
     const formData = new FormData();
     Array.from(files).forEach((file, index) => {
       const fieldName = options.purpose === "payment-proofs" ? "file" : fieldNames[index] || "files";
       formData.append(fieldName, file, file.name);
     });
-    const uploadPath = options.purpose === "payment-proofs" ? "/uploads/payment-proofs" : "/uploads/product-images";
-    const uploadLabel = options.purpose === "payment-proofs" ? "payment proof" : "product photos";
+    const uploadPaths = {
+      "payment-proofs": "/uploads/payment-proofs",
+      "product-images": "/uploads/product-images",
+      "review-photos": "/uploads/review-photos",
+      "progress-media": "/uploads/progress-media",
+    };
+    const uploadLabels = {
+      "payment-proofs": "payment proof",
+      "product-images": "product photos",
+      "review-photos": "review photos",
+      "progress-media": "progress proof files",
+    };
+    const uploadPath = uploadPaths[options.purpose];
+    const uploadLabel = uploadLabels[options.purpose];
 
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();

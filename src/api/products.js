@@ -6,10 +6,10 @@ export const getProducts = (params = {}) => {
   if (params.category) query.append("category", params.category);
   if (params.adminOnly) query.append("adminOnly", "true");
   if (params.featured) query.append("featured", "true");
-  return apiFetch(`/products?${query.toString()}`);
+  return apiFetch(`/products?${query.toString()}`, { cache: "no-store" });
 };
 
-export const getProduct = (id) => apiFetch(`/products/${id}`);
+export const getProduct = (id) => apiFetch(`/products/${id}`, { cache: "no-store" });
 
 export const createProduct = (payload) => apiFetch("/products", {
   method: "POST",

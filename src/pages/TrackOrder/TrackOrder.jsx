@@ -4,6 +4,7 @@ import logo from "../../assets/images/ACGCLOGO1.png";
 import { ChevronDown, ChevronUp, CircleAlert, CircleCheck, CircleX, LoaderCircle, Truck } from "lucide-react";
 import OrderProgressTimeline from "@/components/OrderProgressTimeline";
 import { getPaymentSummary } from "@/pages/Transactions/paymentProofUtils";
+import { getFinalProjectCost } from "@/lib/orderPricing";
 import { trackOrder } from "../../api/orders";
 
 function TrackOrder() {
@@ -366,7 +367,7 @@ function TrackOrder() {
                     </div>
                     <div className="text-right">
                       <p className="text-xs text-muted-foreground">Total</p>
-                      <p className="text-[22px] font-medium leading-tight text-brand dark:text-brand-dark-text">{formatCurrency(trackingResult.total_amount || trackingResult.total || trackingResult.amount_paid || 0)}</p>
+                      <p className="text-[22px] font-medium leading-tight text-brand dark:text-brand-dark-text">{formatCurrency(getFinalProjectCost(trackingResult))}</p>
                     </div>
                   </div>
                 </aside>

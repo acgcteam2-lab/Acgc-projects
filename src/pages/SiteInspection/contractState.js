@@ -1,3 +1,5 @@
+import { getFinalProjectCost, getRequiredDownpayment } from "@/lib/orderPricing";
+
 export const getCustomerNameFromOrder = (order = {}) => {
   if (order.customer_name) return order.customer_name;
   const firstName = order.customer?.first_name || "";
@@ -6,23 +8,36 @@ export const getCustomerNameFromOrder = (order = {}) => {
   return fullName || "Customer";
 };
 
+export const hasExistingContract = (order = {}) => {
+  const contractStatus = String(order.contract_status || order.contractStatus || "").trim().toLowerCase();
+  const orderStatus = String(order.status || "").trim().toLowerCase();
+  const snapshot = order.contractSnapshot;
+
+  return Boolean(
+    order.contractGenerated ||
+    order.contractId ||
+    order.contract_id ||
+    order.contractVersion ||
+    order.currentContractVersion ||
+    order.contractGeneratedAt ||
+    order.contractSentAt ||
+    order.contract_sent_at ||
+    order.acceptedByCustomer ||
+    order.signed_contract_url ||
+    ["sent", "accepted"].includes(contractStatus) ||
+    ["contract_sent", "contract_accepted"].includes(orderStatus) ||
+    (snapshot && Object.keys(snapshot).length > 0)
+  );
+};
+
 export const buildContractSnapshot = (order = {}) => {
   const items = Array.isArray(order.items) ? order.items : [];
   const firstItem = items[0] || {};
   const width = Number(firstItem.width ?? firstItem.dimensions?.width ?? 0) || 0;
   const height = Number(firstItem.height ?? firstItem.dimensions?.height ?? 0) || 0;
   const quantity = Number(firstItem.quantity ?? firstItem.qty ?? 1) || 1;
-  const projectCost = Number(order.contract_amount || order.total_amount || 0);
-  const configuredDownpayment = order.required_downpayment_amount ?? order.downpayment_amount;
-  const hasConfiguredDownpayment = Number(configuredDownpayment) > 0;
-  const defaultDownpayment = order.payment_terms === "full_payment" ? projectCost : projectCost * 0.5;
-  const downpayment = Math.min(
-    projectCost,
-    Math.max(
-      Math.round((hasConfiguredDownpayment ? Number(configuredDownpayment) : defaultDownpayment) * 100) / 100,
-      0,
-    ),
-  );
+  const projectCost = getFinalProjectCost(order);
+  const downpayment = getRequiredDownpayment(order);
   const inspectionDate = order.inspection_date
     ? new Date(order.inspection_date).toISOString().slice(0, 10)
     : "";

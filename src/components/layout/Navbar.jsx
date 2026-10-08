@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Bell, Moon, Sun, ClipboardCheck, CheckCircle2, XCircle, ShoppingCart, CheckCheck, CreditCard, Send, LogOut } from "lucide-react";
 import { getAdminOrders } from "@/api/orders";
 import { formatDateTimeToMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
 import { getAdminNotificationId, getAdminReadNotificationIds, markAdminNotificationRead, markAdminNotificationsRead, sortAdminNotificationsNewestFirst } from "@/lib/notificationState";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { getAdminSiteInspectionNotificationMessage } from "@/pages/CustomerDashboard/orderStatusUtils";
 
 function Navbar() {
   const { darkMode, toggleDarkMode } = useAdminTheme();
@@ -104,6 +105,7 @@ function NotificationMenu() {
   const [notificationFilter, setNotificationFilter] = useState("all");
   const { darkMode } = useAdminTheme();
   const { user } = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -134,6 +136,7 @@ function NotificationMenu() {
           ...(newOrders.orders || []).map((order) => ({
             id: getAdminNotificationId("new-order", order),
             recordId: String(order._id || order.id || order.tracking),
+            tracking: order.tracking || order.order_number || order.orderNumber || "Not assigned",
             title: "New order request",
             message: `${order.tracking || "An order"} is waiting for approval.`,
             icon: ShoppingCart,
@@ -143,23 +146,27 @@ function NotificationMenu() {
             date: order.createdAt,
           })),
           ...(inspections.orders || [])
-            .filter((order) => !["sent", "declined"].includes(String(order.contract_status || "").toLowerCase()) && order.inspection_status !== "completed")
-            .map((order) => ({
-            id: getAdminNotificationId("inspection", order),
-            recordId: String(order._id || order.id || order.tracking),
-            title: order.inspection_date && order.inspection_status === "scheduled" ? "Inspection scheduled" : "Inspection needs scheduling",
-            message: order.inspection_date && order.inspection_status === "scheduled"
-              ? `Site inspection for ${order.tracking || "a project"} is scheduled for ${new Date(order.inspection_date).toLocaleDateString()}.`
-              : `${order.tracking || "A project"} needs a site inspection date.`,
-            icon: ClipboardCheck,
-            color: "text-amber-600",
-            category: "inspections",
-            path: "/site-inspection",
-            date: order.updatedAt || order.createdAt,
-          })),
+            .filter((order) => !["sent", "declined"].includes(String(order.contract_status || "").toLowerCase()))
+            .map((order) => {
+              const customerName = `${order.customer?.first_name || ""} ${order.customer?.last_name || ""}`.trim() || order.customer_name || "Customer";
+              const inspectionMessage = getAdminSiteInspectionNotificationMessage(order, customerName);
+              return {
+                id: getAdminNotificationId("inspection", order),
+                recordId: String(order._id || order.id || order.tracking),
+                tracking: order.tracking || order.order_number || order.orderNumber || "Not assigned",
+                title: order.inspection_date || order.inspection_status === "scheduled" ? "Inspection scheduled" : "Inspection needs scheduling",
+                message: inspectionMessage,
+                icon: ClipboardCheck,
+                color: "text-amber-600",
+                category: "inspections",
+                path: "/site-inspection",
+                date: order.updatedAt || order.createdAt,
+              };
+            }),
           ...(accepted.orders || []).map((order) => ({
             id: getAdminNotificationId("accepted", order),
             recordId: String(order._id || order.id || order.tracking),
+            tracking: order.tracking || order.order_number || order.orderNumber || "Not assigned",
             title: "Contract accepted",
             message: `Customer accepted ${order.tracking || "a contract"}.`,
             icon: CheckCircle2,
@@ -171,6 +178,7 @@ function NotificationMenu() {
           ...(declined.orders || []).map((order) => ({
             id: getAdminNotificationId("declined", order),
             recordId: String(order._id || order.id || order.tracking),
+            tracking: order.tracking || order.order_number || order.orderNumber || "Not assigned",
             title: "Contract declined",
             message: `Customer declined ${order.tracking || "a contract"}.`,
             icon: XCircle,
@@ -182,6 +190,7 @@ function NotificationMenu() {
           ...(sentContracts.orders || []).map((order) => ({
             id: getAdminNotificationId("sent", order),
             recordId: String(order._id || order.id || order.tracking),
+            tracking: order.tracking || order.order_number || order.orderNumber || "Not assigned",
             title: "Contract sent",
             message: `Contract for ${order.tracking || "a project"} was sent to the customer.`,
             icon: Send,
@@ -201,6 +210,7 @@ function NotificationMenu() {
             return {
               id: getAdminNotificationId("payment", order),
               recordId: String(order._id || order.id || order.tracking),
+              tracking: order.tracking || order.order_number || order.orderNumber || "Not assigned",
               title: "Customer Reported a Payment",
               message: `${customerName} says they paid ₱${amount} for order ${orderNumber}. Please confirm.`,
               icon: CreditCard,
@@ -287,27 +297,27 @@ function NotificationMenu() {
       </button>
 
       {open && (
-        <div className={`fixed inset-x-3 top-[calc(5.25rem+env(safe-area-inset-top))] z-[70] mt-1 max-h-[calc(100dvh-11rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] w-auto overflow-y-auto overscroll-contain rounded-2xl border shadow-xl lg:absolute lg:inset-x-auto lg:right-0 lg:top-auto lg:z-20 lg:mt-2 lg:max-h-[min(36rem,calc(100vh-6rem))] lg:w-96 lg:overflow-hidden ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200"}`}>
-          <div className={`flex items-center justify-between border-b px-4 py-3 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
+        <div className={`fixed inset-x-3 top-[calc(5.25rem+env(safe-area-inset-top))] z-[70] mt-1 flex max-h-[calc(100dvh-11rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] w-[calc(100%-1.5rem)] max-w-md flex-col overflow-hidden rounded-2xl border shadow-2xl lg:absolute lg:inset-x-auto lg:right-0 lg:top-auto lg:z-20 lg:mt-2 lg:max-h-[min(36rem,calc(100vh-6rem))] lg:w-96 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200"}`}>
+          <div className={`flex shrink-0 items-center justify-between border-b px-3 py-2.5 sm:px-4 sm:py-3 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
             <div>
               <p className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-950"}`}>Admin activity</p>
-              <p className="mt-0.5 text-xs text-slate-400">Actions that need your attention</p>
+              <p className="mt-0.5 text-[11px] text-slate-400 sm:text-xs">Actions that need your attention</p>
             </div>
-            <div className="flex items-center gap-2">
-              {unreadCount > 0 && <span className="rounded-full bg-red-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-red-600">{unreadCount} new</span>}
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              {unreadCount > 0 && <span className="rounded-full bg-red-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-red-600 sm:px-2 sm:py-1 sm:text-[10px]">{unreadCount} new</span>}
               <button
                 type="button"
                 onClick={markAllNotificationsRead}
                 disabled={unreadCount === 0}
-                className={`inline-flex items-center gap-1 text-xs font-semibold transition ${unreadCount === 0 ? "cursor-not-allowed text-slate-400" : darkMode ? "text-red-300 hover:text-white" : "text-red-600 hover:text-red-700"}`}
+                className={`inline-flex items-center gap-1 text-[10px] font-semibold transition sm:text-xs ${unreadCount === 0 ? "cursor-not-allowed text-slate-400" : darkMode ? "text-red-300 hover:text-white" : "text-red-600 hover:text-red-700"}`}
               >
-                <CheckCheck size={14} />
+                <CheckCheck size={12} className="sm:h-[14px] sm:w-[14px]" />
                 Mark all as read
               </button>
             </div>
           </div>
 
-          <div className={`flex flex-wrap gap-1 border-b px-3 py-2 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
+          <div className={`flex shrink-0 flex-wrap gap-1 border-b px-2 py-1.5 sm:px-3 sm:py-2 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
             {adminFilterOptions.map(([filter, label]) => {
               const count = filter === "all"
                 ? notifications.length
@@ -318,7 +328,7 @@ function NotificationMenu() {
                   key={filter}
                   type="button"
                   onClick={() => setNotificationFilter(filter)}
-                  className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
+                  className={`rounded-lg px-2 py-1 text-[10px] font-semibold transition sm:px-2.5 sm:py-1.5 sm:text-xs ${
                     notificationFilter === filter
                       ? darkMode
                         ? "bg-slate-950 text-white"
@@ -334,49 +344,52 @@ function NotificationMenu() {
             })}
           </div>
 
-          {loading ? (
-            <div className={`px-4 py-8 text-center text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Loading admin activity...</div>
-          ) : filteredNotifications.length === 0 ? (
-            <div className={`px-4 py-6 text-center ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
-              <Bell size={22} className="mx-auto mb-2 text-slate-400" />
-              <p>{notificationFilter === "all" ? "No action items right now" : `No ${notificationFilter} notifications`}</p>
-            </div>
-          ) : (
-            <div className="divide-y overflow-y-auto max-h-none lg:max-h-96">
-              {filteredNotifications.map((n) => (
-                <button
-                  key={n.id}
-                  onClick={() => openNotification(n)}
-                  className={`w-full border-l-2 px-4 py-3 text-left transition ${
-                    n.read
-                      ? darkMode ? "border-transparent bg-slate-800/60 hover:bg-slate-800" : "border-transparent bg-white hover:bg-slate-50"
-                      : darkMode ? "border-sky-400/70 bg-slate-800/90 hover:bg-slate-800" : "border-sky-400/70 bg-sky-50/40 hover:bg-sky-50/70"
-                  }`}
-                >
-                  <div className="flex gap-3">
-                    <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-slate-100">
-                      <n.icon size={17} className={n.color} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className={`truncate text-sm ${n.read ? "font-medium" : "font-bold"} ${darkMode ? n.read ? "text-slate-300" : "text-white" : n.read ? "text-slate-600" : "text-slate-950"}`}>{n.title}</p>
-                        {!n.read && <span className="shrink-0 rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-sky-700">New</span>}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            {loading ? (
+              <div className={`px-3 py-6 text-center text-sm sm:px-4 sm:py-8 ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Loading admin activity...</div>
+            ) : filteredNotifications.length === 0 ? (
+              <div className={`px-3 py-5 text-center sm:px-4 sm:py-6 ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
+                <Bell size={18} className="mx-auto mb-2 text-slate-400 sm:h-[22px] sm:w-[22px]" />
+                <p>{notificationFilter === "all" ? "No action items right now" : `No ${notificationFilter} notifications`}</p>
+              </div>
+            ) : (
+              <div className="min-h-0 flex-1 divide-y overflow-y-auto overscroll-contain">
+                {filteredNotifications.map((n) => (
+                  <button
+                    key={n.id}
+                    onClick={() => openNotification(n)}
+                    className={`group w-full border-l-2 px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500 sm:px-4 sm:py-3 ${
+                      n.read
+                        ? darkMode ? "border-transparent bg-slate-800/60 hover:bg-slate-800" : "border-transparent bg-white hover:bg-slate-50"
+                        : darkMode ? "border-sky-400/70 bg-slate-800/90 hover:bg-slate-800" : "border-sky-400/70 bg-sky-50/40 hover:bg-sky-50/70"
+                    }`}
+                  >
+                    <div className="flex gap-2.5 sm:gap-3">
+                      <div className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl ring-1 sm:h-9 sm:w-9 ${darkMode ? "bg-slate-700 ring-white/5" : "bg-slate-100 ring-slate-200/70"}`}>
+                        <n.icon size={15} className={n.color} />
                       </div>
-                      <p className={`mt-0.5 text-xs ${darkMode ? n.read ? "text-slate-400" : "text-slate-300" : n.read ? "text-slate-500" : "text-slate-700"}`}>{n.message}</p>
-                      <p className="mt-1 text-xs text-slate-400" title={n.date ? formatDateTimeToMMDDYYYY(n.date) : undefined}>
-                        {formatTimeAgo(n.date)}
-                      </p>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className={`truncate text-xs sm:text-sm ${n.read ? "font-medium" : "font-bold"} ${darkMode ? n.read ? "text-slate-300" : "text-white" : n.read ? "text-slate-600" : "text-slate-950"}`}>{n.title}</p>
+                          {!n.read && <span className="shrink-0 rounded-full bg-sky-100 px-1.5 py-0.5 text-[8px] font-bold uppercase text-sky-700 sm:text-[9px]">New</span>}
+                        </div>
+                        <p className={`mt-0.5 text-[11px] leading-4 sm:text-xs ${darkMode ? n.read ? "text-slate-400" : "text-slate-300" : n.read ? "text-slate-500" : "text-slate-700"}`}>{n.message}</p>
+                        <p className={`mt-1 text-[10px] font-medium sm:text-[11px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Tracking ID: {n.tracking}</p>
+                        <p className="mt-1 text-[10px] text-slate-400 sm:text-xs" title={n.date ? formatDateTimeToMMDDYYYY(n.date) : undefined}>
+                          {formatTimeAgo(n.date)}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
-            </div>
-          )}
           <button
             type="button"
-            onClick={() => { setOpen(false); navigate("/notifications"); }}
-            className={`w-full border-t px-4 py-3 text-center text-sm font-semibold transition ${darkMode ? "border-slate-700 text-red-300 hover:bg-slate-700" : "border-slate-100 text-red-600 hover:bg-red-50"}`}
+            onClick={() => { setOpen(false); navigate("/notifications", { state: { from: location.pathname } }); }}
+            className={`sticky bottom-0 z-10 w-full shrink-0 border-t px-3 py-2.5 text-center text-sm font-semibold transition-colors sm:px-4 sm:py-3 ${darkMode ? "border-slate-700 bg-slate-800 text-red-300 hover:bg-slate-700" : "border-slate-100 bg-white text-red-600 hover:bg-red-50"}`}
           >
             View all notifications
           </button>

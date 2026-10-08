@@ -10,64 +10,12 @@ import {
 } from "lucide-react";
 import { getAdminOrders, getAdminOrder, updateOrderStatus } from "@/api/orders";
 import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
+import { getFinalProjectCost } from "@/lib/orderPricing";
 import { recordActivity } from "@/lib/activityLog";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
-
-const normalizeAddress = (value) => {
-  if (!value) return "";
-  const cleaned = value
-    .trim()
-    .replace(/\s+/g, " ")
-    .replace(/[,;]+/g, ",")
-    .replace(/\s*[.,]\s*/g, ", ")
-    .replace(/\s*,\s*$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const canonical = (text) =>
-    text
-      .toLowerCase()
-      .replace(/[^a-z0-9 ]+/g, " ")
-      .replace(/\b(city|province|zip|code|street|st|road|rd)\b/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-
-  const parts = cleaned
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  const normalizedParts = [];
-  const seen = [];
-
-  for (const part of parts) {
-    const key = canonical(part);
-    if (!key) {
-      normalizedParts.push(part);
-      continue;
-    }
-    const isDuplicate = seen.some(
-      (existing) => existing === key || existing.includes(key) || key.includes(existing)
-    );
-    if (!isDuplicate) {
-      seen.push(key);
-      normalizedParts.push(part);
-    }
-  }
-
-  return normalizedParts.join(", ");
-};
-
-const getCustomerAddress = (customer) => {
-  if (!customer) return "";
-  return normalizeAddress(
-    [customer.street_address, customer.city, customer.province, customer.zip_code]
-      .filter(Boolean)
-      .join(", ")
-  );
-};
+import TransactionDetailsModal from "../../components/TransactionDetailsModal";
 
 const formatCurrency = (value) => {
   const amount = Number(value);
@@ -86,46 +34,6 @@ const titleCase = (value) => {
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(" ");
-};
-
-const getOrderItemProduct = (item) => {
-  if (!item?.product_id || typeof item.product_id !== "object") return {};
-  return item.product_id;
-};
-
-const getOrderItemName = (item) => {
-  const product = getOrderItemProduct(item);
-  return item?.name || product.name || product.product_name || "Project Item";
-};
-
-const getOrderItemType = (item) => {
-  const product = getOrderItemProduct(item);
-  return titleCase(item?.product_type || item?.category || product.product_type || product.category);
-};
-
-const getOrderItemDimensions = (item) => {
-  const dims = item?.dimensions || {};
-  const width = Number(item?.width ?? dims.width) || 0;
-  const height = Number(item?.height ?? dims.height) || 0;
-  if (!width && !height) return "—";
-  const unit = item?.measurement_unit || item?.measurementUnit || dims.unit || "in";
-  const customized = Boolean(item?.customized ?? dims.customized);
-  const separator = " × ";
-  const value = `${width || "—"}${separator}${height || "—"} ${unit}`;
-  return customized ? `${value} (Customized)` : value;
-};
-
-const getOrderItemUnitRate = (item) => {
-  const product = getOrderItemProduct(item);
-  const unitPrice = Number(item?.unit_price ?? product.unit_price);
-  const unit = item?.unit || product.unit || item?.measurement_unit || item?.measurementUnit || item?.dimensions?.unit || "piece";
-  return `${formatCurrency(unitPrice)} / ${unit.replace(/^per_/, "")}`;
-};
-
-const getOrderItemTotal = (item) => {
-  const estimated = Number(item?.estimated_price) || 0;
-  if (item?.is_estimate && estimated > 0) return estimated;
-  return (Number(item?.quantity) || 1) * (Number(item?.unit_price) || 0);
 };
 
 import Sidebar from "../../components/layout/Sidebar";
@@ -149,28 +57,80 @@ const toProgressProject = (order) => ({
   rawOrder: order,
 });
 
+const parseWarrantyDurationDays = (value) => {
+  const match = String(value ?? "").trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*(days?|months?|years?)?$/);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unit = match[2] || "days";
+  if (unit.startsWith("year")) return Math.round(amount * 365);
+  if (unit.startsWith("month")) return Math.round(amount * 30);
+  return Math.round(amount);
+};
+
+const getCompletedInstallationDate = (order, item) => {
+  const itemStages = Array.isArray(item?.progress_stages) ? item.progress_stages : [];
+  const stages = itemStages.length ? itemStages : Array.isArray(order?.progress_stages) ? order.progress_stages : [];
+  const installationStage = stages.find((stage) => {
+    const key = String(stage?.key || "").toLowerCase();
+    const name = String(stage?.name || "").toLowerCase();
+    const isInstallation = (key.includes("installation") || name.includes("installation"))
+      && !key.includes("schedul")
+      && !name.includes("schedul");
+    const isComplete = stage?.completed === true
+      || ["done", "completed"].includes(String(stage?.status || "").toLowerCase());
+    return isInstallation && isComplete;
+  });
+  const date = installationStage?.date || installationStage?.completedAt || installationStage?.completed_at;
+  if (!date) return null;
+  const parsedDate = new Date(date);
+  return Number.isNaN(parsedDate.getTime()) || parsedDate > new Date() ? null : parsedDate;
+};
+
 const getOrderWarrantyRecords = (order) => {
   const items = Array.isArray(order?.items) ? order.items : [];
-  const itemRecords = items
-    .filter((item) => item.warranty_start_date || item.warranty_expiry_date || item.warranty_status)
-    .map((item, index) => ({
+  const perProduct = order?.warranty_assignment_mode === "per_product";
+  const sourceItems = items.length ? items : [{}];
+
+  return sourceItems.flatMap((item, index) => {
+    const status = String(item?.warranty_status || (perProduct ? "" : order?.warranty_status) || "").toLowerCase();
+    const period = item?.warranty_period || (perProduct ? "" : order?.warranty_period) || "";
+    if (status === "no_warranty" || String(period).trim().toLowerCase() === "no warranty") return [];
+
+    const isPending = status === "pending";
+    const storedStart = isPending ? null : item?.warranty_start_date || (perProduct ? null : order?.warranty_start_date);
+    const storedExpiry = isPending ? null : item?.warranty_expiry_date || (perProduct ? null : order?.warranty_expiry_date);
+    const installationStart = getCompletedInstallationDate(order, item);
+    const startValue = storedStart || installationStart;
+    const start = startValue ? new Date(startValue) : null;
+    const durationDays = parseWarrantyDurationDays(period);
+    const derivedExpiry = start && durationDays
+      ? new Date(start.getTime() + durationDays * 24 * 60 * 60 * 1000)
+      : null;
+    const expiryValue = storedExpiry || derivedExpiry;
+    const expiry = expiryValue ? new Date(expiryValue) : null;
+    const hasDerivedCoverage = Boolean(installationStart && durationDays);
+    const now = new Date();
+    const coverageHasStarted = Boolean(start && start <= now);
+    const coverageHasExpired = Boolean(expiry && expiry <= now);
+    const recordStatus = hasDerivedCoverage && (!status || isPending)
+      ? coverageHasExpired ? "expired" : coverageHasStarted && expiry > now ? "active" : "pending"
+      : status;
+    const hasWarrantyRecord = Boolean(period || status || storedStart || storedExpiry || hasDerivedCoverage);
+
+    if (!hasWarrantyRecord || (start && Number.isNaN(start.getTime())) || (expiry && Number.isNaN(expiry.getTime()))) {
+      return [];
+    }
+
+    return [{
       key: `${order._id || order.id}-warranty-${index}`,
       order,
       item,
-      status: String(item.warranty_status || "").toLowerCase(),
-      start: item.warranty_start_date ? new Date(item.warranty_start_date) : null,
-      expiry: item.warranty_expiry_date ? new Date(item.warranty_expiry_date) : null,
-    }));
-  if (itemRecords.length) return itemRecords;
-  if (!order?.warranty_status && !order?.warranty_expiry_date) return [];
-  return [{
-    key: `${order._id || order.id}-warranty`,
-    order,
-    item: items[0] || {},
-    status: String(order.warranty_status || "").toLowerCase(),
-    start: order.warranty_start_date ? new Date(order.warranty_start_date) : null,
-    expiry: order.warranty_expiry_date ? new Date(order.warranty_expiry_date) : null,
-  }];
+      period,
+      status: recordStatus,
+      start,
+      expiry,
+    }];
+  });
 };
 
 function Dashboard() {
@@ -189,7 +149,6 @@ function Dashboard() {
   const [selectedProject, setSelectedProject] = useState(null);
   const [selectedOrderLoading, setSelectedOrderLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
-  const [actionMessage, setActionMessage] = useState("");
   const [toast, setToast] = useState({
     open: false,
     message: "",
@@ -229,6 +188,14 @@ function Dashboard() {
   };
 
   const navigate = useNavigate();
+  const handleOpenTransactionPage = (orderId) => {
+    navigate("/transactions", {
+      state: {
+        activeTable: "all",
+        notificationHighlight: { recordId: orderId },
+      },
+    });
+  };
 
   const openConfirmModal = (order, action) => {
     setConfirmModal({
@@ -316,21 +283,40 @@ function Dashboard() {
   }, [orders.length]);
 
   useEffect(() => {
-    const fetchOrders = async () => {
-      setOrdersLoading(true);
+    let active = true;
+    let requestInFlight = false;
+    const fetchOrders = async (showLoading = true) => {
+      if (requestInFlight) return;
+      requestInFlight = true;
+      if (showLoading) setOrdersLoading(true);
       try {
         const response = await getAdminOrders({ module: "dashboard" });
-        setOrders(response.orders || []);
+        if (active) setOrders(response.orders || []);
       } catch (error) {
         console.error("Failed to load orders:", error);
-        setOrders([]);
+        if (active) setOrders([]);
       } finally {
-        setOrdersLoading(false);
+        if (active && showLoading) setOrdersLoading(false);
+        requestInFlight = false;
       }
     };
 
     fetchOrders();
     fetchContractNotifications();
+
+    const refreshOrders = () => {
+      if (document.visibilityState === "visible") fetchOrders(false);
+    };
+    const interval = window.setInterval(refreshOrders, 15000);
+    window.addEventListener("focus", refreshOrders);
+    document.addEventListener("visibilitychange", refreshOrders);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshOrders);
+      document.removeEventListener("visibilitychange", refreshOrders);
+    };
   }, []);
 
   async function fetchContractNotifications() {
@@ -365,7 +351,6 @@ function Dashboard() {
 
   const handleApproveOrder = async (order) => {
     setActionLoading(true);
-    setActionMessage("");
 
     try {
       await updateOrderStatus(order._id, { status: "site_inspection" });
@@ -381,16 +366,13 @@ function Dashboard() {
       );
 
       const successMessage = "Order approved and moved to Site Inspection.";
-      setActionMessage(successMessage);
       showToast(successMessage, "success");
       setTimeout(() => {
         setSelectedOrder(null);
-        setActionMessage("");
       }, 2000);
     } catch (error) {
       console.error("Failed to approve order:", error);
       const errorMessage = "Failed to approve order. Please try again.";
-      setActionMessage(errorMessage);
       showToast(errorMessage, "error");
     } finally {
       setActionLoading(false);
@@ -399,7 +381,6 @@ function Dashboard() {
 
   const handleRejectOrder = async (order) => {
     setActionLoading(true);
-    setActionMessage("");
 
     try {
       await updateOrderStatus(order._id, { status: "cancelled" });
@@ -415,16 +396,13 @@ function Dashboard() {
       );
 
       const successMessage = "Order rejected and cancelled.";
-      setActionMessage(successMessage);
       showToast(successMessage, "success");
       setTimeout(() => {
         setSelectedOrder(null);
-        setActionMessage("");
       }, 2000);
     } catch (error) {
       console.error("Failed to reject order:", error);
       const errorMessage = "Failed to reject order. Please try again.";
-      setActionMessage(errorMessage);
       showToast(errorMessage, "error");
     } finally {
       setActionLoading(false);
@@ -457,16 +435,27 @@ function Dashboard() {
     return activeProjectStatuses.has(status) && !isCompleted;
   };
   const activeProjectsCount = orders.filter(isActiveProject).length;
-  const isWarrantyCurrentlyActive = ({ status, start, expiry }) => (
-    status === "active" && (!start || start <= new Date()) && (!expiry || expiry > new Date())
-  );
-  const activeWarranties = orders
-    .flatMap(getOrderWarrantyRecords)
-    .filter(isWarrantyCurrentlyActive)
-    .slice(0, 5);
-  const activeWarrantiesCount = orders
-    .flatMap(getOrderWarrantyRecords)
-    .filter(isWarrantyCurrentlyActive).length;
+  const isWarrantyCurrentlyActive = ({ status, start, expiry }) => {
+    const now = new Date();
+    return (!start || start <= now) && (
+      (status === "active" || (!status && expiry)) && (!expiry || expiry > now)
+    );
+  };
+  const warrantyRecords = orders.flatMap(getOrderWarrantyRecords);
+  const activeWarranties = warrantyRecords.filter(isWarrantyCurrentlyActive);
+  const warrantyGroups = new Map();
+  activeWarranties.forEach((record) => {
+    const orderId = String(record.order._id || record.order.id);
+    const group = warrantyGroups.get(orderId) || {
+      key: `${orderId}-warranty-order`,
+      order: record.order,
+      item: record.item,
+      period: record.period,
+    };
+    warrantyGroups.set(orderId, group);
+  });
+  const warrantiesToDisplay = [...warrantyGroups.values()].slice(0, 5);
+  const activeWarrantiesCount = activeWarranties.length;
   const pendingInspectionCount = orders.filter(
     (order) => String(order.status || "").toLowerCase() === "site_inspection",
   ).length;
@@ -604,7 +593,10 @@ function Dashboard() {
 
                 <button
                   type="button"
-                  onClick={() => navigate("/transactions", { state: { activeTable: "projects" } })}
+                  onClick={() => {
+                    const warranty = warrantiesToDisplay[0];
+                    if (warranty) handleViewOrder(warranty.order._id || warranty.order.id);
+                  }}
                   className={`rounded-2xl border p-3 text-left transition ${darkMode ? "border-green-400/80 bg-green-950/50 hover:bg-green-900/70" : "border-green-500 bg-green-50/50 hover:bg-green-100"}`}
                 >
                   <ShieldCheck className="mb-2 text-green-600" size={20} />
@@ -649,7 +641,10 @@ function Dashboard() {
 
             <button
               type="button"
-              onClick={() => navigate("/transactions", { state: { activeTable: "projects" } })}
+              onClick={() => {
+                const warranty = warrantiesToDisplay[0];
+                if (warranty) handleViewOrder(warranty.order._id || warranty.order.id);
+              }}
               className="group rounded-3xl bg-white p-6 text-left shadow transition duration-200 hover:-translate-y-1 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-green-500"
             >
               <p className="text-gray-500">
@@ -691,13 +686,6 @@ function Dashboard() {
                 <h2 className="text-2xl font-bold text-gray-900">Recent Transactions</h2>
                 <p className="mt-1 text-sm text-gray-500">Recent activity in the Customer Website</p>
               </div>
-              <button
-                type="button"
-                onClick={() => navigate("/transactions")}
-                className="text-sm font-semibold text-gray-700 underline decoration-gray-400 underline-offset-4 hover:text-gray-900"
-              >
-                View all
-              </button>
             </div>
 
             <div className="mt-5 overflow-hidden rounded-2xl border border-gray-200">
@@ -747,11 +735,11 @@ function Dashboard() {
                             data-notification-record-id={orderId}
                             role="button"
                             tabIndex={0}
-                            onClick={() => handleViewOrder(orderId)}
+                            onClick={() => handleOpenTransactionPage(orderId)}
                             onKeyDown={(event) => {
                               if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
-                                handleViewOrder(orderId);
+                                handleOpenTransactionPage(orderId);
                               }
                             }}
                             className={`cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500 ${isNotificationTarget ? "bg-amber-100 ring-2 ring-inset ring-amber-500" : "hover:bg-gray-50"}`}
@@ -759,7 +747,7 @@ function Dashboard() {
                             <td className="px-5 py-4"><ProfileAvatar name={customerName} email={order.customer?.email || order.customer_email || ""} compact /></td>
                             <td className="px-5 py-4 font-bold text-gray-900">{productName}</td>
                             <td className="px-5 py-4 text-gray-700">{formattedDate}</td>
-                            <td className="px-5 py-4 font-semibold text-gray-900">{formatCurrency(order.total_amount || order.totalAmount || 0)}</td>
+                            <td className="px-5 py-4 font-semibold text-gray-900">{formatCurrency(getFinalProjectCost(order))}</td>
                             <td className="px-5 py-4 text-right">
                               <span className={`inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold ${badgeClasses}`}>
                                 {statusText}
@@ -813,11 +801,11 @@ function Dashboard() {
                         data-notification-record-id={orderId}
                         role="button"
                         tabIndex={0}
-                        onClick={() => handleViewOrder(orderId)}
+                        onClick={() => handleOpenTransactionPage(orderId)}
                         onKeyDown={(event) => {
                           if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
-                            handleViewOrder(orderId);
+                            handleOpenTransactionPage(orderId);
                           }
                         }}
                         className={`cursor-pointer rounded-2xl border p-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${isNotificationTarget ? "border-amber-500 bg-amber-100 ring-2 ring-amber-400" : "border-gray-200 bg-gray-50"}`}
@@ -838,7 +826,7 @@ function Dashboard() {
                           </div>
                           <div>
                             <p className="text-[10px] uppercase tracking-wide text-gray-400">Amount</p>
-                            <p className="mt-1 font-semibold text-gray-900">{formatCurrency(order.total_amount || order.totalAmount || 0)}</p>
+                            <p className="mt-1 font-semibold text-gray-900">{formatCurrency(getFinalProjectCost(order))}</p>
                           </div>
                         </div>
                       </div>
@@ -899,7 +887,7 @@ function Dashboard() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => navigate("/progress-monitor")}
+                  onClick={() => navigate("/progress-monitor", { state: { statusFilter: "All" } })}
                   className="text-sm font-semibold text-red-600 hover:text-red-700"
                 >
                   View all
@@ -950,7 +938,7 @@ function Dashboard() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => navigate("/transactions", { state: { activeTable: "projects" } })}
+                  onClick={() => navigate("/transactions", { state: { activeTable: "receipts" } })}
                   className="text-sm font-semibold text-red-600 hover:text-red-700"
                 >
                   View all
@@ -958,25 +946,27 @@ function Dashboard() {
               </div>
 
               <div className="mt-5 space-y-3">
-                {activeWarranties.length > 0 ? activeWarranties.map(({ key, order, item }) => {
+                {warrantiesToDisplay.length > 0 ? warrantiesToDisplay.map(({ key, order, item, period }) => {
                   const customerName = order.customer
                     ? `${order.customer.first_name || ""} ${order.customer.last_name || ""}`.trim() || order.customer.email || "Customer"
                     : "Customer";
-                  const productName = item.name || item.product_id?.name || "Warranty";
-                  const warrantyPeriod = item.warranty_period || order.warranty_period || "Warranty";
+                  const isBatchOrder = Array.isArray(order.items) && order.items.length > 1;
+                  const productName = isBatchOrder ? "Batch Order" : item.name || item.product_id?.name || "Warranty";
                   return (
                     <button
                       type="button"
                       key={key}
-                      onClick={() => navigate("/transactions", { state: { activeTable: "projects" } })}
+                      onClick={() => handleViewOrder(order._id || order.id)}
                       className="flex w-full items-center justify-between gap-4 rounded-2xl border border-gray-100 p-4 text-left transition hover:border-green-200 hover:bg-green-50/40"
                     >
                       <div className="min-w-0">
                         <p className="truncate font-semibold text-gray-800">{productName}</p>
-                        <p className="mt-1 truncate text-sm text-gray-400">{customerName}</p>
+                        <p className="mt-1 truncate text-sm text-gray-400">
+                          {customerName} · {isBatchOrder ? `${order.items.length} products` : period || "Warranty"}
+                        </p>
                       </div>
                       <span className="shrink-0 rounded-lg bg-green-500 px-3 py-1.5 text-xs font-semibold text-white">
-                        {warrantyPeriod === "Per product" ? "Active" : warrantyPeriod}
+                        Active
                       </span>
                     </button>
                   );
@@ -992,143 +982,7 @@ function Dashboard() {
         </main>
       </div>
 
-      {/* Order Detail Modal */}
-      {selectedOrder && (
-        <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setSelectedOrder(null)} />
-          <div className="mobile-fullscreen-dialog relative bg-white rounded-3xl shadow-lg p-8 w-full max-w-2xl max-h-120 overflow-y-auto">
-            <button
-              onClick={() => setSelectedOrder(null)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-2xl"
-            >
-              ×
-            </button>
-
-            <h2 className="text-2xl font-bold text-slate-950 mb-6">
-              Project Details
-            </h2>
-
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              <div>
-                <p className="text-xs uppercase tracking-widest text-slate-400">Customer Name</p>
-                <p className="text-lg font-semibold text-slate-950 mt-1">
-                  {selectedOrder.customer
-                    ? `${selectedOrder.customer.first_name || ""} ${selectedOrder.customer.last_name || ""}`.trim() || selectedOrder.customer.email || "—"
-                    : "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-widest text-slate-400">Phone</p>
-                <p className="text-lg font-semibold text-slate-950 mt-1">{selectedOrder.customer?.phone || "—"}</p>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-widest text-slate-400">Tracking ID</p>
-                <p className="text-lg font-semibold text-slate-950 mt-1">{selectedOrder.tracking || "—"}</p>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-widest text-slate-400">Order Type</p>
-                <p className="text-lg font-semibold text-slate-950 mt-1">
-                  {selectedOrder.order_type === "walk_in_customer" ? "Walk-in" : "Online"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-widest text-slate-400">Product</p>
-                <p className="text-lg font-semibold text-slate-950 mt-1">
-                  {selectedOrder.items?.[0]?.name || selectedOrder.items?.[0]?.product_id?.name || "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-widest text-slate-400">Total Amount</p>
-                <p className="text-lg font-semibold text-green-600 mt-1">₱{selectedOrder.total_amount?.toLocaleString() || "—"}</p>
-              </div>
-              <div className="col-span-2">
-                <p className="text-xs uppercase tracking-widest text-slate-400">Full Address</p>
-                <p className="text-lg font-semibold text-slate-950 mt-1 whitespace-normal break-words">
-                  {selectedOrder.customer
-                    ? getCustomerAddress(selectedOrder.customer) || "—"
-                    : "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-widest text-slate-400">Status</p>
-                <p className="text-lg font-semibold text-slate-950 mt-1">
-                  {selectedOrder.status?.replace(/_/g, " ").toUpperCase() || "—"}
-                </p>
-              </div>
-            </div>
-
-            
-
-            <div className="mb-6">
-              <p className="text-xs uppercase tracking-widest text-slate-400 mb-3">Ordered Items</p>
-              {Array.isArray(selectedOrder.items) && selectedOrder.items.length > 0 ? (
-                <div className="space-y-3">
-                  {selectedOrder.items.map((item, index) => (
-                    <div
-                      key={`${item.product_id?._id || item.product_id || item.name || "item"}-${index}`}
-                      className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
-                    >
-                      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                          <p className="text-base font-bold text-slate-950">
-                            {index + 1}. {getOrderItemName(item)}
-                          </p>
-                          {item.notes && (
-                            <p className="mt-1 text-sm text-slate-500">{item.notes}</p>
-                          )}
-                        </div>
-                        <p className="text-lg font-bold text-green-600">{formatCurrency(getOrderItemTotal(item))}</p>
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        <div>
-                          <p className="text-xs uppercase tracking-widest text-slate-400">Type</p>
-                          <p className="mt-1 font-semibold text-slate-900">{getOrderItemType(item)}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs uppercase tracking-widest text-slate-400">Dimensions</p>
-                          <p className="mt-1 font-semibold text-slate-900">{getOrderItemDimensions(item)}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs uppercase tracking-widest text-slate-400">Quantity</p>
-                          <p className="mt-1 font-semibold text-slate-900">{item.quantity || 1}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs uppercase tracking-widest text-slate-400">Unit Rate</p>
-                          <p className="mt-1 font-semibold text-slate-900">{getOrderItemUnitRate(item)}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-slate-500">
-                  No item details available.
-                </div>
-              )}
-            </div>
-
-            {actionMessage && (
-              <div className={`mb-4 p-3 rounded-lg ${
-                actionMessage.includes("success") || actionMessage.includes("approved") || actionMessage.includes("rejected")
-                  ? "bg-green-100 text-green-800"
-                  : "bg-red-100 text-red-800"
-              }`}>
-                {actionMessage}
-              </div>
-            )}
-
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setSelectedOrder(null)}
-                className="px-4 py-2 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <TransactionDetailsModal order={selectedOrder} onClose={() => setSelectedOrder(null)} />
 
       {selectedProject && (
         <ProgressViewModal

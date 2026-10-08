@@ -1,3 +1,5 @@
+import { getFinalProjectCost, getRequiredDownpayment } from "@/lib/orderPricing";
+
 export const getCustomerPaymentProof = (order) => {
   if (!order) {
     return {
@@ -34,20 +36,9 @@ export const getCustomerPaymentProof = (order) => {
 export const isPaymentProofConfirmed = (order) => Boolean(order?.payment_proof_confirmed_at);
 
 export const getPaymentSummary = (order = {}) => {
-  const totalAmount = Math.max(
-    Number(order.contract_amount || order.total_amount) || 0,
-    0,
-  );
+  const totalAmount = getFinalProjectCost(order);
+  const requiredAmount = getRequiredDownpayment(order);
   const paymentTerms = String(order.payment_terms || "").toLowerCase();
-  const configuredRequired = order.required_downpayment_amount;
-  const legacyRequired = Number(order.downpayment_amount);
-  const fallbackRequired = paymentTerms === "full_payment" ? totalAmount : totalAmount * 0.5;
-  const requiredAmountValue = Number(configuredRequired) > 0
-    ? Number(configuredRequired)
-    : legacyRequired > 0
-      ? legacyRequired
-      : fallbackRequired;
-  const requiredAmount = Math.min(totalAmount, Math.max(requiredAmountValue, 0));
 
   const explicitPaidAmount =
     order.amount_paid ?? order.payment_amount ?? order.paid_amount;

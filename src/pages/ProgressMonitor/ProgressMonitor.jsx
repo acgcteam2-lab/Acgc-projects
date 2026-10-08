@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
   Search,
   Eye,
@@ -38,9 +39,25 @@ const hasDelayedStage = (stages = []) =>
         stage.subStages.some((sub) => !sub.completed && normalizeStageStatus(sub.status) === "delayed"))
   );
 
+const CORE_STAGE_NAMES = new Set([
+  "cutting",
+  "assembly",
+  "fabrication",
+  "processing",
+  "installation",
+  "site-inspection",
+]);
+
 const hasAddedStages = (stages = []) =>
   Array.isArray(stages) &&
   stages.some((stage) => {
+    const key = normalizeStageStatus(stage.key);
+    const name = normalizeStageStatus(stage.name);
+    const isAddedMainStage = Boolean(key || name)
+      && !CORE_STAGE_NAMES.has(key)
+      && !CORE_STAGE_NAMES.has(name);
+    if (isAddedMainStage) return true;
+
     if (!Array.isArray(stage.subStages) || stage.subStages.length === 0) return false;
     const status = normalizeStageStatus(stage.status);
     const isCurrent = ["in-progress", "active", "current"].includes(status);
@@ -249,6 +266,7 @@ const isSameProjectRow = (currentProject, targetProject) => {
 function ProgressMonitor() {
   const isMobile = useIsMobile();
   const { user } = useAuth();
+  const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] =
     useState(() => {
       if (typeof window === "undefined") return true;
@@ -263,8 +281,7 @@ function ProgressMonitor() {
     localStorage.setItem("sidebarOpen", JSON.stringify(isSidebarOpen));
   }, [isSidebarOpen]);
 
-  const [statusFilter, setStatusFilter] =
-    useState("Pending");
+  const [statusFilter, setStatusFilter] = useState(() => location.state?.statusFilter || "Pending");
 
   const [search, setSearch] =
     useState("");
@@ -481,7 +498,9 @@ function ProgressMonitor() {
       recordActivity(user, `Started project ${project.product} in order ${targetOrderId}.`, "Progress Monitor");
       toast.success("Project started at Cutting.");
     } catch (error) {
-      toast.error(error?.data?.message || error?.message || "Unable to start project.");
+      const serverError = error?.data?.error;
+      const errorMessage = error?.data?.message || error?.message || "Unable to start project.";
+      toast.error(serverError ? `${errorMessage}: ${serverError}` : errorMessage);
     } finally {
       setStartingProjectId(null);
     }

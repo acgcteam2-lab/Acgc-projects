@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { buildContractSnapshot, hasContractSnapshotChanged } from "./contractState";
+import { buildContractSnapshot, hasContractSnapshotChanged, hasExistingContract } from "./contractState";
 
 describe("contract state tracking", () => {
+  it("recognizes persisted, sent, and accepted contracts as existing", () => {
+    expect(hasExistingContract({ contractGenerated: true })).toBe(true);
+    expect(hasExistingContract({ contract_status: "sent" })).toBe(true);
+    expect(hasExistingContract({ status: "contract_accepted" })).toBe(true);
+    expect(hasExistingContract({ contract_status: "pending", total_amount: 5000 })).toBe(false);
+  });
+
   it("builds a stable contract snapshot from the inspection fields", () => {
     const order = {
       customer_name: "Jane Doe",

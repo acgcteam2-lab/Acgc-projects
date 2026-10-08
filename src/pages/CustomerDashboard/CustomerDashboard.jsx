@@ -77,9 +77,17 @@ import { getSystemSettings } from "@/api/users";
 import { getCart, saveCart } from "@/api/cart";
 import { formatDateToMMMDDYYYY, formatDateTimeToMMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
 import { buildDelayNotifications, sortCustomerNotificationsNewestFirst } from "@/lib/delayNotifications";
-import { getOrderStatusClasses, getOrderStatusLabel, normalizeOrderStatus, normalizeOrderStatusKey } from "./orderStatusUtils";
+import {
+  getCustomerOrderNotificationMessage,
+  getOrderStatusClasses,
+  getOrderStatusLabel,
+  getSiteInspectionNotificationMessage,
+  normalizeOrderStatus,
+  normalizeOrderStatusKey,
+} from "./orderStatusUtils";
 import { getPaymentSummary, isPaymentProofConfirmed } from "@/pages/Transactions/paymentProofUtils";
 import { buildProductPriceSnapshot, getProductLineTotal } from "@/lib/productPricing";
+import { getFinalProjectCost } from "@/lib/orderPricing";
 
 const PRODUCT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
@@ -275,6 +283,9 @@ function CustomerDashboard() {
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [cartItems, setCartItems] = useState([]);
+  const [cartPricingProducts, setCartPricingProducts] = useState([]);
+  const cartItemsRef = useRef([]);
+  const cartSaveQueueRef = useRef(Promise.resolve());
   const [cartLoaded, setCartLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
@@ -363,6 +374,7 @@ function CustomerDashboard() {
   });
   const [reviewFormError, setReviewFormError] = useState("");
   const [reviewFormLoading, setReviewFormLoading] = useState(false);
+  const [reviewPhotoUploading, setReviewPhotoUploading] = useState(false);
   const [selectedReviewOrder, setSelectedReviewOrder] = useState(null);
   const [batchReviewSession, setBatchReviewSession] = useState(null);
   const [estimateFlowType, setEstimateFlowType] = useState(null);
@@ -393,6 +405,37 @@ function CustomerDashboard() {
   const [contractHistoryTab, setContractHistoryTab] = useState("accepted");
   const [contractPage, setContractPage] = useState(1);
   const [warrantyHistoryTab, setWarrantyHistoryTab] = useState(null);
+
+  const commitCartItems = (updater) => {
+    if (!cartLoaded) throw new Error("Your cart is still loading. Please try again.");
+
+    const nextItems = typeof updater === "function" ? updater(cartItemsRef.current) : updater;
+    setCartActionError("");
+    cartItemsRef.current = nextItems;
+    setCartItems(nextItems);
+    try {
+      localStorage.setItem("customerCart", JSON.stringify(nextItems));
+    } catch (error) {
+      console.warn("Unable to cache cart locally.", error);
+    }
+
+    const saveRequest = cartSaveQueueRef.current
+      .catch(() => {})
+      .then(() => saveCart(nextItems));
+    cartSaveQueueRef.current = saveRequest;
+    return saveRequest;
+  };
+
+  const reportCartSaveError = (error) => {
+    console.warn("Unable to save cart to backend.", error);
+    setCartActionError("Your cart change could not be saved. Please try again.");
+    toast.error("Unable to save your cart.");
+  };
+
+  const persistCartMutation = (updater) => {
+    setCartActionError("");
+    commitCartItems(updater).catch(reportCartSaveError);
+  };
 
   const customerContracts = orders.filter((order) => {
     const status = normalizeOrderStatusKey(order?.status);
@@ -671,27 +714,29 @@ function CustomerDashboard() {
       try {
         const response = await getCart();
         if (!active) return;
-        setCartItems(
+        const loadedItems =
           Array.isArray(response.items)
             ? response.items.map((item) => ({ ...item, selected: item.selected !== false }))
-            : []
-        );
+            : [];
+        cartItemsRef.current = loadedItems;
+        setCartItems(loadedItems);
+        setCartActionError("");
+        try {
+          localStorage.setItem("customerCart", JSON.stringify(loadedItems));
+        } catch (storageError) {
+          console.warn("Unable to cache the loaded cart locally.", storageError);
+        }
       } catch (error) {
         if (!active) return;
-        const storedCart = localStorage.getItem("customerCart");
-        if (storedCart) {
-          try {
-            const cart = JSON.parse(storedCart);
-            setCartItems(
-              Array.isArray(cart)
-                ? cart.map((item) => ({ ...item, selected: item.selected !== false }))
-                : []
-            );
-          } catch (parseError) {
-            console.warn("Unable to parse saved cart", parseError);
-          }
+        cartItemsRef.current = [];
+        setCartItems([]);
+        setCartActionError("Unable to load your saved cart. Reconnect and refresh to try again.");
+        try {
+          localStorage.removeItem("customerCart");
+        } catch (storageError) {
+          console.warn("Unable to clear the unverified cart cache.", storageError);
         }
-        console.warn("Unable to load cart from backend; using local cart fallback.", error);
+        console.warn("Unable to load the saved cart from the backend.", error);
       } finally {
         if (active) setCartLoaded(true);
       }
@@ -715,19 +760,6 @@ function CustomerDashboard() {
       }
     }
   }, [location, navigate]);
-
-  useEffect(() => {
-    if (!cartLoaded) return;
-    localStorage.setItem("customerCart", JSON.stringify(cartItems));
-
-    const saveTimer = setTimeout(() => {
-      saveCart(cartItems).catch((error) => {
-        console.warn("Unable to save cart to backend.", error);
-      });
-    }, 250);
-
-    return () => clearTimeout(saveTimer);
-  }, [cartItems, cartLoaded]);
 
   const selectedCartItems = cartItems.filter((item) => item.selected);
   const selectedItemCount = selectedCartItems.length;
@@ -966,23 +998,33 @@ function CustomerDashboard() {
 
   const handleOrderReviewPhotoChange = async (e) => {
     if (!canUploadFeedback) return;
+    const input = e.currentTarget;
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     const existingCount = orderReviewForm.photos.length;
     if (existingCount + files.length > 5) {
       setReviewFormError("You may upload up to 5 photos.");
+      input.value = "";
       return;
     }
-    const uploads = await uploadFiles(files, undefined, { purpose: "review-photos" });
-    if (!uploads.success) {
-      setReviewFormError(uploads.message || "Unable to upload photos.");
-      return;
+    setReviewPhotoUploading(true);
+    setReviewFormError("");
+    try {
+      const uploads = await uploadFiles(files, undefined, { purpose: "review-photos" });
+      if (!uploads.success) {
+        throw new Error(uploads.message || "Unable to upload photos.");
+      }
+      setOrderReviewForm((prev) => ({
+        ...prev,
+        photos: [...prev.photos, ...(uploads.files || []).map((file) => file.url)],
+        photoPreviews: [...prev.photoPreviews, ...(uploads.files || []).map((file) => file.url)],
+      }));
+    } catch (error) {
+      setReviewFormError(error?.data?.message || error?.message || "Unable to upload photos.");
+    } finally {
+      setReviewPhotoUploading(false);
+      input.value = "";
     }
-    setOrderReviewForm((prev) => ({
-      ...prev,
-      photos: [...prev.photos, ...(uploads.files || []).map((f) => f.url)],
-      photoPreviews: [...prev.photoPreviews, ...(uploads.files || []).map((f) => f.url)],
-    }));
   };
 
   const handleRemoveReviewPhoto = (index) => {
@@ -1237,14 +1279,60 @@ function CustomerDashboard() {
     };
   }, [searchQuery, categoryFilter, canUploadFeedback, loading, user?.id]);
 
+  useEffect(() => {
+    if (loading || !user || !localStorage.getItem("token")) return undefined;
+
+    let active = true;
+    let requestInFlight = false;
+    const refreshProductPricing = async () => {
+      if (requestInFlight) return;
+      requestInFlight = true;
+      try {
+        const response = await getProducts();
+        if (!active) return;
+        const latestProducts = response.products || [];
+        const latestById = new Map(latestProducts.map((product) => [String(product._id || product.id), product]));
+        const refreshProduct = (currentProduct) => {
+          if (!currentProduct) return currentProduct;
+          const productId = String(currentProduct._id || currentProduct.id || "");
+          return latestById.get(productId) || currentProduct;
+        };
+
+        setCartPricingProducts(latestProducts);
+        setProducts((current) => current.map(refreshProduct));
+        setFeaturedProducts((current) => current.map(refreshProduct));
+        setSelectedProduct(refreshProduct);
+        setCartDecisionProduct(refreshProduct);
+        setOrderNowProduct(refreshProduct);
+      } catch (error) {
+        console.warn("Unable to refresh current product pricing.", error);
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    refreshProductPricing();
+    const refreshInterval = window.setInterval(refreshProductPricing, 30000);
+    window.addEventListener("focus", refreshProductPricing);
+
+    return () => {
+      active = false;
+      window.clearInterval(refreshInterval);
+      window.removeEventListener("focus", refreshProductPricing);
+    };
+  }, [loading, user?.id]);
+
   const paginatedProducts = paginateItems(products, productPage, productsPerPage);
   const displayedProducts = isMobile ? products : paginatedProducts.items;
 
   useEffect(() => {
     if (!orderOwnerId) return;
     let active = true;
+    let requestInFlight = false;
 
     const fetchOrders = async (showLoading = true) => {
+      if (requestInFlight) return;
+      requestInFlight = true;
       if (showLoading) setOrdersLoading(true);
 
       try {
@@ -1255,15 +1343,24 @@ function CustomerDashboard() {
         if (!active) return;
       } finally {
         if (active && showLoading) setOrdersLoading(false);
+        requestInFlight = false;
       }
     };
 
+    const refreshOrders = () => {
+      if (document.visibilityState === "visible") fetchOrders(false);
+    };
+
     fetchOrders();
-    const refreshInterval = window.setInterval(() => fetchOrders(false), 30000);
+    const refreshInterval = window.setInterval(refreshOrders, 15000);
+    window.addEventListener("focus", refreshOrders);
+    document.addEventListener("visibilitychange", refreshOrders);
 
     return () => {
       active = false;
       window.clearInterval(refreshInterval);
+      window.removeEventListener("focus", refreshOrders);
+      document.removeEventListener("visibilitychange", refreshOrders);
     };
   }, [orderOwnerId]);
 
@@ -1410,23 +1507,29 @@ function CustomerDashboard() {
     };
   };
 
-  const handleAddToCart = (product) => {
+  const handleAddToCart = async (product) => {
     if (!canRequestOrders) {
       setCartActionError("Order requests are disabled for your account.");
-      return;
+      return false;
+    }
+    if (!cartLoaded) {
+      setCartActionError("Your cart is still loading. Please try again.");
+      return false;
     }
     const cartItem = buildCustomerOrderItem(product, { quantity: 1 });
     if (!areOrderItemDimensionsValid(cartItem.dimensions)) {
       setCartActionError("Please provide valid product dimensions before submitting your order.");
-      return;
+      return false;
     }
 
-    setCartItems((prev) => {
-      const existing = prev.find((p) => !p.is_estimate && (p._id === product._id || p.name === product.name));
-      if (existing) {
-        return prev.map((p) =>
-          p.cartId === existing.cartId
-            ? {
+    setCartActionError("");
+    try {
+      await commitCartItems((prev) => {
+        const existing = prev.find((p) => !p.is_estimate && (p._id === product._id || p.name === product.name));
+        if (existing) {
+          return prev.map((p) =>
+            p.cartId === existing.cartId
+              ? {
                 ...p,
                 quantity: p.quantity + 1,
                 dimensions: {
@@ -1435,24 +1538,33 @@ function CustomerDashboard() {
                 },
                 selected: true,
               }
-            : p
-        );
-      }
+              : p
+          );
+        }
 
-      return [...prev, { ...cartItem, cartId: generateCartId(), selected: true }];
-    });
+        return [...prev, { ...cartItem, cartId: generateCartId(), selected: true }];
+      });
 
-    toast.success("Product added to cart.");
+      toast.success("Product added to cart.");
+      return true;
+    } catch (error) {
+      reportCartSaveError(error);
+      return false;
+    }
   };
 
-  const handleAddEstimateToCart = ({ product, width, height, quantity, notes, measurementUnit }) => {
+  const handleAddEstimateToCart = async ({ product, width, height, quantity, notes, measurementUnit }) => {
     if (!canRequestOrders) {
       setCartActionError("Order requests are disabled for your account.");
-      return;
+      return false;
     }
     if (!canEstimatePricing) {
       setCartActionError("Pricing estimates are disabled for your account.");
-      return;
+      return false;
+    }
+    if (!cartLoaded) {
+      setCartActionError("Your cart is still loading. Please try again.");
+      return false;
     }
     const parsedWidth = Number(width) || 0;
     const parsedHeight = Number(height) || 0;
@@ -1482,26 +1594,33 @@ function CustomerDashboard() {
       customized: true,
     }) || estimationResult.estimated_price || 0;
 
-    setCartItems((prev) => [
-      ...prev,
-      {
-        ...buildCustomerOrderItem(product, {
-          quantity: parsedQuantity,
-          width: parsedWidth,
-          height: parsedHeight,
-          measurementUnit,
-          customized: true,
-          area,
-          notes,
-          estimated_price,
-          is_estimate: true,
-        }),
-        cartId: generateCartId(),
-        selected: true,
-      },
-    ]);
+    setCartActionError("");
+    try {
+      await commitCartItems((prev) => [
+        ...prev,
+        {
+          ...buildCustomerOrderItem(product, {
+            quantity: parsedQuantity,
+            width: parsedWidth,
+            height: parsedHeight,
+            measurementUnit,
+            customized: true,
+            area,
+            notes,
+            estimated_price,
+            is_estimate: true,
+          }),
+          cartId: generateCartId(),
+          selected: true,
+        },
+      ]);
 
-    toast.success("Estimate added to cart.");
+      toast.success("Estimate added to cart.");
+      return true;
+    } catch (error) {
+      reportCartSaveError(error);
+      return false;
+    }
   };
 
   const openCartDecisionModal = (product, step = "choice") => {
@@ -1530,10 +1649,10 @@ function CustomerDashboard() {
     setEstimateFlowType(null);
   };
 
-  const handleCartDecisionNoAdd = () => {
+  const handleCartDecisionNoAdd = async () => {
     if (!cartDecisionProduct) return;
-    handleAddToCart(cartDecisionProduct);
-    closeCartDecisionModal();
+    const added = await handleAddToCart(cartDecisionProduct);
+    if (added) closeCartDecisionModal();
   };
 
   const handleCartDecisionEstimate = () => {
@@ -1554,7 +1673,7 @@ function CustomerDashboard() {
     }
   };
 
-  const handleEstimateAddToCart = () => {
+  const handleEstimateAddToCart = async () => {
     if (!cartDecisionProduct) return;
     if (!estimateForm.width || !estimateForm.height) {
       setCartActionError("Please enter width and height to estimate.");
@@ -1569,7 +1688,7 @@ function CustomerDashboard() {
       return;
     }
 
-    handleAddEstimateToCart({
+    const added = await handleAddEstimateToCart({
       product: cartDecisionProduct,
       width: estimateForm.width,
       height: estimateForm.height,
@@ -1577,7 +1696,7 @@ function CustomerDashboard() {
       notes: estimateForm.notes,
       measurementUnit: estimateForm.unit,
     });
-    closeCartDecisionModal();
+    if (added) closeCartDecisionModal();
   };
 
   const openOrderReviewModal = () => {
@@ -1600,7 +1719,7 @@ function CustomerDashboard() {
     setShowOrderReviewModal(true);
   };
 
-  const handleEstimateAfterEstimation = () => {
+  const handleEstimateAfterEstimation = async () => {
     if (!canRequestOrders) {
       setCartActionError("Your estimate is ready, but order requests are disabled for your account.");
       return;
@@ -1614,7 +1733,7 @@ function CustomerDashboard() {
       return;
     }
     if (estimateFlowType === "add_to_cart_estimate") {
-      handleEstimateAddToCart();
+      await handleEstimateAddToCart();
     } else {
       setDeliveryConfirmMode("estimate");
       setDeliveryConfirmForm({
@@ -1894,15 +2013,15 @@ function CustomerDashboard() {
   };
 
   const handleRemoveFromCart = (cartId) => {
-    setCartItems((prev) => prev.filter((item) => item.cartId !== cartId));
+    persistCartMutation((prev) => prev.filter((item) => item.cartId !== cartId));
   };
 
   const handleDeleteSelectedItems = () => {
-    setCartItems((prev) => prev.filter((item) => !item.selected));
+    persistCartMutation((prev) => prev.filter((item) => !item.selected));
   };
 
   const handleToggleCartItem = (cartId) => {
-    setCartItems((prev) =>
+    persistCartMutation((prev) =>
       prev.map((item) =>
         item.cartId === cartId ? { ...item, selected: !item.selected } : item
       )
@@ -1910,11 +2029,11 @@ function CustomerDashboard() {
   };
 
   const handleSelectAllCartItems = (selected) => {
-    setCartItems((prev) => prev.map((item) => ({ ...item, selected })));
+    persistCartMutation((prev) => prev.map((item) => ({ ...item, selected })));
   };
 
   const handleUpdateCartQuantity = (cartId, delta) => {
-    setCartItems((prev) =>
+    persistCartMutation((prev) =>
       prev
         .map((item) =>
           item.cartId === cartId
@@ -1933,7 +2052,7 @@ function CustomerDashboard() {
   };
 
   const handleClearCart = () => {
-    setCartItems([]);
+    persistCartMutation([]);
   };
 
   const handleViewProduct = (product) => {
@@ -2453,8 +2572,13 @@ function CustomerDashboard() {
   const handleConfirmBatchOrder = async () => {
     if (!batchOrderAgreed) return;
     setCheckoutLoading(true);
-    let orderSubmitted = false;
     try {
+      await cartSaveQueueRef.current;
+      const checkedOutCartIds = [...new Set(selectedCartItems.map((item) => String(item.cartId || "")).filter(Boolean))];
+      if (checkedOutCartIds.length !== selectedCartItems.length) {
+        throw new Error("Some selected cart items are missing their cart IDs. Refresh your cart and try again.");
+      }
+
       const orderItems = selectedCartItems.map((item) =>
         buildCustomerOrderItem(item, {
           quantity: item.quantity,
@@ -2476,18 +2600,39 @@ function CustomerDashboard() {
 
       const response = await createOrder({
         items: orderItems,
+        cart_item_ids: checkedOutCartIds,
         shipping_address: normalizeAddress(batchOrderForm.shipping_address || buildFullAddress(user)),
         customer_phone: batchOrderForm.phone.trim(),
       });
 
+      const checkedOutIds = new Set(checkedOutCartIds);
+      const remainingItems = cartItemsRef.current.filter((item) => !checkedOutIds.has(String(item.cartId)));
+      cartItemsRef.current = remainingItems;
+      setCartItems(remainingItems);
+      try {
+        localStorage.setItem("customerCart", JSON.stringify(remainingItems));
+      } catch (storageError) {
+        console.warn("Unable to update the local cart cache after checkout.", storageError);
+      }
+
+      try {
+        const refreshedCart = await getCart();
+        const refreshedItems = Array.isArray(refreshedCart.items)
+          ? refreshedCart.items.map((item) => ({ ...item, selected: item.selected !== false }))
+          : remainingItems;
+        cartItemsRef.current = refreshedItems;
+        setCartItems(refreshedItems);
+        localStorage.setItem("customerCart", JSON.stringify(refreshedItems));
+      } catch (refreshError) {
+        console.warn("Unable to refresh the cart after checkout; keeping the server-confirmed removal locally.", refreshError);
+      }
+
       setCheckoutMessage(getOrderSubmissionMessage(response, "Order placed"));
-      setCartItems((prev) => prev.filter((item) => !item.selected));
       addCreatedOrderToMyOrders(response.order);
       setShowBatchSuccessModal(true);
       setShowBatchOrderModal(false);
       setShowBatchOrderConfirmModal(false);
       setBatchOrderAgreed(false);
-      orderSubmitted = true;
     } catch (error) {
       setCheckoutError(error.data?.message || error.message || "Failed to place order.");
     } finally {
@@ -2663,7 +2808,16 @@ function CustomerDashboard() {
     if (!item) return 0;
 
     if (item.cartId) {
-      return getProductLineTotal(item, item);
+      const productId = item.product_id || item._id || item.product?._id || item.product?.id;
+      const currentProduct = cartPricingProducts.find((product) => String(product._id || product.id) === String(productId)) || item;
+      return getProductLineTotal(currentProduct, {
+        ...item,
+        quantity: item.quantity || item.dimensions?.quantity || 1,
+        width: item.dimensions?.width ?? item.width,
+        height: item.dimensions?.height ?? item.height,
+        measurement_unit: item.dimensions?.unit || item.measurement_unit || item.measurementUnit || "in",
+        customized: item.dimensions?.customized ?? item.customized ?? item.is_estimate,
+      });
     }
     if (Number(item.line_total) > 0) {
       return Number(item.line_total);
@@ -2715,7 +2869,7 @@ function CustomerDashboard() {
   function getOrderTotalValue(order) {
     if (!order) return 0;
 
-    const savedTotal = Number(order.contract_amount || order.total_amount || 0);
+    const savedTotal = getFinalProjectCost(order);
     if (savedTotal > 0) return savedTotal;
 
     const orderItems = Array.isArray(order.items) ? order.items : [];
@@ -2756,8 +2910,8 @@ function CustomerDashboard() {
   const buildContractDataFromOrder = (order) => {
     if (!order) return null;
 
-    const amount = Number(order.contract_amount || order.total_amount || 0);
-    const downPayment = Math.round((amount * 0.5) * 100) / 100;
+    const amount = getFinalProjectCost(order);
+    const downPayment = getPaymentSummary(order).requiredAmount;
     const items = (order.items || []).map((item) => ({
       name: item.name || "Item",
       category: item.category || item.product_type || "General",
@@ -3263,7 +3417,7 @@ function CustomerDashboard() {
           >
             <img src={logo} alt="ACGC Aluminum Services" className="h-8 w-8 shrink-0 object-contain sm:h-12 sm:w-12 lg:h-14 lg:w-14" />
             <div className="min-w-0">
-              <h1 className="whitespace-nowrap text-[15px] font-semibold text-red-500 sm:text-lg lg:text-xl">
+              <h1 className={`whitespace-nowrap text-[15px] font-semibold ${darkMode ? "text-red-400" : "text-red-500"} sm:text-lg lg:text-xl`}>
                 ACGC Services
               </h1>
               <p className={`whitespace-nowrap text-[10px] font-semibold sm:text-xs lg:text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
@@ -3348,27 +3502,27 @@ function CustomerDashboard() {
               </button>
 
               {notificationsOpen && (
-                <div className={`fixed inset-x-3 top-[calc(4.0625rem+env(safe-area-inset-top))] z-20 mt-1 max-h-[calc(100dvh-5.5rem)] w-auto overflow-y-auto overscroll-contain rounded-2xl border shadow-xl lg:absolute lg:inset-x-auto lg:right-0 lg:top-auto lg:mt-2 lg:max-h-[min(36rem,calc(100vh-6rem))] lg:w-96 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
-                  <div className={`flex items-center justify-between border-b px-4 py-3 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
+                <div className={`fixed inset-x-3 top-[calc(4.0625rem+env(safe-area-inset-top))] z-20 mt-1 flex max-h-[calc(100dvh-5.5rem)] w-[calc(100%-1.5rem)] max-w-md flex-col overflow-hidden rounded-2xl border shadow-xl lg:absolute lg:inset-x-auto lg:right-0 lg:top-auto lg:mt-2 lg:max-h-[min(36rem,calc(100vh-6rem))] lg:w-96 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+                  <div className={`flex shrink-0 items-center justify-between border-b px-3 py-2.5 sm:px-4 sm:py-3 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
                     <div>
                       <p className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-950"}`}>Project updates</p>
-                      <p className="mt-0.5 text-xs text-slate-400">Your latest order activity</p>
+                      <p className="mt-0.5 text-[11px] text-slate-400 sm:text-xs">Your latest order activity</p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      {unreadNotificationCount > 0 && <span className="rounded-full bg-red-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-red-600">{unreadNotificationCount} new</span>}
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      {unreadNotificationCount > 0 && <span className="rounded-full bg-red-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-red-600 sm:px-2 sm:py-1 sm:text-[10px]">{unreadNotificationCount} new</span>}
                       <button
                         type="button"
                         onClick={markAllCustomerNotificationsRead}
                         disabled={unreadNotificationCount === 0}
-                        className={`inline-flex items-center gap-1 text-xs font-semibold transition ${unreadNotificationCount === 0 ? "cursor-not-allowed text-slate-400" : darkMode ? "text-red-300 hover:text-white" : "text-red-600 hover:text-red-700"}`}
+                        className={`inline-flex items-center gap-1 text-[10px] font-semibold transition sm:text-xs ${unreadNotificationCount === 0 ? "cursor-not-allowed text-slate-400" : darkMode ? "text-red-300 hover:text-white" : "text-red-600 hover:text-red-700"}`}
                       >
-                        <CheckCheck size={14} />
+                        <CheckCheck size={12} className="sm:h-[14px] sm:w-[14px]" />
                         Mark all as read
                       </button>
                     </div>
                   </div>
 
-                  <div className={`flex gap-1 border-b px-3 py-2 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
+                  <div className={`flex shrink-0 gap-1 border-b px-2 py-1.5 sm:px-3 sm:py-2 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
                     {[
                       ["all", "All", orders.length],
                       ["unread", "Unread", unreadNotificationCount],
@@ -3378,7 +3532,7 @@ function CustomerDashboard() {
                         key={filter}
                         type="button"
                         onClick={() => setNotificationFilter(filter)}
-                        className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold transition ${
+                        className={`flex-1 rounded-lg px-1.5 py-1 text-[10px] font-semibold transition sm:px-2 sm:py-1.5 sm:text-xs ${
                           notificationFilter === filter
                             ? darkMode
                               ? "bg-slate-950 text-white"
@@ -3393,147 +3547,150 @@ function CustomerDashboard() {
                     ))}
                   </div>
 
-                  {ordersLoading ? (
-                    <div className={`px-4 py-8 text-center text-sm ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Loading your updates...</div>
-                  ) : filteredNotifications.length === 0 ? (
-                    <div className={`px-4 py-6 text-center ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
-                      <Bell size={22} className="mx-auto mb-2 text-slate-400" />
-                      <p>{notificationFilter === "all" ? "No project updates yet" : `No ${notificationFilter} notifications`}</p>
-                    </div>
-                  ) : (
-                    <div className={darkMode ? "max-h-96 divide-y divide-slate-700 overflow-y-auto" : "max-h-96 divide-y divide-slate-200 overflow-y-auto"}>
-                      {[...filteredNotifications]
-                        .sort(sortCustomerNotificationsNewestFirst)
-                        .slice(0, 5)
-                        .map((order) => {
-                          const product = order.items?.[0] || {};
-                          const isRead = readNotificationIds.has(order.notificationId);
-                          const status = normalizeOrderStatusKey(order?.status);
-                          const contractStatus = normalizeOrderStatusKey(order?.contract_status);
-                          const isPaymentNotification = ["payment", "payment_confirmed"].includes(order.notificationType);
-                          const isPaymentConfirmationNotification = order.notificationType === "payment_confirmed";
-                          const isDelayNotification = order.notificationType === "delay";
-                          const isContractReady =
-                            status === "contract_sent" ||
-                            (status === "site_inspection" && contractStatus === "sent") ||
-                            contractStatus === "sent";
-                          const notificationDetails = () => {
-                            if (isDelayNotification) {
-                              return {
-                                title: "Project delay reported",
-                                message: getDelayNotificationMessage(order),
-                                color: "text-amber-600",
-                              };
-                            }
-                            if (isPaymentNotification) {
-                              if (isPaymentConfirmationNotification) {
+                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                    {ordersLoading ? (
+                      <div className={`px-3 py-6 text-center text-sm sm:px-4 sm:py-8 ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Loading your updates...</div>
+                    ) : filteredNotifications.length === 0 ? (
+                      <div className={`px-3 py-5 text-center sm:px-4 sm:py-6 ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
+                        <Bell size={18} className="mx-auto mb-2 text-slate-400 sm:h-[22px] sm:w-[22px]" />
+                        <p>{notificationFilter === "all" ? "No project updates yet" : `No ${notificationFilter} notifications`}</p>
+                      </div>
+                    ) : (
+                      <div className={darkMode ? "min-h-0 flex-1 divide-y divide-slate-700 overflow-y-auto overscroll-contain" : "min-h-0 flex-1 divide-y divide-slate-200 overflow-y-auto overscroll-contain"}>
+                        {[...filteredNotifications]
+                          .sort(sortCustomerNotificationsNewestFirst)
+                          .slice(0, 5)
+                          .map((order) => {
+                            const product = order.items?.[0] || {};
+                            const isRead = readNotificationIds.has(order.notificationId);
+                            const status = normalizeOrderStatusKey(order?.status);
+                            const contractStatus = normalizeOrderStatusKey(order?.contract_status);
+                            const isPaymentNotification = ["payment", "payment_confirmed"].includes(order.notificationType);
+                            const isPaymentConfirmationNotification = order.notificationType === "payment_confirmed";
+                            const isDelayNotification = order.notificationType === "delay";
+                            const isContractReady =
+                              status === "contract_sent" ||
+                              (status === "site_inspection" && contractStatus === "sent") ||
+                              contractStatus === "sent";
+                            const notificationDetails = () => {
+                              if (isDelayNotification) {
                                 return {
-                                  title: "Payment confirmed",
-                                  message: `Your payment of ${formatCurrency(order.payment_proof_amount)} has been confirmed by our team.`,
+                                  title: "Project delay reported",
+                                  message: getDelayNotificationMessage(order),
+                                  color: "text-amber-600",
+                                };
+                              }
+                              if (isPaymentNotification) {
+                                if (isPaymentConfirmationNotification) {
+                                  return {
+                                    title: "Payment confirmed",
+                                    message: `Your payment of ${formatCurrency(order.payment_proof_amount)} has been confirmed by our team.`,
+                                    color: "text-emerald-600",
+                                  };
+                                }
+                                return {
+                                  title: "Payment proof submitted",
+                                  message: `Your payment proof for ${formatCurrency(order.payment_proof_amount)} has been sent for confirmation.`,
                                   color: "text-emerald-600",
                                 };
                               }
-                              return {
-                                title: "Payment proof submitted",
-                                message: `Your payment proof for ${formatCurrency(order.payment_proof_amount)} has been sent for confirmation.`,
-                                color: "text-emerald-600",
-                              };
-                            }
-                            if (contractStatus === "accepted" || status === "contract_accepted") {
-                              return { title: "Contract accepted", message: "Your contract has been accepted. Work can now move forward.", color: "text-emerald-600" };
-                            }
-                            if (contractStatus === "declined" || status === "contract_declined" || status === "cancelled") {
-                              return { title: "Order update", message: "Your contract or order was declined or cancelled.", color: "text-red-600" };
-                            }
-                            if (isContractReady) {
-                              return { title: "Contract ready", message: "Review and respond to your project contract.", color: "text-blue-600" };
-                            }
+                              if (contractStatus === "accepted" || status === "contract_accepted") {
+                                return { title: "Contract accepted", message: "Your contract has been accepted. Work can now move forward.", color: "text-emerald-600" };
+                              }
+                              if (contractStatus === "declined" || status === "contract_declined" || status === "cancelled") {
+                                return { title: "Order update", message: "Your contract or order was declined or cancelled.", color: "text-red-600" };
+                              }
+                              if (isContractReady) {
+                                return { title: "Contract ready", message: "A contract has been sent for your review and acceptance.", color: "text-blue-600" };
+                              }
 
-                            switch (status) {
-                              case "order_submitted":
-                                return { title: "Order submitted", message: "Your order is waiting for admin review.", color: "text-blue-600" };
-                              case "admin_review":
-                                return { title: "Order under review", message: "Our team is reviewing your project request.", color: "text-amber-600" };
-                              case "site_inspection":
-                                return { title: "Site inspection", message: "Your project is ready for site inspection.", color: "text-amber-600" };
-                              case "fabrication":
-                                return { title: "Fabrication started", message: "Your project is currently being fabricated.", color: "text-indigo-600" };
-                              case "installation":
-                                return { title: "Installation in progress", message: "Your project installation is underway.", color: "text-violet-600" };
-                              case "completed":
-                                return { title: "Project completed", message: "Your project has been completed successfully.", color: "text-emerald-600" };
-                              default:
-                                return { title: "Project update", message: `Your order is now ${getOrderStatusLabel(order.status).toLowerCase()}.`, color: "text-amber-600" };
-                            }
-                          };
-                          const details = notificationDetails();
-                          const hasContractBeenSent =
-                            status === "contract_sent" ||
-                            contractStatus === "sent" ||
-                            (status === "site_inspection" && contractStatus === "sent");
-                          const isContractNotification = !isPaymentNotification && !isDelayNotification && (
-                            order.notificationType === "contract" ||
-                            hasContractBeenSent ||
-                            ["contract_accepted"].includes(status) ||
-                            ["accepted"].includes(contractStatus)
-                          );
-                          const NotificationIcon = isPaymentConfirmationNotification
-                            ? CheckCircle
-                            : order.notificationType === "payment"
-                              ? CreditCard
-                              : isDelayNotification
-                                ? AlertTriangle
-                                : isContractNotification
-                                  ? FileText
-                                  : Bell;
+                              switch (status) {
+                                case "order_submitted":
+                                  return { title: "Order submitted", message: "Your order has been submitted and is awaiting admin review.", color: "text-blue-600" };
+                                case "admin_review":
+                                  return { title: "Order under review", message: "Our team is reviewing your project request.", color: "text-amber-600" };
+                                case "site_inspection":
+                                  return { title: "Site inspection", message: getSiteInspectionNotificationMessage(order), color: "text-amber-600" };
+                                case "fabrication":
+                                  return { title: "Fabrication started", message: "Your project is currently in fabrication.", color: "text-indigo-600" };
+                                case "installation":
+                                  return { title: "Installation in progress", message: "Your project installation is in progress.", color: "text-violet-600" };
+                                case "completed":
+                                  return { title: "Project completed", message: "Your project has been completed successfully!", color: "text-emerald-600" };
+                                default:
+                                  return { title: "Project update", message: getCustomerOrderNotificationMessage(order), color: "text-amber-600" };
+                              }
+                            };
+                            const details = notificationDetails();
+                            const hasContractBeenSent =
+                              status === "contract_sent" ||
+                              contractStatus === "sent" ||
+                              (status === "site_inspection" && contractStatus === "sent");
+                            const isContractNotification = !isPaymentNotification && !isDelayNotification && (
+                              order.notificationType === "contract" ||
+                              hasContractBeenSent ||
+                              ["contract_accepted"].includes(status) ||
+                              ["accepted"].includes(contractStatus)
+                            );
+                            const NotificationIcon = isPaymentConfirmationNotification
+                              ? CheckCircle
+                              : order.notificationType === "payment"
+                                ? CreditCard
+                                : isDelayNotification
+                                  ? AlertTriangle
+                                  : isContractNotification
+                                    ? FileText
+                                    : Bell;
 
-                          return (
-                            <button
-                              key={order.notificationId}
-                              onClick={() => {
-                                openOrderDetailsFromNotification(order, order.notificationId);
-                                setNotificationsOpen(false);
-                              }}
-                              className={`w-full border-l-2 px-4 py-3 text-left transition ${
-                                isRead
-                                  ? darkMode ? "border-transparent bg-slate-800/60 hover:bg-slate-800" : "border-transparent bg-white hover:bg-slate-50"
-                                  : darkMode ? "border-red-400/70 bg-slate-800/90 hover:bg-slate-800" : "border-red-400/70 bg-red-50/40 hover:bg-red-50/70"
-                              }`}
-                            >
-                              <div className="flex gap-3">
-                                <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-slate-700" : "bg-slate-100"}`}>
-                                  <NotificationIcon size={17} className={details.color} />
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center justify-between gap-3">
-                                    <div className="flex min-w-0 items-center gap-2">
-                                      <p className={`truncate text-sm ${isRead ? "font-medium" : "font-bold"} ${darkMode ? isRead ? "text-slate-300" : "text-white" : isRead ? "text-slate-600" : "text-slate-950"}`}>{details.title}</p>
-                                      {!isRead && <span className="shrink-0 rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-red-700">New</span>}
-                                    </div>
-                                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${getOrderStatusClasses(isDelayNotification ? "Delayed" : order.status)}`}>{isDelayNotification ? "Delayed" : getOrderStatusLabel(order.status)}</span>
+                            return (
+                              <button
+                                key={order.notificationId}
+                                onClick={() => {
+                                  openOrderDetailsFromNotification(order, order.notificationId);
+                                  setNotificationsOpen(false);
+                                }}
+                                className={`group w-full border-l-2 px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500 sm:px-4 sm:py-3 ${
+                                  isRead
+                                    ? darkMode ? "border-transparent bg-slate-800/60 hover:bg-slate-800" : "border-transparent bg-white hover:bg-slate-50"
+                                    : darkMode ? "border-red-400/70 bg-slate-800/90 hover:bg-slate-800" : "border-red-400/70 bg-red-50/40 hover:bg-red-50/70"
+                                }`}
+                              >
+                                <div className="flex gap-2.5 sm:gap-3">
+                                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ring-1 sm:h-9 sm:w-9 ${darkMode ? "bg-slate-700 ring-white/5" : "bg-slate-100 ring-slate-200/70"}`}>
+                                    <NotificationIcon size={15} className={details.color} />
                                   </div>
-                                  <p className={`mt-0.5 text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                                    {details.message}
-                                  </p>
-                                  <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                                    {product.name || "Project"} · {order.tracking || "Order update"} · <span title={formatDateTimeToMMMDDYYYY(order.notificationDate) || undefined}>{formatTimeAgo(order.notificationDate)}</span>
-                                  </p>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center justify-between gap-2 sm:gap-3">
+                                      <div className="flex min-w-0 items-center gap-2">
+                                        <p className={`truncate text-xs sm:text-sm ${isRead ? "font-medium" : "font-bold"} ${darkMode ? isRead ? "text-slate-300" : "text-white" : isRead ? "text-slate-600" : "text-slate-950"}`}>{details.title}</p>
+                                        {!isRead && <span className="shrink-0 rounded-full bg-red-100 px-1.5 py-0.5 text-[8px] font-bold uppercase text-red-700 sm:text-[9px]">New</span>}
+                                      </div>
+                                      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[8px] font-bold uppercase sm:px-2 sm:text-[10px] ${getOrderStatusClasses(isDelayNotification ? "Delayed" : order.status)}`}>{isDelayNotification ? "Delayed" : getOrderStatusLabel(order.status)}</span>
+                                    </div>
+                                    <p className={`mt-0.5 text-[11px] leading-4 sm:text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                                      {details.message}
+                                    </p>
+                                    <p className={`mt-1 text-[10px] sm:text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                                      {product.name || "Project"} · {order.tracking || "Order update"} · <span title={formatDateTimeToMMMDDYYYY(order.notificationDate) || undefined}>{formatTimeAgo(order.notificationDate)}</span>
+                                    </p>
+                                  </div>
                                 </div>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      <button
-                        onClick={() => {
-                          setActiveTab("notifications");
-                          setNotificationsOpen(false);
-                        }}
-                        className={`w-full px-4 py-2 text-center text-sm font-semibold ${darkMode ? "text-red-300 hover:bg-slate-700" : "text-red-600 hover:bg-gray-50"}`}
-                      >
-                        View All
-                      </button>
-                    </div>
-                  )}
+                              </button>
+                            );
+                          })}
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setActiveTab("notifications");
+                      setNotificationsOpen(false);
+                    }}
+                    className={`sticky bottom-0 z-10 w-full shrink-0 border-t px-3 py-2.5 text-center text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500 sm:px-4 sm:py-2 ${darkMode ? "border-slate-700 bg-slate-800 text-red-300 hover:bg-slate-700" : "border-slate-100 bg-white text-red-600 hover:bg-gray-50"}`}
+                  >
+                    View all Notifications
+                  </button>
                 </div>
               )}
             </div>
@@ -5661,7 +5818,12 @@ function CustomerDashboard() {
                   const downpaymentAmount = paymentSummary.paidAmount;
                   const requiredPaymentAmount = paymentSummary.requiredAmount;
                   const balanceAmount = paymentSummary.remainingAmount;
-                  const isFullyPaid = paymentSummary.status.key === "paid";
+                  const isFullyPaid = Math.round(balanceAmount * 100) <= 0;
+                  const downpaymentBalance = Math.max(requiredPaymentAmount - downpaymentAmount, 0);
+                  const isDownpaymentCovered = Math.round(downpaymentBalance * 100) <= 0;
+                  const paymentBalanceMessage = isDownpaymentCovered
+                    ? `Downpayment covered. Remaining balance: ${formatCurrency(balanceAmount)}.`
+                    : `Downpayment still due: ${formatCurrency(downpaymentBalance)}.`;
                   const paymentStatusClasses = {
                     paid: darkMode ? "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border border-emerald-200 bg-emerald-50 text-emerald-700",
                     pending: darkMode ? "border border-amber-500/40 bg-amber-500/10 text-amber-200" : "border border-amber-200 bg-amber-50 text-amber-800",
@@ -5670,8 +5832,8 @@ function CustomerDashboard() {
                     partial: darkMode ? "border border-sky-500/40 bg-sky-500/10 text-sky-200" : "border border-sky-200 bg-sky-50 text-sky-800",
                   };
                   const paymentStatus = {
-                    label: paymentSummary.status.label,
-                    className: paymentStatusClasses[paymentSummary.status.key],
+                    label: isFullyPaid ? "Fully Paid" : paymentSummary.status.label,
+                    className: paymentStatusClasses[isFullyPaid ? "paid" : paymentSummary.status.key],
                   };
                   const isBatchOrder = orderItems.length > 1;
                   const orderDisplayName = isBatchOrder ? "Batch Order" : product.name || product.product_name || "Project item";
@@ -5936,13 +6098,14 @@ function CustomerDashboard() {
 
                           <div className={`mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-y py-4 sm:grid-cols-4 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                             <div className="flex flex-col gap-1">
-                              <span className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Grand total</span>
+                              <span className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Final project cost</span>
                               <span className="text-lg font-bold text-red-600">{formatCurrency(orderTotal)}</span>
+                              <span className={`text-[10px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Estimated cost: {formatCurrency(Number(order.estimated_cost) || orderTotal)}</span>
                             </div>
                             <div className="flex flex-col gap-1">
                               <span className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Amount paid</span>
                               <span className="text-lg font-bold text-emerald-600">{formatCurrency(downpaymentAmount)}</span>
-                              <span className={`text-[10px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Required downpayment: {formatCurrency(requiredPaymentAmount)}</span>
+                              <span className={`text-[10px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{paymentBalanceMessage}</span>
                             </div>
                             <div className="flex flex-col gap-1">
                               <span className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Balance</span>
@@ -5960,7 +6123,7 @@ function CustomerDashboard() {
                             <div className={`mt-6 rounded-xl border px-4 py-3 text-sm font-semibold ${darkMode ? "border-red-900/60 bg-red-950/30 text-red-200" : "border-red-200 bg-red-50 text-red-700"}`}>
                               This order was cancelled. Payment and cancellation actions are unavailable.
                             </div>
-                          ) : !isProjectFinished ? <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                          ) : <div className="mt-6 grid gap-3 sm:grid-cols-2">
                             {isFullyPaid ? (
                               <div className={`rounded-xl border px-4 py-3 text-sm font-bold sm:col-span-2 ${darkMode ? "border-emerald-800 bg-emerald-950/40 text-emerald-300" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
                                 <p>Payment is fully paid. No additional payment submission is needed.</p>
@@ -5980,6 +6143,9 @@ function CustomerDashboard() {
                               <div className={`rounded-xl border px-4 py-3 text-sm font-medium sm:col-span-2 ${darkMode ? "border-sky-800 bg-sky-950/50 text-sky-200" : "border-sky-200 bg-sky-50 text-sky-800"}`}>
                                 <p>
                                   We've notified admin that you paid {formatCurrency(paymentProofSubmission?.amount ?? order.payment_proof_amount ?? 0)}. This is pending confirmation — we'll notify you here once it's verified.
+                                </p>
+                                <p className="mt-2 text-xs">
+                                  Current remaining balance: {formatCurrency(balanceAmount)}. You can submit another payment after this proof is confirmed.
                                 </p>
                                 {lastPaymentProofUrl && (
                                   <a
@@ -6001,7 +6167,9 @@ function CustomerDashboard() {
                                       Amount paid <span className="text-red-500">(required)</span>
                                     </label>
                                     <p className={`mb-1.5 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
-                                      Required downpayment: {formatRequiredPaymentAmount(requiredPaymentAmount)}. Enter any amount up to {formatRequiredPaymentAmount(balanceAmount)}.
+                                      {isDownpaymentCovered
+                                        ? `Downpayment covered. Remaining balance: ${formatRequiredPaymentAmount(balanceAmount)}. Enter any amount up to ${formatRequiredPaymentAmount(balanceAmount)}.`
+                                        : `Downpayment still due: ${formatRequiredPaymentAmount(downpaymentBalance)}. Enter any amount up to ${formatRequiredPaymentAmount(balanceAmount)}.`}
                                     </p>
                                     <input
                                       id={`payment-amount-${orderId}`}
@@ -6082,7 +6250,7 @@ function CustomerDashboard() {
                                 Cancel request
                               </button>
                             )}
-                          </div> : null}
+                          </div>}
 
                         </div>
                       )}
@@ -6395,10 +6563,12 @@ function CustomerDashboard() {
                         type="file"
                         accept="image/*"
                         multiple
+                        disabled={reviewPhotoUploading || reviewFormLoading || orderReviewForm.photos.length >= 5}
                         onChange={handleOrderReviewPhotoChange}
                         className="sr-only"
                       />
                     </label>
+                    {reviewPhotoUploading && <p role="status" className="mt-2 text-xs font-semibold text-emerald-600">Uploading photos...</p>}
                     {orderReviewForm.photoPreviews.length > 0 && (
                       <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5">
                         {orderReviewForm.photoPreviews.map((src, index) => (
@@ -6623,6 +6793,11 @@ function CustomerDashboard() {
                 {cartQuantity} item{cartQuantity === 1 ? "" : "s"}
               </div>
             </div>
+            {cartActionError && (
+              <div role="alert" className={`mt-4 rounded-xl border px-3 py-2.5 text-sm ${darkMode ? "border-amber-700 bg-amber-950/40 text-amber-200" : "border-amber-300 bg-amber-50 text-amber-800"}`}>
+                {cartActionError}
+              </div>
+            )}
             {!cartLoaded ? (
               <div className="mt-5 grid min-h-0 flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_280px] xl:gap-6" aria-live="polite" aria-busy="true">
                 <section className="flex min-h-0 min-w-0 flex-col">
@@ -6876,14 +7051,17 @@ function CustomerDashboard() {
 
         {activeTab === "notifications" && (
           <>
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
+            <div className="mb-5 flex flex-col gap-3 border-b pb-4 sm:mb-6 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <h2 className={`text-2xl font-bold ${darkMode ? "text-white" : "text-slate-950"}`}>Notifications</h2>
-                <p className={darkMode ? "text-slate-300" : "text-slate-500"}>Stay updated on your orders and project status.</p>
+                <h2 className={`text-2xl font-black ${darkMode ? "text-white" : "text-slate-950"}`}>Notifications</h2>
+                <p className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Stay updated on your orders and project status.</p>
               </div>
+              <span className={`w-fit rounded-full px-3 py-1.5 text-xs font-semibold ${unreadNotificationCount ? darkMode ? "bg-red-950/60 text-red-300" : "bg-red-50 text-red-700" : darkMode ? "bg-slate-800 text-slate-400" : "bg-slate-100 text-slate-500"}`}>
+                {unreadNotificationCount} unread
+              </span>
             </div>
 
-            <div className={`mb-6 inline-flex flex-wrap gap-1 rounded-2xl border p-1 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-100"}`}>
+            <div className={`mb-4 flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl border p-1 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-100"}`} role="group" aria-label="Filter notifications">
               {[
                 ["all", "All", customerNotificationItems.length],
                 ["unread", "Unread", unreadNotificationCount],
@@ -6893,7 +7071,7 @@ function CustomerDashboard() {
                   key={filter}
                   type="button"
                   onClick={() => setNotificationFilter(filter)}
-                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                  className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 sm:px-4 sm:text-sm ${
                     notificationFilter === filter
                       ? darkMode
                         ? "bg-slate-950 text-white shadow-sm"
@@ -6909,14 +7087,16 @@ function CustomerDashboard() {
             </div>
 
             {ordersLoading ? (
-              <div className="space-y-4">
+              <div className="space-y-2.5 sm:space-y-3" aria-label="Loading notifications">
                 {[...Array(3)].map((_, index) => (
-                  <div key={index} className="animate-pulse rounded-3xl bg-white p-8 shadow" />
+                  <div key={index} className={`h-24 animate-pulse rounded-2xl border ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`} />
                 ))}
               </div>
             ) : filteredNotifications.length === 0 ? (
-              <div className={`rounded-3xl p-10 text-center shadow ${darkMode ? "bg-slate-800 text-slate-200" : "bg-white text-gray-600"}`}>
-                <p className={darkMode ? "text-slate-300" : "text-gray-600"}>{notificationFilter === "all" ? "No notifications yet. You'll see updates about your orders here." : `No ${notificationFilter} notifications.`}</p>
+              <div className={`flex flex-col items-center rounded-2xl border border-dashed px-5 py-12 text-center ${darkMode ? "border-slate-700 bg-slate-800/50 text-slate-200" : "border-slate-200 bg-white text-slate-600"}`}>
+                <span className={`flex h-11 w-11 items-center justify-center rounded-full ${darkMode ? "bg-slate-800 text-slate-400" : "bg-slate-100 text-slate-500"}`}><Bell size={19} /></span>
+                <p className="mt-3 text-sm font-semibold">{notificationFilter === "all" ? "No notifications yet" : `No ${notificationFilter} notifications`}</p>
+                <p className={`mt-1 text-xs ${darkMode ? "text-slate-500" : "text-slate-400"}`}>Updates about your orders will appear here.</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -6952,26 +7132,7 @@ function CustomerDashboard() {
                         return "A contract has been sent for your review and acceptance.";
                       }
 
-                      switch (status) {
-                        case "order_submitted":
-                          return "Your order has been submitted and is awaiting admin review.";
-                        case "admin_review":
-                          return "Your order is under admin review.";
-                        case "site_inspection":
-                          return "Your project site inspection is scheduled.";
-                        case "contract_accepted":
-                          return "Your contract has been accepted. Fabrication is starting soon.";
-                        case "fabrication":
-                          return "Your project is currently in fabrication.";
-                        case "installation":
-                          return "Your project installation is in progress.";
-                        case "completed":
-                          return "Your project has been completed successfully!";
-                        case "cancelled":
-                          return "Your order has been cancelled.";
-                        default:
-                          return `Order status: ${getOrderStatusLabel(order.status)}`;
-                      }
+                      return getCustomerOrderNotificationMessage(order);
                     };
 
                     const notificationIcon = () => {
@@ -6983,48 +7144,49 @@ function CustomerDashboard() {
                     };
 
                     return (
-                      <div
+                      <article
                         key={order.notificationId}
-                        className={`rounded-[28px] border p-5 shadow-sm transition-colors ${
+                        className={`rounded-2xl border p-3 shadow-sm transition-colors sm:p-5 ${
                           isRead
                             ? darkMode ? "border-slate-700 bg-slate-800/60" : "border-slate-200 bg-white"
                             : darkMode ? "border-red-400/50 bg-slate-800/90" : "border-red-300/80 bg-red-50/40"
                         }`}
                       >
-                        <div className="flex gap-4">
-                          <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${darkMode ? "bg-slate-700" : "bg-slate-100"} ${notificationIcon()}`}>
-                            <Bell size={20} />
+                        <div className="flex gap-3 sm:gap-4">
+                          <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl sm:h-12 sm:w-12 ${darkMode ? "bg-slate-700" : "bg-slate-100"} ${notificationIcon()}`}>
+                            {isPaymentNotification ? <CreditCard size={18} /> : isDelayNotification ? <AlertTriangle size={18} /> : isContractNotification ? <FileText size={18} /> : status === "completed" ? <CheckCircle size={18} /> : <Bell size={18} />}
                           </div>
 
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-start justify-between gap-2">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <h3 className={`font-semibold break-words ${darkMode ? "text-white" : "text-slate-950"}`}>{product.name || "Project Update"}</h3>
+                                  <h3 className={`text-sm font-bold break-words sm:text-base ${darkMode ? "text-white" : "text-slate-950"}`}>{product.name || "Project Update"}</h3>
                                   {!isRead && <span className="rounded-full bg-red-100 px-2 py-0.5 text-[9px] font-bold uppercase text-red-700">New</span>}
                                 </div>
-                                <p className={`mt-1 text-sm ${isRead ? darkMode ? "text-slate-400" : "text-slate-500" : darkMode ? "text-slate-200" : "text-slate-700"}`}>{notificationMessage()}</p>
-                                <p className="mt-2 text-xs text-slate-400">{order.tracking}</p>
+                                <p className={`mt-1 text-xs leading-5 sm:text-sm ${isRead ? darkMode ? "text-slate-400" : "text-slate-500" : darkMode ? "text-slate-200" : "text-slate-700"}`}>{notificationMessage()}</p>
+                                <p className={`mt-2 text-[10px] font-medium uppercase tracking-wide sm:text-xs ${darkMode ? "text-slate-500" : "text-slate-400"}`}>{order.tracking}</p>
                               </div>
-                              <span className={`inline-flex shrink-0 items-center rounded-full px-3 py-1 text-xs font-semibold ${getOrderStatusClasses(isDelayNotification ? "Delayed" : order.status)}`}>
+                              <span className={`inline-flex w-fit shrink-0 items-center rounded-full px-2.5 py-1 text-[10px] font-semibold sm:text-xs ${getOrderStatusClasses(isDelayNotification ? "Delayed" : order.status)}`}>
                                 {isDelayNotification ? "Delayed" : getOrderStatusLabel(order.status)}
                               </span>
                             </div>
 
-                            <div className={`mt-3 flex items-center justify-between text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                            <div className={`mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-xs ${darkMode ? "border-slate-700 text-slate-400" : "border-slate-100 text-slate-500"}`}>
                               <span className={isRead ? "text-slate-400" : darkMode ? "font-medium text-slate-300" : "font-medium text-slate-600"} title={formatDateTimeToMMMDDYYYY(order.notificationDate) || undefined}>
                                 {formatTimeAgo(order.notificationDate)}
                               </span>
                               <button
                                 onClick={() => openOrderDetailsFromNotification(order, order.notificationId)}
-                                className={darkMode ? "text-white hover:text-red-300 font-semibold transition" : "text-slate-950 hover:text-red-600 font-semibold transition"}
+                                className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${darkMode ? "text-red-300 hover:bg-red-950/40" : "text-red-700 hover:bg-red-50"}`}
                               >
                                 {isContractNotification ? "View Contract" : "View Order"}
+                                <ArrowUpRight size={14} aria-hidden="true" />
                               </button>
                             </div>
                           </div>
                         </div>
-                      </div>
+                      </article>
                     );
                   })}
               </div>
@@ -7617,7 +7779,7 @@ function CustomerDashboard() {
 
                         <div className="min-w-0 text-center xl:text-left">
                           <p className={`text-[9px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Amount</p>
-                          <p className="mt-1 text-base font-black text-red-600 sm:text-lg">{formatCurrency(order.contract_amount || order.total_amount)}</p>
+                          <p className="mt-1 text-base font-black text-red-600 sm:text-lg">{formatCurrency(getFinalProjectCost(order))}</p>
                         </div>
 
                         <div className="min-w-0 text-center xl:text-left">

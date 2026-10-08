@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getEstimatedInstallationDate, validateInspectionPayload } from "./SiteInspection";
+import { getEstimatedInstallationDate, hasValidEstimatedInstallationDate, validateInspectionPayload } from "./SiteInspection";
 
 describe("site inspection validation", () => {
   const validPayload = {
@@ -19,7 +19,7 @@ describe("site inspection validation", () => {
     ],
   };
 
-  it("requires both inspection and estimated installation dates", () => {
+  it("requires the inspection date but allows the estimated installation date to be omitted", () => {
     const result = validateInspectionPayload({
       ...validPayload,
       inspection_date: "",
@@ -27,7 +27,14 @@ describe("site inspection validation", () => {
     });
 
     expect(result.inspection_date).toBe("Inspection date is required.");
-    expect(result.estimated_installation_date).toBe("Estimated installation date is required.");
+    expect(result.estimated_installation_date).toBeUndefined();
+  });
+
+  it("accepts an inspection without an estimated installation date", () => {
+    expect(validateInspectionPayload({
+      ...validPayload,
+      estimated_installation_date: "",
+    })).toEqual({});
   });
 
   it("accepts a complete inspection payload", () => {
@@ -38,5 +45,15 @@ describe("site inspection validation", () => {
     expect(getEstimatedInstallationDate({ estimated_installation_date: "2026-10-15" })).toBe("2026-10-15");
     expect(getEstimatedInstallationDate({ estimatedInstallationDate: "2026-10-16" })).toBe("2026-10-16");
     expect(getEstimatedInstallationDate({ estInstallDate: "2026-10-17" })).toBe("2026-10-17");
+  });
+
+  it("only treats a valid estimated installation date as contract-ready", () => {
+    const inspectionDate = "2026-10-10";
+    expect(hasValidEstimatedInstallationDate({ inspection_date: inspectionDate, estimated_installation_date: "" })).toBe(false);
+    expect(hasValidEstimatedInstallationDate({ inspection_date: inspectionDate, estimated_installation_date: null })).toBe(false);
+    expect(hasValidEstimatedInstallationDate({ inspection_date: inspectionDate, estimated_installation_date: "not-a-date" })).toBe(false);
+    expect(hasValidEstimatedInstallationDate({ inspection_date: inspectionDate, estimated_installation_date: "2026-02-30" })).toBe(false);
+    expect(hasValidEstimatedInstallationDate({ inspection_date: inspectionDate, estimated_installation_date: "2026-10-10" })).toBe(false);
+    expect(hasValidEstimatedInstallationDate({ inspection_date: inspectionDate, estimated_installation_date: "2026-10-15" })).toBe(true);
   });
 });

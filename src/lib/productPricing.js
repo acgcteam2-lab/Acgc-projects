@@ -75,6 +75,50 @@ export const getProductLineTotal = (product = {}, item = {}) => {
   return Math.round(unitPrice * quantity * 100) / 100;
 };
 
+export const getMeasuredProductLineTotal = (product = {}, item = {}) => {
+  const method = getPricingMethod(product, item);
+  const overridePrice = toNonNegativeNumber(product.estimated_price_override ?? item.estimated_price_override);
+  const configuredFixedPrice = toNonNegativeNumber(product.base_price ?? item.base_price)
+    || toNonNegativeNumber(product.estimated_price ?? item.estimated_price)
+    || toNonNegativeNumber(product.unit_price ?? item.unit_price);
+  const measuredPrice = overridePrice || configuredFixedPrice;
+  const width = Number(item.width ?? item.dimensions?.width) || 0;
+  const height = Number(item.height ?? item.dimensions?.height) || 0;
+  const productWidth = Number(product.width) || 0;
+  const productHeight = Number(product.height) || 0;
+
+  if (!measuredPrice || width <= 0 || height <= 0) {
+    return getProductLineTotal(product, item);
+  }
+
+  const itemUnit = item.measurement_unit || item.measurementUnit || item.dimensions?.unit || product.measurement_unit || "in";
+  const productUnit = product.measurement_unit || "in";
+  const measuredArea = toSquareFeet(width, height, itemUnit);
+  const standardArea = productWidth > 0 && productHeight > 0
+    ? toSquareFeet(productWidth, productHeight, productUnit)
+    : toNonNegativeNumber(product.estimated_area);
+  const isMeasuredOverride = ["sqft", "per_sqft"].includes(method);
+  const isDimensionedFixedPrice = method === "fixed" && standardArea > 0;
+
+  if (!isMeasuredOverride && !isDimensionedFixedPrice) {
+    return getProductLineTotal(product, item);
+  }
+
+  if (standardArea > 0 && Math.abs(measuredArea - standardArea) <= 0.01) {
+    return getProductLineTotal(product, item);
+  }
+
+  if (isDimensionedFixedPrice) {
+    const quantity = getQuantity(item);
+    return Math.round((measuredPrice * measuredArea / standardArea * quantity) * 100) / 100;
+  }
+
+  return getProductLineTotal(
+    { ...product, estimated_price_override: 0 },
+    { ...item, estimated_price_override: 0 },
+  );
+};
+
 export const buildProductPriceSnapshot = (product, item) => {
   const lineTotal = getProductLineTotal(product, item);
   const method = getPricingMethod(product, item);

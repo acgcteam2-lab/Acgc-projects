@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { X, UploadCloud, Plus, CheckCircle2, Lock, Trash2, AlertTriangle, ChevronDown, Scissors, Wrench, Package, Truck, Check } from "lucide-react";
+import { X, UploadCloud, Plus, CheckCircle2, Lock, Trash2, AlertTriangle, ChevronDown, Scissors, Wrench, Package, Truck, Check, Pencil } from "lucide-react";
 import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, getTodayIso } from "@/lib/dateUtils";
+import { getInstallationDateError, getMinimumInstallationDate } from "@/lib/installationSchedule";
 
 const focusableSelectors = [
   "button",
@@ -16,6 +17,11 @@ const PARENT_STAGE_DEFINITIONS = [
   { key: "assembly", name: "Assembly" },
   { key: "fabrication", name: "Fabrication" },
   { key: "installation", name: "Installation" },
+];
+
+const getMainStagePresets = () => [
+  ...PARENT_STAGE_DEFINITIONS,
+  { key: "custom_stage", name: "Custom Stage", isCustom: true },
 ];
 
 const VALID_STAGE_STATUSES = ["pending", "in_progress", "done", "delayed", "on_hold"];
@@ -75,19 +81,45 @@ const normalizeStage = (source = {}, key, name, defaultStatus = "pending") => {
   };
 };
 
-const findStageSource = (stageRows = []) => {
-  const result = { custom: [] };
-  stageRows.forEach((stage) => {
-    const candidate = (stage.key || stage.name || "").toString().toLowerCase();
-    if (candidate.includes("installation_scheduling") || candidate.includes("installation scheduled") || candidate.includes("installation scheduling")) {
-      result.custom.push(stage);
-    } else if (candidate.includes("cutting")) result.cutting = stage;
-    else if (candidate.includes("assembly")) result.assembly = stage;
-    else if (candidate.includes("fabrication") || candidate.includes("processing")) result.fabrication = stage;
-    else if (candidate.includes("installation") || candidate.includes("site_inspection")) result.installation = stage;
-    else result.custom.push(stage);
+const normalizeProjectStages = (stageRows = []) => {
+  const seenParentKeys = new Set();
+  const normalizedStages = [];
+
+  stageRows.forEach((source, index) => {
+    if (!source) return;
+    const candidate = `${source.key || ""} ${source.name || ""}`.toLowerCase();
+    const isInstallationScheduling = candidate.includes("installation_scheduling")
+      || candidate.includes("installation scheduled")
+      || candidate.includes("installation scheduling");
+    const parentDefinition = isInstallationScheduling ? null : PARENT_STAGE_DEFINITIONS.find(({ key, name }) => (
+      candidate.includes(key) || candidate.includes(name.toLowerCase())
+      || (key === "fabrication" && candidate.includes("processing"))
+      || (key === "installation" && candidate.includes("site_inspection"))
+    ));
+
+    if (parentDefinition) {
+      if (seenParentKeys.has(parentDefinition.key)) return;
+      seenParentKeys.add(parentDefinition.key);
+      normalizedStages.push(normalizeStage(
+        source,
+        parentDefinition.key,
+        parentDefinition.name,
+        parentDefinition.key === "cutting" ? "in_progress" : "pending"
+      ));
+      return;
+    }
+
+    const name = String(source.name || "New Stage").trim();
+    const generatedKey = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    const key = String(source.key || generatedKey || `custom_stage_${index + 1}`);
+    normalizedStages.push(normalizeStage(source, key, name, "pending"));
   });
-  return result;
+
+  const missingParentStages = PARENT_STAGE_DEFINITIONS
+    .filter(({ key }) => !seenParentKeys.has(key))
+    .map(({ key, name }) => normalizeStage({}, key, name, key === "cutting" ? "in_progress" : "pending"));
+
+  return [...normalizedStages, ...missingParentStages];
 };
 
 const initialStages = [];
@@ -95,16 +127,26 @@ const initialStages = [];
 export default function ProgressEditModal({ project, onClose, onSave }) {
   const [progress, setProgress] = useState(project.progress || 0);
   const [status, setStatus] = useState(project.status || "Pending");
-  const [installationDate, setInstallationDate] = useState(
-    project.installation ? new Date(project.installation) : null
-  );
+  const [installationDate, setInstallationDate] = useState(() => {
+    const value = project.estimated_installation_date || project.rawOrder?.estimated_installation_date;
+    if (!value) return "";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+  });
+  const inspectionDate = project.inspection_date || project.rawOrder?.inspection_date;
   const [stages, setStages] = useState(initialStages);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [errorMessage, setErrorMessage] = useState("");
   const [modalErrorMessage, setModalErrorMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [newSubStageName, setNewSubStageName] = useState("");
-  const [newMainStageName, setNewMainStageName] = useState("");
+  const [newMainStagePresetKey, setNewMainStagePresetKey] = useState("");
+  const [newCustomMainStageName, setNewCustomMainStageName] = useState("");
+  const [newMainStageAfterKey, setNewMainStageAfterKey] = useState("");
+  const [editingMainStageIndex, setEditingMainStageIndex] = useState(null);
+  const [editedMainStageName, setEditedMainStageName] = useState("");
+  const [showRemoveMainStageModal, setShowRemoveMainStageModal] = useState(false);
+  const [removeMainStageIndex, setRemoveMainStageIndex] = useState(null);
   const [newSubStageDescription, setNewSubStageDescription] = useState("");
   const [newSubStageStatus, setNewSubStageStatus] = useState("pending");
   const [newSubStageFiles, setNewSubStageFiles] = useState([]);
@@ -127,19 +169,16 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
   const previousActiveElement = useRef(null);
 
   useEffect(() => {
-    const projectStages = project.stages || project.progress_stages || [];
-    const sourceMap = findStageSource(projectStages);
-    const mapped = PARENT_STAGE_DEFINITIONS.map(({ key, name }, index) =>
-      normalizeStage(sourceMap[key], key, name, index === 0 ? "in_progress" : "pending")
-    );
-    const customStages = (sourceMap.custom || []).map((source, index) => {
-      const name = String(source.name || "New Stage").trim();
-      const generatedKey = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-      const key = String(source.key || generatedKey || `custom_stage_${index + 1}`);
-      return normalizeStage(source, key, name, "in_progress");
-    });
+    const projectStages = Array.isArray(project.stages)
+      ? project.stages
+      : Array.isArray(project.progress_stages) ? project.progress_stages : [];
+    const nextStages = normalizeProjectStages(projectStages);
+    const currentStage = nextStages.find((stage) => String(stage.status || "").trim().toLowerCase().replace(/[_\s]+/g, "-") === "in-progress")
+      || nextStages.find((stage) => !(stage.completed && stage.saved && !stage.canUndoCompletion))
+      || nextStages.at(-1);
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setStages([...mapped, ...customStages]);
+    setStages(nextStages);
+    setNewMainStageAfterKey(currentStage?.key || "");
   }, [project.stages, project.progress_stages]);
 
   useEffect(() => {
@@ -206,19 +245,111 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
     return index === activeStageIndex && !(stage?.completed && stage?.saved && !stage?.canUndoCompletion);
   };
 
-  const addMainStage = () => {
-    const name = newMainStageName.trim();
+  const isCoreMainStage = (stage) => PARENT_STAGE_DEFINITIONS.some(({ key }) => key === stage?.key);
+
+  const startEditingMainStage = (stageIndex) => {
+    const stage = stages[stageIndex];
+    if (!stage || isCoreMainStage(stage)) return;
+    setEditingMainStageIndex(stageIndex);
+    setEditedMainStageName(stage.name);
+    setErrorMessage("");
+  };
+
+  const saveMainStageName = () => {
+    if (editingMainStageIndex === null) return;
+    const name = editedMainStageName.trim();
     if (!name) {
-      setErrorMessage("Enter a title for the new stage.");
+      setErrorMessage("Stage name is required.");
       return;
     }
     const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-    if (!key || stages.some((stage) => stage.key === key || stage.name.toLowerCase() === name.toLowerCase())) {
+    if (!key || stages.some((stage, index) => (
+      index !== editingMainStageIndex && (stage.key === key || stage.name.toLowerCase() === name.toLowerCase())
+    ))) {
       setErrorMessage("A stage with that name already exists.");
       return;
     }
-    setStages((current) => [...current, normalizeStage({ status: "in_progress" }, key, name, "in_progress")]);
-    setNewMainStageName("");
+
+    const oldKey = stages[editingMainStageIndex].key;
+    setStages((current) => current.map((stage, index) => (
+      index === editingMainStageIndex ? { ...stage, key, name } : stage
+    )));
+    setNewMainStageAfterKey((current) => current === oldKey ? key : current);
+    setEditingMainStageIndex(null);
+    setEditedMainStageName("");
+    setErrorMessage("");
+  };
+
+  const cancelEditingMainStage = () => {
+    setEditingMainStageIndex(null);
+    setEditedMainStageName("");
+    setErrorMessage("");
+  };
+
+  const openRemoveMainStageConfirmation = (stageIndex) => {
+    const stage = stages[stageIndex];
+    if (!stage || isCoreMainStage(stage)) return;
+    setRemoveMainStageIndex(stageIndex);
+    setErrorMessage("");
+    setShowRemoveMainStageModal(true);
+  };
+
+  const closeRemoveMainStageConfirmation = () => {
+    setShowRemoveMainStageModal(false);
+    setRemoveMainStageIndex(null);
+  };
+
+  const removeMainStage = () => {
+    if (removeMainStageIndex === null || !stages[removeMainStageIndex] || isCoreMainStage(stages[removeMainStageIndex])) return;
+    const removedKey = stages[removeMainStageIndex].key;
+    const fallbackStage = stages[removeMainStageIndex - 1] || stages[removeMainStageIndex + 1];
+    setStages((current) => current.filter((_, index) => index !== removeMainStageIndex));
+    setNewMainStageAfterKey((current) => current === removedKey ? fallbackStage?.key || "" : current);
+    if (editingMainStageIndex === removeMainStageIndex) cancelEditingMainStage();
+    closeRemoveMainStageConfirmation();
+  };
+
+  const addMainStage = () => {
+    const preset = getMainStagePresets().find(({ key }) => key === newMainStagePresetKey);
+    if (!preset) {
+      setErrorMessage("Select a preset stage to add.");
+      return;
+    }
+
+    let stageToInsert;
+    let nextStages;
+    if (preset.isCustom) {
+      const name = newCustomMainStageName.trim();
+      if (!name) {
+        setErrorMessage("Enter a name for the custom stage.");
+        return;
+      }
+      const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+      if (!key || stages.some((stage) => stage.key === key || stage.name.toLowerCase() === name.toLowerCase())) {
+        setErrorMessage("A stage with that name already exists.");
+        return;
+      }
+      stageToInsert = normalizeStage({}, key, name, "pending");
+      nextStages = [...stages];
+    } else {
+      const existingIndex = stages.findIndex((stage) => stage.key === preset.key);
+      if (existingIndex >= 0 && newMainStageAfterKey === preset.key) {
+        setErrorMessage("Choose a different stage to insert after.");
+        return;
+      }
+      nextStages = [...stages];
+      stageToInsert = existingIndex >= 0
+        ? nextStages.splice(existingIndex, 1)[0]
+        : normalizeStage({}, preset.key, preset.name, "pending");
+    }
+
+    const selectedIndex = nextStages.findIndex((stage) => stage.key === newMainStageAfterKey);
+    const insertionIndex = selectedIndex < 0 ? nextStages.length : selectedIndex + 1;
+    nextStages.splice(insertionIndex, 0, stageToInsert);
+    setStages(nextStages);
+    setNewMainStageAfterKey(stageToInsert.key);
+    setNewMainStagePresetKey("");
+    setNewCustomMainStageName("");
     setErrorMessage("");
   };
 
@@ -811,6 +942,11 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
 
   const handleSave = async () => {
     setErrorMessage("");
+    const installationDateError = getInstallationDateError(inspectionDate, installationDate);
+    if (installationDateError) {
+      setErrorMessage(installationDateError);
+      return;
+    }
     setIsSaving(true);
     setUploadProgress(0);
 
@@ -823,7 +959,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
           ...project,
           progress,
           status,
-          installation: installationDate ? installationDate.toISOString() : "",
+          installation: installationDate ? new Date(`${installationDate}T00:00:00.000Z`).toISOString() : "",
           stages: payloadStages,
         },
         fileContexts,
@@ -923,6 +1059,19 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
             </div>
             <p className="mt-2 text-xs text-slate-500">Automatically calculated from completed stages.</p>
           </div>
+          <div className="mt-4 max-w-sm">
+            <label htmlFor="progress-installation-date" className="mb-1.5 block text-sm font-medium text-slate-700">
+              Scheduled Installation Date
+            </label>
+            <input
+              id="progress-installation-date"
+              type="date"
+              value={installationDate}
+              min={getMinimumInstallationDate(inspectionDate)}
+              onChange={(event) => setInstallationDate(event.target.value)}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            />
+          </div>
         </div>
 
         <div className="min-h-0 max-h-none flex-1 overflow-y-auto bg-slate-50 px-3 py-3 sm:px-4 lg:max-h-[460px]">
@@ -933,22 +1082,55 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
             </div>
           )}
 
-          <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 sm:flex-row">
-            <label className="sr-only" htmlFor="new-main-stage-name">New main stage name</label>
-            <input
-              id="new-main-stage-name"
-              value={newMainStageName}
-              onChange={(event) => setNewMainStageName(event.target.value)}
-              placeholder="New main stage name"
-              className="min-h-10 min-w-0 flex-1 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            />
-            <button
-              type="button"
-              onClick={addMainStage}
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 text-sm font-semibold text-white hover:bg-blue-800"
+          <div className="rounded-xl border border-slate-200 bg-white p-3">
+            <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Add New Stage</h3>
+            <label className="sr-only" htmlFor="new-main-stage-preset">Select a preset stage</label>
+            <select
+              id="new-main-stage-preset"
+              value={newMainStagePresetKey}
+              onChange={(event) => setNewMainStagePresetKey(event.target.value)}
+              className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             >
-              <Plus size={16} aria-hidden="true" /> Add Main Stage
-            </button>
+              <option value="">-- Select a Preset Stage --</option>
+              {getMainStagePresets().map((preset) => (
+                <option key={preset.key} value={preset.key}>
+                  {preset.name}
+                </option>
+              ))}
+            </select>
+            {getMainStagePresets().find(({ key }) => key === newMainStagePresetKey)?.isCustom && (
+              <label className="mt-2 block">
+                <span className="sr-only">Custom stage name</span>
+                <input
+                  aria-label="Custom stage name"
+                  value={newCustomMainStageName}
+                  onChange={(event) => setNewCustomMainStageName(event.target.value)}
+                  placeholder="Enter custom stage name"
+                  className="min-h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </label>
+            )}
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label className="shrink-0 text-sm font-medium text-slate-600" htmlFor="new-main-stage-after">Insert after:</label>
+              <select
+                id="new-main-stage-after"
+                value={newMainStageAfterKey}
+                onChange={(event) => setNewMainStageAfterKey(event.target.value)}
+                className="min-h-10 min-w-0 flex-1 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              >
+                {stages.map((stage, index) => (
+                  <option key={stage.key} value={stage.key}>{index + 1}. {stage.name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={addMainStage}
+                disabled={!newMainStagePresetKey}
+                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-700 px-4 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Plus size={16} aria-hidden="true" /> Add
+              </button>
+            </div>
           </div>
 
           {stages.map((stage, stageIndex) => {
@@ -1033,6 +1215,38 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                 </summary>
 
                 <div className="border-t border-slate-200 px-3 pb-4 sm:px-4">
+                {!isCoreMainStage(stage) && (
+                  <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    {editingMainStageIndex === stageIndex ? (
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <label className="sr-only" htmlFor={`edit-main-stage-name-${stage.key}`}>Edit stage name</label>
+                        <input
+                          id={`edit-main-stage-name-${stage.key}`}
+                          aria-label={`Edit stage name for ${stage.name}`}
+                          value={editedMainStageName}
+                          onChange={(event) => setEditedMainStageName(event.target.value)}
+                          className="min-h-10 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        />
+                        <div className="flex justify-end gap-2">
+                          <button type="button" onClick={cancelEditingMainStage} className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-100">Cancel</button>
+                          <button type="button" onClick={saveMainStageName} className="min-h-10 rounded-lg bg-blue-700 px-3 text-sm font-semibold text-white hover:bg-blue-800">Save Name</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-slate-500">Added stage</span>
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => startEditingMainStage(stageIndex)} aria-label={`Edit added stage ${stage.name}`} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100">
+                            <Pencil size={14} aria-hidden="true" /> Edit
+                          </button>
+                          <button type="button" onClick={() => openRemoveMainStageConfirmation(stageIndex)} aria-label={`Remove added stage ${stage.name}`} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 text-xs font-semibold text-red-700 hover:bg-red-100">
+                            <Trash2 size={14} aria-hidden="true" /> Remove
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="mt-4 grid gap-3 min-[480px]:grid-cols-2">
                   <label className="block text-sm text-gray-600">
                     Stage State
@@ -1719,6 +1933,27 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                 >
                   Remove Sub-Stage
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showRemoveMainStageModal && removeMainStageIndex !== null && stages[removeMainStageIndex] && (
+          <div
+            className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) closeRemoveMainStageConfirmation();
+            }}
+            role="presentation"
+          >
+            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-lg" role="alertdialog" aria-modal="true" aria-labelledby="remove-main-stage-title">
+              <h3 id="remove-main-stage-title" className="text-lg font-semibold text-slate-900">Remove Added Stage</h3>
+              <p className="mt-2 text-sm text-slate-600">
+                Remove “{stages[removeMainStageIndex].name}” and its progress details? This change will be saved when you save progress.
+              </p>
+              <div className="mt-6 flex justify-end gap-3">
+                <button type="button" onClick={closeRemoveMainStageConfirmation} className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200">Cancel</button>
+                <button type="button" onClick={removeMainStage} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">Remove Stage</button>
               </div>
             </div>
           </div>

@@ -72,3 +72,113 @@ export const getOrderStatusClasses = (status) => {
       return "bg-slate-100 text-slate-700 border border-slate-200";
   }
 };
+
+const formatInspectionDate = (value) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+};
+
+export const getSiteInspectionNotificationMessage = (order = {}) => {
+  const inspectionStatus = normalizeOrderStatus(order?.inspection_status);
+  const inspectionDate =
+    order?.inspection_date ||
+    order?.inspectionDate ||
+    order?.site_inspection_date ||
+    order?.scheduledInspectionDate;
+
+  if (inspectionStatus === "completed" || order?.inspection_completed_at || order?.inspectionCompletedAt) {
+    return "Your site inspection has been completed.";
+  }
+
+  if (inspectionDate) {
+    const formattedDate = formatInspectionDate(inspectionDate);
+    return formattedDate
+      ? `Your site inspection has been scheduled for ${formattedDate}.`
+      : "Your site inspection has been scheduled.";
+  }
+
+  return "Your order request has been received. Our team will contact you to arrange a site inspection.";
+};
+
+export const getAdminSiteInspectionNotificationMessage = (order = {}, customerName = "Customer") => {
+  const inspectionStatus = normalizeOrderStatus(order?.inspection_status);
+  const inspectionDate =
+    order?.inspection_date ||
+    order?.inspectionDate ||
+    order?.site_inspection_date ||
+    order?.scheduledInspectionDate;
+
+  if (inspectionStatus === "completed" || order?.inspection_completed_at || order?.inspectionCompletedAt) {
+    return `Site inspection for ${customerName} has been completed.`;
+  }
+
+  if (inspectionDate) {
+    const formattedDate = formatInspectionDate(inspectionDate);
+    return formattedDate
+      ? `Site inspection scheduled for ${customerName} on ${formattedDate}.`
+      : `Site inspection scheduled for ${customerName}.`;
+  }
+
+  return `Site inspection is pending for ${customerName}.`;
+};
+
+export const getCustomerOrderNotificationMessage = (order = {}) => {
+  const status = normalizeOrderStatusKey(order?.status);
+  const contractStatus = normalizeOrderStatusKey(order?.contract_status);
+  const inspectionStatus = normalizeOrderStatus(order?.inspection_status);
+  const inspectionDate =
+    order?.inspection_date ||
+    order?.inspectionDate ||
+    order?.site_inspection_date ||
+    order?.scheduledInspectionDate;
+
+  if (inspectionStatus === "completed" || order?.inspection_completed_at || order?.inspectionCompletedAt) {
+    return "Your site inspection has been completed.";
+  }
+
+  if (status === "contract_accepted" || contractStatus === "accepted") {
+    return "Your contract has been accepted successfully. Your order is now awaiting admin transaction approval.";
+  }
+
+  if (status === "contract_sent" || contractStatus === "sent") {
+    return "Your contract has been sent for your review and acceptance.";
+  }
+
+  if (status === "order_submitted") {
+    return "Your order has been submitted successfully and is awaiting admin review.";
+  }
+
+  if (status === "admin_review") {
+    return "Your order is currently under admin review.";
+  }
+
+  if (status === "site_inspection") {
+    if (inspectionDate) {
+      const formattedDate = formatInspectionDate(inspectionDate);
+      return formattedDate
+        ? `Your site inspection has been scheduled for ${formattedDate}.`
+        : "Your site inspection has been scheduled.";
+    }
+    return getSiteInspectionNotificationMessage(order);
+  }
+
+  if (status === "fabrication") {
+    return "Your project is currently in fabrication.";
+  }
+
+  if (status === "installation") {
+    return "Your project installation is currently in progress.";
+  }
+
+  if (status === "completed") {
+    return "Your project has been completed successfully!";
+  }
+
+  if (status === "cancelled" || status === "contract_declined" || contractStatus === "declined") {
+    return "Your order has been cancelled.";
+  }
+
+  return `Order status: ${getOrderStatusLabel(order.status)}`;
+};

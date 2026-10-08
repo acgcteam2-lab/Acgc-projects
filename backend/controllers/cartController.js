@@ -1,4 +1,5 @@
 import Cart from "../models/Cart.js";
+import Order from "../models/Order.js";
 
 const normalizeCartItems = (items) => {
   if (!Array.isArray(items)) return null;
@@ -11,10 +12,27 @@ const normalizeCartItems = (items) => {
   }));
 };
 
+const excludePurchasedItems = async (customerId, items) => {
+  const cartIds = [...new Set(items.map((item) => String(item.cartId || "")).filter(Boolean))];
+  if (cartIds.length === 0) return items;
+
+  const orders = await Order.find({ customer: customerId, cart_item_ids: { $in: cartIds } })
+    .select("cart_item_ids")
+    .lean();
+  const purchasedCartIds = new Set(orders.flatMap((order) => order.cart_item_ids || []).map(String));
+
+  return items.filter((item) => !purchasedCartIds.has(String(item.cartId)));
+};
+
 export const getCart = async (req, res) => {
   try {
     const cart = await Cart.findOne({ customer: req.user.id }).lean();
-    return res.json({ success: true, items: cart?.items || [] });
+    const storedItems = cart?.items || [];
+    const items = await excludePurchasedItems(req.user.id, storedItems);
+    if (items.length !== storedItems.length) {
+      await Cart.updateOne({ customer: req.user.id }, { $set: { items } });
+    }
+    return res.json({ success: true, items });
   } catch (error) {
     console.error("Get cart error:", error);
     return res.status(500).json({ success: false, message: "Unable to load cart." });
@@ -23,10 +41,11 @@ export const getCart = async (req, res) => {
 
 export const saveCart = async (req, res) => {
   try {
-    const items = normalizeCartItems(req.body?.items);
-    if (!items) {
+    const normalizedItems = normalizeCartItems(req.body?.items);
+    if (!normalizedItems) {
       return res.status(400).json({ success: false, message: "Cart items must be an array." });
     }
+    const items = await excludePurchasedItems(req.user.id, normalizedItems);
 
     const cart = await Cart.findOneAndUpdate(
       { customer: req.user.id },

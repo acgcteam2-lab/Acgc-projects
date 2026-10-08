@@ -128,4 +128,18 @@ describe("getPaymentSummary", () => {
 
     expect(summary.requiredAmount).toBe(20120);
   });
+
+  it("recalculates a percentage downpayment from the current final project cost", () => {
+    const summary = getPaymentSummary({
+      total_amount: 120000,
+      contract_amount: 120000,
+      payment_terms: "50%_down_payment",
+      required_downpayment_amount: 50000,
+      downpayment_amount: 50000,
+    });
+
+    expect(summary.totalAmount).toBe(120000);
+    expect(summary.requiredAmount).toBe(60000);
+    expect(summary.remainingAmount).toBe(120000);
+  });
 });

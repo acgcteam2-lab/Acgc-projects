@@ -1,15 +1,15 @@
 import { apiFetch } from "./client";
 
-export const getOrders = () => apiFetch("/orders");
+export const getOrders = () => apiFetch("/orders", { cache: "no-store" });
 
 export const getAdminOrders = (params = {}) => {
   const query = new URLSearchParams(params).toString();
-  return apiFetch(`/orders/admin/list${query ? `?${query}` : ""}`);
+  return apiFetch(`/orders/admin/list${query ? `?${query}` : ""}`, { cache: "no-store" });
 };
 
 export const getAdminOrder = (orderId, module) => {
   const query = module ? `?module=${encodeURIComponent(module)}` : "";
-  return apiFetch(`/orders/admin/${orderId}${query}`);
+  return apiFetch(`/orders/admin/${orderId}${query}`, { cache: "no-store" });
 };
 
 export const getProductReviews = (productId) => apiFetch(`/orders/reviews/product/${encodeURIComponent(productId)}`);

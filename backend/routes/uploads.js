@@ -1,6 +1,12 @@
 import express from "express";
 import { authMiddleware, roleMiddleware } from "../middleware/auth.js";
-import uploadController, { paymentProofUploadMiddleware, productImageUploadMiddleware, uploadMiddleware } from "../controllers/uploadController.js";
+import uploadController, {
+	paymentProofUploadMiddleware,
+	productImageUploadMiddleware,
+	progressMediaUploadMiddleware,
+	reviewPhotoUploadMiddleware,
+	uploadMiddleware,
+} from "../controllers/uploadController.js";
 
 const router = express.Router();
 
@@ -18,6 +24,20 @@ router.post(
 	roleMiddleware(["customer", "admin", "super_admin"]),
 	paymentProofUploadMiddleware,
 	uploadController.uploadPaymentProof
+);
+router.post(
+	"/review-photos",
+	authMiddleware,
+	roleMiddleware(["customer", "admin", "super_admin"]),
+	reviewPhotoUploadMiddleware,
+	uploadController.uploadReviewPhotos
+);
+router.post(
+	"/progress-media",
+	authMiddleware,
+	roleMiddleware(["admin", "super_admin", "skilled_worker"]),
+	progressMediaUploadMiddleware,
+	uploadController.uploadProgressMedia
 );
 router.post("/", uploadMiddleware.any(), uploadController.uploadImages);
 

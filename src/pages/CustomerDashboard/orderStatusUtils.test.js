@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getOrderStatusClasses, getOrderStatusLabel, normalizeOrderStatus } from "./orderStatusUtils";
+import { getOrderStatusClasses, getOrderStatusLabel, getSiteInspectionNotificationMessage, normalizeOrderStatus } from "./orderStatusUtils";
 
 describe("customer order status utils", () => {
   it("normalizes mixed-case order statuses before filtering and rendering", () => {
@@ -15,5 +15,17 @@ describe("customer order status utils", () => {
     expect(getOrderStatusLabel("Site Inspection")).toBe("Site Inspection");
     expect(getOrderStatusClasses("Installation")).toContain("text-red-700");
     expect(getOrderStatusClasses("cancelled")).toContain("text-red-800");
+  });
+
+  it("shows the correct inspection wording for pending, scheduled, and completed states", () => {
+    expect(getSiteInspectionNotificationMessage({ status: "site_inspection" })).toBe(
+      "Your order request has been received. Our team will contact you to arrange a site inspection."
+    );
+    expect(getSiteInspectionNotificationMessage({ status: "site_inspection", inspection_date: "2026-10-12" })).toBe(
+      "Your site inspection has been scheduled for Oct 12, 2026."
+    );
+    expect(getSiteInspectionNotificationMessage({ status: "site_inspection", inspection_status: "completed" })).toBe(
+      "Your site inspection has been completed."
+    );
   });
 });

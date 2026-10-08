@@ -29,6 +29,7 @@ import { getProducts } from "../../api/products";
 import { getProductReviewSummary, trackOrder } from "../../api/orders";
 import logo from "../../assets/images/ACGCLOGO1.png";
 import { calculateEstimate } from "@/lib/estimator";
+import { getFinalProjectCost } from "@/lib/orderPricing";
 import { resolveBackendImageUrl } from "../../lib/resolveBackendImageUrl";
 import { getProductLineTotal } from "../../lib/productPricing";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -1296,7 +1297,7 @@ function LandingPage() {
               </div>
               <div className="text-right">
                 <p className="text-xs text-slate-500">Total</p>
-                <p className="text-[22px] font-medium leading-tight text-red-700">{formatCurrency(trackingResult.total_amount || trackingResult.total || trackingResult.amount_paid || 0)}</p>
+                <p className="text-[22px] font-medium leading-tight text-red-700">{formatCurrency(getFinalProjectCost(trackingResult))}</p>
               </div>
             </div>
           </aside>

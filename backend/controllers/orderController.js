@@ -5,9 +5,13 @@ import mongoose from "mongoose";
 import Order from "../models/Order.js";
 import Product from "../models/Product.js";
 import User from "../models/User.js";
+import Cart from "../models/Cart.js";
 import { sendMail } from "../config/mailer.js";
 import { formatOrderEmailDate, sendOrderNotification } from "../services/orderEmails.js";
-import { buildProductPriceSnapshot } from "../../src/lib/productPricing.js";
+import { applyInstallationWarranty, isCompletedInstallationStage } from "../services/warranty.js";
+import { buildProductPriceSnapshot, getMeasuredProductLineTotal } from "../../src/lib/productPricing.js";
+import { calculateRequiredDownpayment, getFinalProjectCost, getRequiredDownpayment } from "../../src/lib/orderPricing.js";
+import { getInstallationDateError } from "../../src/lib/installationSchedule.js";
 
 const isWithinReviewEditWindow = (submittedAt) => {
   if (!submittedAt) return false;
@@ -198,26 +202,44 @@ const getItemAmountValue = (item) => {
   return unitPrice > 0 ? unitPrice * quantity : 0;
 };
 
+const repriceInspectionItems = async (items) => {
+  const sanitizedItems = sanitizeOrderItems(items);
+  const productIds = [...new Set(sanitizedItems.map((item) => item.product_id).filter(Boolean))];
+  const products = productIds.length
+    ? await Product.find({ _id: { $in: productIds } })
+        .select("pricing_method unit unit_price base_price price_per_sqft price_per_blade blade_count customization customization_fee estimated_price estimated_price_override width height measurement_unit")
+        .lean()
+    : [];
+  const productsById = new Map(products.map((product) => [String(product._id), product]));
+
+  return sanitizedItems.map((item) => {
+    const product = productsById.get(String(item.product_id));
+    if (!product) return { ...item, line_total: getItemAmountValue(item) };
+
+    const priceSnapshot = buildProductPriceSnapshot(product, item);
+    const itemOverride = item.estimation_mode === "manual"
+      ? Number(item.manual_estimated_total) || 0
+      : 0;
+    const lineTotal = itemOverride > 0
+      ? itemOverride
+      : getMeasuredProductLineTotal(product, item);
+
+    return {
+      ...item,
+      ...priceSnapshot,
+      estimated_price: lineTotal,
+      line_total: lineTotal,
+    };
+  });
+};
+
 const generateTrackingNumber = () => {
   return `TRK-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 };
 
 const getOrderPaymentAmounts = (order) => {
-  const totalAmount = Math.max(Number(order.contract_amount || order.total_amount) || 0, 0);
-  const configuredRequired = order.required_downpayment_amount;
-  const legacyRequired = Number(order.downpayment_amount) || 0;
-  const defaultRequired = order.payment_terms === "full_payment" ? totalAmount : totalAmount * 0.5;
-  const requiredAmount = Math.min(
-    totalAmount,
-    Math.max(
-      configuredRequired !== undefined && configuredRequired !== null
-        ? Number(configuredRequired) || 0
-        : legacyRequired > 0
-          ? legacyRequired
-          : defaultRequired,
-      0,
-    ),
-  );
+  const totalAmount = getFinalProjectCost(order);
+  const requiredAmount = getRequiredDownpayment(order);
 
   let paidAmount = Number(order.amount_paid);
   if (order.amount_paid === undefined || order.amount_paid === null || !Number.isFinite(paidAmount)) {
@@ -261,6 +283,7 @@ const getInstallationPlan = (order) => {
     status: stage?.status || (stage?.customerResponse === "accepted" ? "Confirmed" : "Scheduled"),
   };
 };
+
 
 const getWarrantyEmailLines = (order) => {
   const items = Array.isArray(order?.items) ? order.items : [];
@@ -306,9 +329,20 @@ export const listOrders = async (req, res) => {
 export const createOrder = async (req, res) => {
   try {
     const { items, shipping_address, customer_phone, order_type } = req.body;
+    const requestedCartItemIds = Array.isArray(req.body.cart_item_ids)
+      ? [...new Set(req.body.cart_item_ids.map((cartId) => String(cartId || "").trim()).filter(Boolean))]
+      : [];
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, message: "Order items are required" });
+    }
+
+    if (requestedCartItemIds.length > 0) {
+      const cart = await Cart.findOne({ customer: req.user.id }).select("items.cartId").lean();
+      const availableCartIds = new Set((cart?.items || []).map((item) => String(item.cartId)));
+      if (requestedCartItemIds.some((cartId) => !availableCartIds.has(cartId))) {
+        return res.status(409).json({ success: false, message: "Your cart changed. Refresh it and try checkout again." });
+      }
     }
 
     const sanitizedItems = sanitizeOrderItems(items);
@@ -350,16 +384,21 @@ export const createOrder = async (req, res) => {
     });
 
     const total_amount = pricedItems.reduce((sum, item) => sum + getItemAmountValue(item), 0);
+    const requiredDownpayment = calculateRequiredDownpayment(total_amount, "50%_down_payment");
 
     const order = new Order({
       customer: req.user.id,
+      cart_item_ids: requestedCartItemIds,
       customer_name: [req.user.first_name, req.user.last_name].filter(Boolean).join(" "),
       customer_email: req.user.email || "",
       customer_phone: String(customer_phone || req.user.phone || "").trim(),
       items: pricedItems,
       total_amount,
-      downpayment_amount: total_amount * 0.5,
-      required_downpayment_amount: total_amount * 0.5,
+      estimated_cost: total_amount,
+      final_project_cost: total_amount,
+      payment_terms: "50%_down_payment",
+      downpayment_amount: requiredDownpayment,
+      required_downpayment_amount: requiredDownpayment,
       amount_paid: 0,
       shipping_address: normalizeAddress(shipping_address || buildAddressFromUser(req.user)),
       tracking: generateTrackingNumber(),
@@ -371,7 +410,20 @@ export const createOrder = async (req, res) => {
 
     await order.save();
 
-    res.status(201).json({ success: true, order });
+    let cartCleanupPending = false;
+    if (requestedCartItemIds.length > 0) {
+      try {
+        await Cart.updateOne(
+          { customer: req.user.id },
+          { $pull: { items: { cartId: { $in: requestedCartItemIds } } } }
+        );
+      } catch (cartError) {
+        cartCleanupPending = true;
+        console.error("Cart cleanup after checkout failed; purchased IDs will be excluded on future cart reads:", cartError);
+      }
+    }
+
+    res.status(201).json({ success: true, order, cart_cleanup_pending: cartCleanupPending });
     void sendOrderNotification("order_submitted", order, { customerEmail: req.user.email });
   } catch (error) {
     console.error("Create order error:", error);
@@ -411,6 +463,11 @@ export const createOrderAsAdmin = async (req, res) => {
       return res.status(400).json({ success: false, message: "Order items are required" });
     }
 
+    const installationDateError = getInstallationDateError(inspection_date, estimated_installation_date);
+    if (installationDateError) {
+      return res.status(400).json({ success: false, message: installationDateError });
+    }
+
     const normalizedOrderType = order_type === "walk_in_customer" ? "walk_in_customer" : "online_order";
     const isWalkInCustomer = normalizedOrderType === "walk_in_customer";
 
@@ -426,25 +483,20 @@ export const createOrderAsAdmin = async (req, res) => {
       return res.status(400).json({ success: false, message: "The selected customer account was not found" });
     }
 
-    const sanitizedItems = sanitizeOrderItems(items);
-
-    const totalAmountFromItems = sanitizedItems.reduce((sum, item) => sum + getItemAmountValue(item), 0);
-
-    const overrideAmount = [req.body.manual_override, req.body.estimated_cost, req.body.total_amount, req.body.contract_amount]
-      .map(Number)
-      .find((amount) => Number.isFinite(amount) && amount > 0) || 0;
-    const total_amount = overrideAmount > 0 ? overrideAmount : totalAmountFromItems;
-    const providedRequiredAmount = Number(required_downpayment_amount);
-    const defaultRequiredAmount = payment_terms === "full_payment" ? total_amount : total_amount * 0.5;
-    const requiredAmount = Math.min(
-      total_amount,
-      Math.max(
-        required_downpayment_amount !== undefined && Number.isFinite(providedRequiredAmount)
-          ? providedRequiredAmount
-          : defaultRequiredAmount,
-        0,
-      ),
-    );
+    const repricedItems = await repriceInspectionItems(items);
+    const pricedItems = repricedItems.map((item) => ({
+      ...item,
+      warranty_start_date: null,
+      warranty_expiry_date: null,
+      warranty_status: item.warranty_period === "No Warranty" ? "no_warranty" : "pending",
+    }));
+    const calculatedEstimatedCost = pricedItems.reduce((sum, item) => sum + getItemAmountValue(item), 0);
+    const estimated_cost = calculatedEstimatedCost > 0
+      ? calculatedEstimatedCost
+      : Math.max(Number(req.body.estimated_cost) || 0, 0);
+    const manualOverride = Math.max(Number(req.body.manual_override) || 0, 0);
+    const total_amount = manualOverride || estimated_cost || Math.max(Number(req.body.total_amount) || 0, 0);
+    const requiredAmount = calculateRequiredDownpayment(total_amount, payment_terms, required_downpayment_amount);
     const initialPaidAmount = downpayment_received ? requiredAmount : 0;
 
     const hasWebsiteAccount = Boolean(linkedCustomer);
@@ -459,9 +511,11 @@ export const createOrderAsAdmin = async (req, res) => {
       customer_name: linkedCustomerName || customer_name || "",
       customer_phone: linkedCustomer?.phone || customer_phone || "",
       customer_email: linkedCustomer?.email || customer_email || "",
-      items: sanitizedItems,
+      items: pricedItems,
       total_amount,
-      manual_override: Number(req.body.manual_override) || 0,
+      estimated_cost,
+      final_project_cost: total_amount,
+      manual_override: manualOverride,
       contract_amount: isWalkInCustomer ? total_amount : 0,
       downpayment_amount: requiredAmount,
       required_downpayment_amount: requiredAmount,
@@ -649,9 +703,6 @@ export const updateOrderStatus = async (req, res) => {
       inspection_date,
       warranty_period,
       warranty_assignment_mode,
-      warranty_start_date,
-      warranty_expiry_date,
-      warranty_status,
       warranty_terms,
       custom_warranty_days,
       signed_contract_url,
@@ -775,21 +826,12 @@ export const updateOrderStatus = async (req, res) => {
     if (transactionCreated !== undefined) order.transactionCreated = Boolean(transactionCreated);
     if (transactionCreatedAt !== undefined) order.transactionCreatedAt = transactionCreatedAt ? new Date(transactionCreatedAt) : null;
     if (warranty_period !== undefined) order.warranty_period = warranty_period;
-    if (warranty_start_date !== undefined) order.warranty_start_date = warranty_start_date;
-    if (warranty_expiry_date !== undefined) {
-      order.warranty_expiry_date = warranty_expiry_date;
-      if (!warranty_status) {
-        const expiry = new Date(warranty_expiry_date);
-        order.warranty_status = expiry > new Date() ? "active" : "expired";
-      }
-    }
-    if (warranty_status !== undefined) order.warranty_status = warranty_status;
     if (warranty_terms !== undefined) order.warranty_terms = warranty_terms;
     if (Array.isArray(items)) {
       items.forEach((incomingItem, index) => {
         const item = order.items[index];
         if (!item) return;
-        ["warranty_period", "custom_warranty_days", "warranty_start_date", "warranty_expiry_date", "warranty_status"].forEach((field) => {
+        ["warranty_period", "custom_warranty_days"].forEach((field) => {
           if (incomingItem[field] !== undefined) item[field] = incomingItem[field];
         });
       });
@@ -1426,7 +1468,7 @@ export const updateOrderInspection = async (req, res) => {
     }
 
     const { orderId } = req.params;
-    const { inspection_status, inspection_date, estimated_installation_date, inspection_notes, issues_found, shipping_address, payment_terms, agreed_payment_date, items, total_amount, customer_name, customer_email, customer_phone, has_account_on_website, downpayment_received, required_downpayment_amount, manual_override, warranty_period, custom_warranty_days, warranty_assignment_mode } = req.body;
+    const { inspection_status, inspection_date, estimated_installation_date, inspection_notes, issues_found, shipping_address, payment_terms, agreed_payment_date, items, estimated_cost, total_amount, customer_name, customer_email, customer_phone, has_account_on_website, downpayment_received, required_downpayment_amount, manual_override, warranty_period, custom_warranty_days, warranty_assignment_mode } = req.body;
 
     updateData = {
       status: "site_inspection",
@@ -1467,12 +1509,12 @@ export const updateOrderInspection = async (req, res) => {
     if (customer_email !== undefined) updateData.customer_email = customer_email || "";
     if (customer_phone !== undefined) updateData.customer_phone = customer_phone || "";
     if (Array.isArray(items)) {
-      const sanitizedItems = sanitizeOrderItems(items);
-      const invalidItem = sanitizedItems.find((item) => !item.product_id || !item.name);
+      const repricedItems = await repriceInspectionItems(items);
+      const invalidItem = repricedItems.find((item) => !item.product_id || !item.name);
       if (invalidItem) {
         return res.status(400).json({ success: false, message: "Invalid item data in inspection update." });
       }
-      updateData.items = sanitizedItems;
+      updateData.items = repricedItems;
     }
     if (total_amount !== undefined) {
       updateData.total_amount = Number(total_amount) || 0;
@@ -1491,6 +1533,14 @@ export const updateOrderInspection = async (req, res) => {
       ? new Date(order.estimated_installation_date).getTime()
       : null;
 
+    const installationDateError = getInstallationDateError(
+      inspection_date !== undefined ? inspection_date : order.inspection_date,
+      estimated_installation_date !== undefined ? estimated_installation_date : order.estimated_installation_date,
+    );
+    if (installationDateError) {
+      return res.status(400).json({ success: false, message: installationDateError });
+    }
+
     const registeredCustomer = order.customer?._id ? order.customer : null;
     if (registeredCustomer) {
       const registeredName = `${registeredCustomer.first_name || ""} ${registeredCustomer.last_name || ""}`.trim();
@@ -1498,45 +1548,75 @@ export const updateOrderInspection = async (req, res) => {
       updateData.customer_email = registeredCustomer.email || "";
       updateData.customer_phone = registeredCustomer.phone || "";
       updateData.has_account_on_website = true;
-      updateData.shipping_address = normalizeAddress(order.shipping_address || buildAddressFromUser(registeredCustomer));
+      updateData.shipping_address = normalizeAddress(
+        shipping_address !== undefined
+          ? shipping_address || ""
+          : order.shipping_address || buildAddressFromUser(registeredCustomer)
+      );
     }
 
     if (Array.isArray(updateData.items)) {
-      updateData.items = updateData.items.map((item, index) => ({
-        ...item,
-        progress: order.items[index]?.progress ?? null,
-        progress_stages: order.items[index]?.progress_stages || [],
-      }));
+      updateData.items = updateData.items.map((item, index) => {
+        const existingItem = order.items[index];
+        const itemProductId = String(item.product_id?._id || item.product_id || "");
+        const existingProductId = String(existingItem?.product_id?._id || existingItem?.product_id || "");
+        const sameProduct = Boolean(existingItem && itemProductId === existingProductId);
+        return {
+          ...item,
+          progress: existingItem?.progress ?? null,
+          progress_stages: existingItem?.progress_stages || [],
+          warranty_start_date: sameProduct ? existingItem.warranty_start_date || null : null,
+          warranty_expiry_date: sameProduct ? existingItem.warranty_expiry_date || null : null,
+          warranty_status: sameProduct && existingItem.warranty_status
+            ? existingItem.warranty_status
+            : item.warranty_period === "No Warranty" ? "no_warranty" : "pending",
+        };
+      });
     }
 
-    const updatedTotalAmount = total_amount !== undefined ? Number(total_amount) || 0 : order.total_amount;
+    const wasDownpaymentReceived = Boolean(order.downpayment_received);
+    const currentItems = Array.isArray(updateData.items) ? updateData.items : order.items || [];
+    const calculatedItemsEstimate = currentItems.reduce((sum, item) => sum + getItemAmountValue(item), 0);
+    const updatedEstimatedCost = Array.isArray(updateData.items)
+      ? calculatedItemsEstimate
+      : Number(estimated_cost) > 0
+        ? Number(estimated_cost)
+        : Number(order.estimated_cost) > 0
+          ? Number(order.estimated_cost)
+          : calculatedItemsEstimate;
+    const updatedManualOverride = manual_override !== undefined
+      ? Math.max(Number(manual_override) || 0, 0)
+      : Math.max(Number(order.manual_override) || 0, 0);
+    const updatedTotalAmount = updatedManualOverride > 0
+      ? updatedManualOverride
+      : updatedEstimatedCost > 0
+        ? updatedEstimatedCost
+        : total_amount !== undefined
+          ? Math.max(Number(total_amount) || 0, 0)
+          : getFinalProjectCost(order);
     const updatedPaymentTerms = payment_terms !== undefined ? payment_terms : order.payment_terms;
-    const providedRequiredAmount = Number(required_downpayment_amount);
-    const existingRequiredAmount = Number(order.required_downpayment_amount ?? order.downpayment_amount);
-    const defaultRequiredAmount = updatedPaymentTerms === "full_payment" ? updatedTotalAmount : updatedTotalAmount * 0.5;
-    const updatedRequiredAmount = Math.min(
+    const configuredRequiredAmount = required_downpayment_amount !== undefined
+      ? required_downpayment_amount
+      : order.required_downpayment_amount ?? order.downpayment_amount;
+    const updatedRequiredAmount = calculateRequiredDownpayment(
       updatedTotalAmount,
-      Math.max(
-        required_downpayment_amount !== undefined && Number.isFinite(providedRequiredAmount)
-          ? providedRequiredAmount
-          : updatedPaymentTerms === "full_payment"
-            ? updatedTotalAmount
-            : existingRequiredAmount > 0
-              ? existingRequiredAmount
-              : defaultRequiredAmount,
-        0,
-      ),
+      updatedPaymentTerms,
+      configuredRequiredAmount,
     );
+    updateData.manual_override = updatedManualOverride;
+    updateData.estimated_cost = updatedEstimatedCost;
+    updateData.final_project_cost = updatedTotalAmount;
+    updateData.total_amount = updatedTotalAmount;
     updateData.contract_amount = updatedTotalAmount;
     updateData.downpayment_amount = updatedRequiredAmount;
     updateData.required_downpayment_amount = updatedRequiredAmount;
 
     Object.assign(order, updateData);
-    if (downpayment_received === true && (Number(order.amount_paid) || 0) < updatedRequiredAmount) {
+    if (downpayment_received === true && !wasDownpaymentReceived && (Number(order.amount_paid) || 0) < updatedRequiredAmount) {
       order.amount_paid = updatedRequiredAmount;
     }
     if (order.amount_paid === undefined && order.downpayment_received) {
-      order.amount_paid = existingRequiredAmount;
+      order.amount_paid = updatedRequiredAmount;
     }
     const { requiredAmount, paidAmount } = getOrderPaymentAmounts(order);
     order.downpayment_received = requiredAmount > 0 && paidAmount >= requiredAmount;
@@ -1593,6 +1673,12 @@ export const updateOrderProgress = async (req, res) => {
     const previousInstallationPlan = getInstallationPlan(order);
     const itemIndex = req.body.itemIndex;
     const isItemProgressUpdate = typeof itemIndex === "number" && Number.isInteger(itemIndex) && order.items.length > 1;
+    if (estimated_installation_date) {
+      const installationDateError = getInstallationDateError(order.inspection_date, estimated_installation_date);
+      if (installationDateError) {
+        return res.status(400).json({ success: false, message: installationDateError });
+      }
+    }
     if (itemIndex !== undefined && (!isItemProgressUpdate || itemIndex < 0 || itemIndex >= order.items.length)) {
       return res.status(400).json({ success: false, message: "Invalid item index for batch progress update." });
     }
@@ -1712,6 +1798,51 @@ export const updateOrderProgress = async (req, res) => {
         };
       });
 
+      const requestedInstallationDate = !isItemProgressUpdate && estimated_installation_date
+        ? new Date(estimated_installation_date)
+        : null;
+      const previousPlannedDate = previousInstallationPlan.date
+        ? new Date(previousInstallationPlan.date).getTime()
+        : null;
+      const isRescheduled = requestedInstallationDate && previousPlannedDate !== null
+        && requestedInstallationDate.getTime() !== previousPlannedDate;
+      const installationAlreadyCompleted = targetStages.some(isCompletedInstallationStage);
+      if (isRescheduled && installationAlreadyCompleted) {
+        return res.status(400).json({ success: false, message: "Installation cannot be rescheduled after it is completed." });
+      }
+      if (requestedInstallationDate && !installationAlreadyCompleted) {
+        const scheduleStage = targetStages.find((stage) => {
+          const key = String(stage.key || "").toLowerCase();
+          const name = String(stage.name || "").toLowerCase();
+          return key.includes("installation_scheduling") || name.includes("installation scheduling");
+        }) || targetStages.find((stage) => {
+          const key = String(stage.key || "").toLowerCase();
+          const name = String(stage.name || "").toLowerCase();
+          return !stage.completed && (key.includes("installation") || name.includes("installation"))
+            && !key.includes("schedul") && !name.includes("schedul");
+        });
+
+        if (scheduleStage) {
+          scheduleStage.proposedInstallationDate = requestedInstallationDate;
+          if (isRescheduled) {
+            const reportedAt = new Date();
+            const reason = "Installation rescheduled";
+            const notes = "Installation date changed in Progress Monitor.";
+            scheduleStage.status = "delayed";
+            scheduleStage.completed = false;
+            scheduleStage.delayReason = reason;
+            scheduleStage.delayExpectedResolution = requestedInstallationDate;
+            scheduleStage.delayReportedAt = reportedAt;
+            scheduleStage.delayReportedBy = req.user?.email || "";
+            scheduleStage.delayNotes = notes;
+            scheduleStage.delayHistory = [
+              ...(scheduleStage.delayHistory || []),
+              { reason, expectedResolution: requestedInstallationDate, notes, reportedAt, reportedBy: req.user?.email || "", status: "delayed", resolvedAt: null },
+            ];
+          }
+        }
+      }
+
       newDelayEvents = targetStages.flatMap((stage, stageIndex) =>
         stage.delayHistory
           .filter((entry) => entry.status === "delayed" && !previousDelayEventKeys.has(getDelayEventKey(stage, entry, stageIndex)))
@@ -1725,9 +1856,10 @@ export const updateOrderProgress = async (req, res) => {
       );
 
       if (isItemProgressUpdate) {
+        const orderStages = Array.isArray(order.progress_stages) ? order.progress_stages : [];
         order.items.forEach((item) => {
           if (!Array.isArray(item.progress_stages) || item.progress_stages.length === 0) {
-            item.progress_stages = order.progress_stages.map((stage) => stage.toObject?.() || stage);
+            item.progress_stages = orderStages.map((stage) => stage.toObject?.() || stage);
             item.progress = order.progress ?? null;
           }
         });
@@ -1806,6 +1938,11 @@ export const updateOrderProgress = async (req, res) => {
       }
     }
 
+    const warrantyStages = isItemProgressUpdate
+      ? order.items[itemIndex]?.progress_stages || []
+      : order.progress_stages || [];
+    applyInstallationWarranty(order, warrantyStages, isItemProgressUpdate ? itemIndex : undefined);
+
     // Accept an array of proof_images to append to the last stage or attachments
     if (Array.isArray(proof_images) && proof_images.length > 0) {
       order.attachments = Array.isArray(order.attachments) ? order.attachments.concat(proof_images) : proof_images.slice();
@@ -1880,12 +2017,37 @@ export const generateContract = async (req, res) => {
     }
 
     const { orderId } = req.params;
-    const { contract_terms, contract_amount, snapshot, regenerate = false } = req.body;
+    const { contract_terms, snapshot, regenerate = false } = req.body;
 
     const order = await Order.findById(orderId);
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
+
+    const estimatedInstallationDate = order.estimated_installation_date
+      ? new Date(order.estimated_installation_date)
+      : null;
+    const estimatedInstallationDateText = String(order.estimated_installation_date || "").slice(0, 10);
+    const hasInvalidCalendarDate = /^\d{4}-\d{2}-\d{2}$/.test(estimatedInstallationDateText)
+      && estimatedInstallationDate?.toISOString().slice(0, 10) !== estimatedInstallationDateText;
+    if (!estimatedInstallationDate || Number.isNaN(estimatedInstallationDate.getTime()) || hasInvalidCalendarDate) {
+      return res.status(400).json({
+        success: false,
+        message: "Set the Est. Install Date first before generating the contract.",
+      });
+    }
+
+    const finalProjectCost = getFinalProjectCost(order);
+    const requiredAmount = calculateRequiredDownpayment(
+      finalProjectCost,
+      order.payment_terms,
+      order.required_downpayment_amount ?? order.downpayment_amount,
+    );
+    const contractSnapshot = {
+      ...(snapshot || order.contractSnapshot || {}),
+      projectCost: finalProjectCost,
+      downpayment: requiredAmount,
+    };
 
     const version = regenerate
       ? Number(order.currentContractVersion || order.contractVersion || 0) + 1
@@ -1902,7 +2064,7 @@ export const generateContract = async (req, res) => {
       contractId: nextContractId,
       generatedAt: new Date(),
       status: "Current",
-      snapshot: snapshot || order.contractSnapshot || {},
+      snapshot: contractSnapshot,
     });
 
     order.contractGenerated = true;
@@ -1912,7 +2074,7 @@ export const generateContract = async (req, res) => {
     order.contractGeneratedAt = new Date();
     order.contractNeedsRegeneration = false;
     order.contractStatus = "Created";
-    order.contractSnapshot = snapshot || order.contractSnapshot || {};
+    order.contractSnapshot = contractSnapshot;
     order.contractHistory = history;
     order.contract_status = "pending";
     order.contractSentAt = null;
@@ -1921,15 +2083,9 @@ export const generateContract = async (req, res) => {
     order.contract_email_sent_at = null;
     order.contract_email_error = "";
     order.contract_terms = contract_terms || "";
-    order.contract_amount = Number(contract_amount) || order.total_amount;
-    const configuredRequiredAmount = Number(order.required_downpayment_amount ?? order.downpayment_amount);
-    const fallbackRequiredAmount = order.payment_terms === "full_payment"
-      ? order.contract_amount
-      : order.contract_amount * 0.5;
-    const requiredAmount = Math.min(
-      order.contract_amount,
-      Math.max(configuredRequiredAmount > 0 ? configuredRequiredAmount : fallbackRequiredAmount, 0),
-    );
+    order.total_amount = finalProjectCost;
+    order.final_project_cost = finalProjectCost;
+    order.contract_amount = finalProjectCost;
     order.required_downpayment_amount = requiredAmount;
     order.downpayment_amount = requiredAmount;
     order.inspection_status = order.inspection_status || "pending";

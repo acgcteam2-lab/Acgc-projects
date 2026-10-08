@@ -2,8 +2,9 @@ import { FileText, X } from "lucide-react";
 import logo from "@/assets/images/ACGCLOGO1.png";
 import approvedStamp from "@/assets/approved.png";
 import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
+import { getFinalProjectCost, getRequiredDownpayment } from "@/lib/orderPricing";
 
-function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false }) {
+function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, onRegenerate, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false }) {
   const darkMode = false;
   if (!isOpen || !inspection || !contractData) return null;
 
@@ -44,15 +45,9 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
   const isAwaitingCustomerResponse = orderStatus === "contract_sent" || (orderStatus === "site_inspection" && contractStatus === "sent") || contractStatus === "sent";
   const isWalkInCustomer = inspection.order_type === "walk_in_customer" || inspection.acceptance_method === "walk_in_signed_contract";
   const actionsAllowed = Boolean(onAccept || onDecline) && isAwaitingCustomerResponse && !isAccepted && !isWalkInCustomer;
-  const totalAmount = Number(contractData.totalProjectCost || inspection.total_amount || 0);
+  const totalAmount = getFinalProjectCost({ ...inspection, ...contractData, final_project_cost: inspection.final_project_cost });
   const isFullPaymentMethod = String(inspection.payment_terms || "").trim() === "full_payment";
-  const configuredDownPayment = Number(inspection.required_downpayment_amount ?? inspection.downpayment_amount);
-  const contractDataDownPayment = Number(contractData.downPayment);
-  const fallbackDownPayment = isFullPaymentMethod ? totalAmount : totalAmount * 0.5;
-  const downPayment = Math.min(
-    totalAmount,
-    Math.max(configuredDownPayment > 0 ? configuredDownPayment : contractDataDownPayment > 0 ? contractDataDownPayment : fallbackDownPayment, 0),
-  );
+  const downPayment = getRequiredDownpayment({ ...inspection, ...contractData, final_project_cost: totalAmount });
   const contractItems = contractData.items || [];
   const sourceItems = inspection.items || [];
   const getItemWarrantyPeriod = (item, index) => (
@@ -121,6 +116,11 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
             )}
             {onDownloadPNG && <button type="button" onClick={onDownloadPNG} className={buttonShellClass}>Download PNG</button>}
             {onPrint && <button type="button" onClick={onPrint} className={buttonShellClass}>Print Contract</button>}
+            {onRegenerate && contractData.contractNeedsRegeneration && !isAccepted && (
+              <button type="button" onClick={onRegenerate} disabled={isLoading} className={`${buttonShellClass} disabled:cursor-not-allowed disabled:opacity-60`}>
+                Generate New Version
+              </button>
+            )}
             {onSendToCustomer && !isAccepted && (
               <button type="button" onClick={onSendToCustomer} disabled={isSendingToCustomer || isAwaitingCustomerResponse} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60">
                 {isSendingToCustomer ? "Sending..." : isAwaitingCustomerResponse ? "Sent" : "Send Contract to Customer"}
