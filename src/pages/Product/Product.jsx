@@ -31,23 +31,28 @@ import {
 import { recordActivity } from "@/lib/activityLog";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { resolveBackendImageUrl } from "@/lib/resolveBackendImageUrl";
+import { getDefaultExtraChargeSelections, getProductLineTotal } from "@/lib/productPricing";
 
 const PRODUCT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
 
 const MEASUREMENT_UNITS = [
   ["in", "Inches (in)"],
+  ["ft", "Feet (ft)"],
   ["cm", "Centimeters (cm)"],
   ["m", "Meters (m)"],
 ];
 
-function CatalogPicker({ label, value, options, onChange, onAdd, placeholder, disabled = false }) {
+function CatalogPicker({ label, value, options, catalogItems = [], onChange, onAdd, onEdit, onDelete, placeholder, addLabel, disabled = false }) {
   const { darkMode } = useAdminTheme();
   const actionLabel = label.replace(/\s*\*+\s*$/, "");
   const [isOpen, setIsOpen] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [newOption, setNewOption] = useState("");
   const [savingOption, setSavingOption] = useState(false);
+  const [editingOption, setEditingOption] = useState(null);
+  const [editingValue, setEditingValue] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(null);
   const [error, setError] = useState("");
   const [menuPosition, setMenuPosition] = useState(null);
   const triggerRef = useRef(null);
@@ -124,6 +129,38 @@ function CatalogPicker({ label, value, options, onChange, onAdd, placeholder, di
     }
   };
 
+  const saveEditedOption = async (event, option) => {
+    event.preventDefault();
+    const trimmedValue = editingValue.trim();
+    if (!trimmedValue || !onEdit) return;
+    setSavingOption(true);
+    setError("");
+    try {
+      const updatedName = await onEdit(option, trimmedValue);
+      setEditingOption(null);
+      setEditingValue("");
+    } catch (editError) {
+      setError(editError?.data?.message || editError?.message || `Unable to edit ${actionLabel.toLowerCase()}.`);
+    } finally {
+      setSavingOption(false);
+    }
+  };
+
+  const deleteOption = async (option) => {
+    if (!onDelete) return;
+    setSavingOption(true);
+    setError("");
+    try {
+      await onDelete(option);
+      if (value === option.name) onChange("");
+      setConfirmingDelete(null);
+    } catch (deleteError) {
+      setError(deleteError?.data?.message || deleteError?.message || `Unable to delete ${actionLabel.toLowerCase()}.`);
+    } finally {
+      setSavingOption(false);
+    }
+  };
+
   return (
     <div className="relative">
       <label className="mb-2 block text-sm font-semibold text-slate-700">{label}</label>
@@ -146,27 +183,55 @@ function CatalogPicker({ label, value, options, onChange, onAdd, placeholder, di
       {isOpen && !disabled && menuPosition && createPortal(
         <div ref={menuRef} style={menuPosition} className={`z-[100] overflow-y-auto rounded-xl border shadow-xl ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-red-700 bg-white text-slate-900"}`}>
           <div className="max-h-56 overflow-y-auto py-1" role="listbox" aria-label={label}>
-            {options.map((option) => (
-              <button
-                key={option}
-                type="button"
-                role="option"
-                aria-selected={value === option}
-                onClick={() => {
-                  onChange(option);
-                  setIsOpen(false);
-                  setIsAdding(false);
-                }}
-                className={`w-full px-4 py-3 text-left text-sm transition ${darkMode ? "hover:bg-slate-800" : "hover:bg-rose-50"} ${value === option ? darkMode ? "bg-red-950/50 font-semibold text-red-200" : "bg-rose-100 font-semibold text-red-900" : darkMode ? "text-slate-200" : "text-slate-800"}`}
-              >
-                {value === option && <span className={`mr-2 ${darkMode ? "text-red-300" : "text-red-800"}`} aria-hidden="true">✓</span>}
-                {option}
-              </button>
-            ))}
+            {options.map((option) => {
+              const entry = catalogItems.find((item) => item.name === option);
+              const isEditing = entry && editingOption === entry.id;
+              const isConfirmingDelete = entry && confirmingDelete === entry.id;
+
+              return (
+                <div key={entry?.id || option} className={`border-b last:border-b-0 ${darkMode ? "border-slate-800" : "border-slate-100"}`}>
+                  {isEditing ? (
+                    <form onSubmit={(event) => saveEditedOption(event, entry)} className="flex items-center gap-2 p-2">
+                      <input autoFocus value={editingValue} onChange={(event) => setEditingValue(event.target.value)} aria-label={`Edit ${actionLabel}`} className={`min-w-0 flex-1 rounded-lg border px-2 py-2 text-sm ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`} />
+                      <button type="submit" disabled={savingOption || !editingValue.trim()} aria-label={`Save ${actionLabel}`} title="Save" className={`inline-flex size-9 shrink-0 items-center justify-center rounded-lg ${darkMode ? "text-emerald-300 hover:bg-slate-800" : "text-emerald-700 hover:bg-emerald-50"}`}><Check size={16} /></button>
+                      <button type="button" onClick={() => { setEditingOption(null); setEditingValue(""); setError(""); }} aria-label="Cancel edit" title="Cancel" className={`inline-flex size-9 shrink-0 items-center justify-center rounded-lg ${darkMode ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 hover:bg-slate-100"}`}><X size={16} /></button>
+                    </form>
+                  ) : isConfirmingDelete ? (
+                    <div className="flex items-center justify-between gap-2 px-3 py-2">
+                      <span className={`min-w-0 truncate text-xs ${darkMode ? "text-red-300" : "text-red-800"}`}>Delete “{option}”?</span>
+                      <div className="flex shrink-0 gap-1">
+                        <button type="button" disabled={savingOption} onClick={() => deleteOption(entry)} className="rounded-md bg-red-700 px-2 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Delete</button>
+                        <button type="button" onClick={() => setConfirmingDelete(null)} className={`rounded-md px-2 py-1.5 text-xs font-semibold ${darkMode ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 hover:bg-slate-100"}`}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 pr-1">
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={value === option}
+                        onClick={() => {
+                          onChange(option);
+                          setIsOpen(false);
+                          setIsAdding(false);
+                        }}
+                        className={`min-w-0 flex-1 px-4 py-3 text-left text-sm transition ${darkMode ? "hover:bg-slate-800" : "hover:bg-rose-50"} ${value === option ? darkMode ? "bg-red-950/50 font-semibold text-red-200" : "bg-rose-100 font-semibold text-red-900" : darkMode ? "text-slate-200" : "text-slate-800"}`}
+                      >
+                        {value === option && <span className={`mr-2 ${darkMode ? "text-red-300" : "text-red-800"}`} aria-hidden="true">✓</span>}
+                        <span className="truncate">{option}</span>
+                      </button>
+                      {entry && onEdit && <button type="button" onClick={() => { setEditingOption(entry.id); setEditingValue(option); setError(""); }} aria-label={`Edit ${actionLabel}: ${option}`} title={`Edit ${option}`} className={`inline-flex size-9 shrink-0 items-center justify-center rounded-lg ${darkMode ? "text-slate-400 hover:bg-slate-800 hover:text-red-300" : "text-slate-500 hover:bg-rose-50 hover:text-red-800"}`}><Pencil size={15} /></button>}
+                      {entry && onDelete && <button type="button" onClick={() => { setConfirmingDelete(entry.id); setError(""); }} aria-label={`Delete ${actionLabel}: ${option}`} title={`Delete ${option}`} className={`inline-flex size-9 shrink-0 items-center justify-center rounded-lg ${darkMode ? "text-slate-400 hover:bg-slate-800 hover:text-red-300" : "text-slate-500 hover:bg-rose-50 hover:text-red-800"}`}><Trash2 size={15} /></button>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             {options.length === 0 && <p className={`px-4 py-3 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>No options yet.</p>}
           </div>
 
           <div className={`border-t p-2 ${darkMode ? "border-slate-700" : "border-rose-100"}`}>
+            {error && <p role="alert" className={`mb-2 px-2 text-xs ${darkMode ? "text-red-300" : "text-red-700"}`}>{error}</p>}
             {isAdding ? (
               <form onSubmit={saveOption} className="space-y-2">
                 <input
@@ -191,7 +256,7 @@ function CatalogPicker({ label, value, options, onChange, onAdd, placeholder, di
                 className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-semibold ${darkMode ? "text-red-300 hover:bg-slate-800" : "text-red-900 hover:bg-rose-50"}`}
               >
                 <Plus size={16} aria-hidden="true" />
-                Add new {actionLabel.toLowerCase()}...
+                {addLabel || `Add new ${actionLabel.toLowerCase()}...`}
               </button>
             )}
           </div>
@@ -274,6 +339,9 @@ function ProductFormModal({
   productTypeOptions,
   categoryOptions,
   variantOptions,
+  productTypeCatalogItems,
+  categoryCatalogItems,
+  variantCatalogItems,
   pricingMethodByName,
   uploaderSections,
   uploadProgress,
@@ -284,12 +352,32 @@ function ProductFormModal({
   closeModal,
   cancelUpload,
   saveCatalogOption,
+  editCatalogOption,
+  deleteCatalogOption,
 }) {
   const { darkMode } = useAdminTheme();
   const updateField = (field, value) => setNewProduct((product) => ({ ...product, [field]: value }));
+  const [extraChargesOpen, setExtraChargesOpen] = useState(() => Boolean(newProduct.extra_charges?.length));
+  const [sizeLimitsOpen, setSizeLimitsOpen] = useState(() => Object.values(newProduct.size_limits || {}).some((value) => Number(value) > 0));
   const mainImage = uploaderSections.find(([key]) => key === "main");
   const angleImages = uploaderSections.filter(([key]) => key !== "main");
   const imageName = (key) => newProduct.imageFiles?.[key]?.name || newProduct.images?.[key]?.split("/").pop() || "";
+  const pricingMethodValue = newProduct.pricing_method || "";
+  const extraCharges = Array.isArray(newProduct.extra_charges) ? newProduct.extra_charges : [];
+  const sizeLimits = newProduct.size_limits || {};
+
+  const updateBladeSellingOption = (field, enabled) => setNewProduct((product) => {
+    const updated = { ...product, [field]: enabled };
+    if (field === "sell_blades_only" && !enabled && product.default_sale_mode === "blades_only" && product.sell_with_frame) {
+      updated.default_sale_mode = "frame";
+    }
+    if (field === "sell_with_frame" && !enabled) {
+      updated.allow_custom_frame_size = false;
+      updated.default_frame_type = "";
+      if (product.default_sale_mode === "frame" && product.sell_blades_only) updated.default_sale_mode = "blades_only";
+    }
+    return updated;
+  });
 
   const setImageFile = (key, file) => {
     if (!file) return;
@@ -369,9 +457,77 @@ function ProductFormModal({
 
   const fieldClass = `min-h-12 w-full rounded-xl border px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:ring-2 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100 focus:border-red-400 focus:ring-red-400/20" : "border-rose-200 bg-[#fffafa] text-slate-900 focus:border-red-700 focus:ring-red-100"}`;
   const labelClass = `mb-2 block text-sm font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`;
-  const displayedEstimatedPrice = Number(newProduct.estimated_price_override) > 0
-    ? Number(newProduct.estimated_price_override)
-    : Number(newProduct.estimated_price || 0);
+  const estimateProduct = {
+    pricing_method: pricingMethodValue,
+    base_price: Number(newProduct.base_price) || 0,
+    price_per_sqft: Number(newProduct.price_per_sqft) || 0,
+    price_per_blade: Number(newProduct.price_per_blade) || 0,
+    blade_count: Number(newProduct.blade_count) || 0,
+    blade_glass_types: newProduct.blade_glass_types || [],
+    sell_blades_only: newProduct.sell_blades_only !== false,
+    sell_with_frame: Boolean(newProduct.sell_with_frame),
+    blade_frame_types: newProduct.blade_frame_types || [],
+    allow_custom_frame_size: Boolean(newProduct.allow_custom_frame_size),
+    custom_frame_price: Number(newProduct.custom_frame_price) || 0,
+    minimum_blades: Number(newProduct.minimum_blades) || 1,
+    maximum_blades: Number(newProduct.maximum_blades) || 0,
+    customer_can_choose_blade_count: Boolean(newProduct.customer_can_choose_blade_count),
+    default_blade_glass_type: newProduct.default_blade_glass_type || "",
+    default_sale_mode: newProduct.default_sale_mode || "blades_only",
+    default_frame_type: newProduct.default_frame_type || "",
+    show_price_per_blade: newProduct.show_price_per_blade !== false,
+    estimated_price_override: Number(newProduct.estimated_price_override) || 0,
+    customization: Boolean(newProduct.customization),
+    customization_fee: Number(newProduct.customization_fee) || 0,
+    extra_charges: newProduct.extra_charges || [],
+    measurement_unit: newProduct.unit || "in",
+  };
+  const defaultGlassTypes = (newProduct.blade_glass_types || []).filter((glass) => String(glass.name || "").trim());
+  const defaultFrameTypes = (newProduct.blade_frame_types || []).filter((frame) => String(frame.name || "").trim());
+  const defaultExtraCharges = getDefaultExtraChargeSelections({ extra_charges: extraCharges });
+  const defaultGlassType = newProduct.default_blade_glass_type || defaultGlassTypes[0]?.name || "";
+  const defaultFrameType = defaultFrameTypes.find((frame) => frame.name === newProduct.default_frame_type) || defaultFrameTypes[0];
+  const defaultSoldAs = newProduct.default_sale_mode === "frame"
+    ? defaultFrameType
+      ? `frame:${defaultFrameType.name}`
+      : newProduct.allow_custom_frame_size
+        ? "custom_frame"
+        : "blades_only"
+    : "blades_only";
+  const estimateItem = {
+    width: Number(newProduct.width) || 0,
+    height: Number(newProduct.height) || 0,
+    measurement_unit: newProduct.unit || "in",
+    quantity: 1,
+    customized: true,
+    blade_glass_type: defaultGlassType,
+    sale_mode: newProduct.default_sale_mode || "blades_only",
+    frame_type: defaultFrameType?.name || "",
+    custom_frame_size: newProduct.default_sale_mode === "frame" && !defaultFrameType && Boolean(newProduct.allow_custom_frame_size),
+    extra_charges: defaultExtraCharges,
+    blade_count: newProduct.default_sale_mode === "frame"
+      ? Number(newProduct.blade_frame_types?.find((frame) => frame.name === (newProduct.default_frame_type || newProduct.blade_frame_types?.[0]?.name))?.blade_count) || Number(newProduct.minimum_blades) || 1
+      : Number(newProduct.minimum_blades) || 1,
+  };
+  const defaultBladeTotal = pricingMethodValue === "blade"
+    ? getProductLineTotal(estimateProduct, { ...estimateItem, extra_charges: defaultExtraCharges })
+    : 0;
+  const displayedEstimatedPrice = pricingMethodValue === "blade"
+    ? defaultBladeTotal
+    : Number(newProduct.estimated_price_override) > 0
+      ? getProductLineTotal(estimateProduct, estimateItem)
+      : Number(newProduct.estimated_price || 0);
+  const baseEstimate = getProductLineTotal({ ...estimateProduct, extra_charges: [] }, estimateItem);
+  const configuredChargeTotal = Math.max(0, displayedEstimatedPrice - baseEstimate);
+  const estimatedMeasureLabel = pricingMethodValue === "blade" ? "Default blade count" : "Estimated area";
+  const estimatedMeasureValue = pricingMethodValue === "blade"
+    ? `${Number(estimateItem.blade_count) || 0} blade${Number(estimateItem.blade_count) === 1 ? "" : "s"}`
+    : `${Number(newProduct.estimated_area || 0).toFixed(2)} sq ft`;
+  const pricingMethodCards = [
+    { key: "sqft", title: "Per area", badge: "sq ft", description: "Width × height, charged by area" },
+    { key: "blade", title: "Per blade", badge: "blade", description: "Glass rate, with optional frame" },
+  ];
+  const currency = (value) => `PHP ${Number(value || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   return (
     <div className="mobile-fullscreen-overlay fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-2 backdrop-blur-sm sm:p-4">
@@ -415,17 +571,23 @@ function ProductFormModal({
                 label="Product Type *"
                 value={newProduct.product_type}
                 options={productTypeOptions}
+                catalogItems={productTypeCatalogItems}
                 placeholder="Select product type"
                 onChange={(value) => setNewProduct((product) => ({ ...product, product_type: value, product_name: "", pricing_method: "", variant: "" }))}
                 onAdd={(name) => saveCatalogOption("types", name)}
+                onEdit={(item, name) => editCatalogOption("types", item, name)}
+                onDelete={(item) => deleteCatalogOption("types", item)}
               />
               <CatalogPicker
                 label="Category *"
                 value={newProduct.category}
                 options={categoryOptions}
+                catalogItems={categoryCatalogItems}
                 placeholder="Select category"
                 onChange={(value) => updateField("category", value)}
                 onAdd={(name) => saveCatalogOption("categories", name)}
+                onEdit={(item, name) => editCatalogOption("categories", item, name)}
+                onDelete={(item) => deleteCatalogOption("categories", item)}
               />
               <div className="md:col-span-2">
                 <label htmlFor="product-name-input" className={labelClass}>Product Name *</label>
@@ -447,18 +609,24 @@ function ProductFormModal({
                   className={fieldClass}
                 />
               </div>
-              <div className="md:col-span-2">
-                <CatalogPicker
-                  label="Variant"
-                  value={newProduct.variant}
-                  options={variantOptions}
-                  placeholder="Select variant"
-                  disabled={!newProduct.product_name}
-                  onChange={(value) => updateField("variant", value)}
-                  onAdd={(name) => saveCatalogOption("variants", name)}
-                />
-                <p className="mt-2 text-xs text-slate-400">Variants are scoped to the selected product name.</p>
-              </div>
+              {pricingMethodValue !== "blade" && (
+                <div className="md:col-span-2">
+                  <CatalogPicker
+                    label="Variant *"
+                    value={newProduct.variant}
+                    options={variantOptions}
+                    catalogItems={variantCatalogItems[newProduct.product_type] || []}
+                    placeholder="Select variant"
+                    addLabel={`Add new variant for "${newProduct.product_type}"...`}
+                    disabled={!newProduct.product_type}
+                    onChange={(value) => updateField("variant", value)}
+                    onAdd={(name) => saveCatalogOption("variants", name)}
+                    onEdit={(item, name) => editCatalogOption("variants", item, name)}
+                    onDelete={(item) => deleteCatalogOption("variants", item)}
+                  />
+                  <p className="mt-2 text-xs text-slate-400">Choose or add a variant for the selected product type.</p>
+                </div>
+              )}
               <div className="md:col-span-2">
                 <label className={labelClass}>Description</label>
                 <textarea
@@ -473,73 +641,305 @@ function ProductFormModal({
           </section>
 
           <section>
-            {sectionHeading("Measurements & Pricing")}
-            <div className="grid gap-5 md:grid-cols-3">
-              <>
-                  <div>
-                    <label className={labelClass}>Width *</label>
-                    <input type="number" min="0" value={newProduct.width} onChange={(event) => updateField("width", event.target.value)} placeholder="0" className={fieldClass} />
+            {sectionHeading("Price & Size")}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {pricingMethodCards.map((method) => {
+                const selected = pricingMethodValue === method.key;
+                return (
+                  <button
+                    key={method.key}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => updateField("pricing_method", method.key)}
+                    className={`min-w-0 rounded-xl border px-3 py-3 text-left transition ${selected ? darkMode ? "border-red-400 bg-red-950/40 ring-1 ring-red-400" : "border-red-800 bg-rose-100 ring-1 ring-red-800" : darkMode ? "border-slate-700 bg-slate-800 hover:border-slate-500" : "border-slate-200 bg-white hover:border-slate-300"}`}
+                  >
+                    <span className="flex items-center justify-between gap-2">
+                      <span className={`text-sm font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{method.title}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] ${darkMode ? "bg-slate-700 text-slate-200" : "bg-white text-slate-600"}`}>{method.badge}</span>
+                    </span>
+                    <span className={`mt-1 block text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{method.description}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className={`mt-3 rounded-xl border p-4 ${darkMode ? "border-slate-700 bg-slate-800/60" : "border-slate-200 bg-white"}`}>
+              {!pricingMethodValue && (
+                <div className={`flex min-h-16 items-center gap-3 rounded-lg border border-dashed px-4 py-3 ${darkMode ? "border-slate-600 bg-slate-900/60 text-slate-300" : "border-slate-300 bg-slate-50 text-slate-600"}`}>
+                  <span className={`flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-bold ${darkMode ? "bg-slate-800 text-red-300" : "bg-white text-red-800"}`} aria-hidden="true">1</span>
+                  <span className="min-w-0"><span className="block text-sm font-semibold">Choose how this product is priced</span><span className={`mt-0.5 block text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Select Per area or Per blade to configure rates and calculate a default estimate.</span></span>
+                </div>
+              )}
+              {pricingMethodValue === "sqft" && (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className={labelClass}>Price per sq ft (PHP) *</label>
+                      <input type="number" min="0" step="0.01" value={newProduct.price_per_sqft} onChange={(event) => updateField("price_per_sqft", event.target.value)} placeholder="0.00" className={fieldClass} />
+                    </div>
+                    <div>
+                      <label htmlFor="product-measurement-unit" className={labelClass}>Size unit</label>
+                      <select id="product-measurement-unit" value={newProduct.unit || "in"} onChange={(event) => updateField("unit", event.target.value)} className={fieldClass}>
+                        {MEASUREMENT_UNITS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelClass}>Width ({newProduct.unit || "in"}) *</label>
+                      <input type="number" min="0" step="0.01" value={newProduct.width} onChange={(event) => updateField("width", event.target.value)} placeholder="0" className={fieldClass} />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Height ({newProduct.unit || "in"}) *</label>
+                      <input type="number" min="0" step="0.01" value={newProduct.height} onChange={(event) => updateField("height", event.target.value)} placeholder="0" className={fieldClass} />
+                    </div>
                   </div>
+                  <p className={`mt-3 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Customers and inspectors can enter a different size for a live estimate.</p>
+                </>
+              )}
+
+              {pricingMethodValue === "blade" && (
+                <div className="space-y-5">
                   <div>
-                    <label className={labelClass}>Height *</label>
-                    <input type="number" min="0" value={newProduct.height} onChange={(event) => updateField("height", event.target.value)} placeholder="0" className={fieldClass} />
-                  </div>
-                  <div>
-                    <label htmlFor="product-measurement-unit" className={labelClass}>Unit</label>
-                    <select id="product-measurement-unit" value={newProduct.unit || "in"} onChange={(event) => updateField("unit", event.target.value)} className={fieldClass}>
-                      {MEASUREMENT_UNITS.map(([value, label]) => (
-                        <option key={value} value={value}>{label}</option>
+                    {sectionHeading("Glass Types & Price per Blade")}
+                    <p className={`-mt-2 mb-3 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Each glass type can have its own price. Customers choose a glass before estimating.</p>
+                    <div className={`space-y-2 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+                      {(newProduct.blade_glass_types || []).map((glass, index) => (
+                        <div key={`glass-${index}`} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(140px,0.55fr)_auto]">
+                          <input aria-label={`Glass type ${index + 1}`} value={glass.name || ""} onChange={(event) => setNewProduct((product) => ({ ...product, blade_glass_types: product.blade_glass_types.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item), default_blade_glass_type: product.default_blade_glass_type === glass.name ? event.target.value : product.default_blade_glass_type || event.target.value }))} placeholder="Glass type (e.g. Clear, Smoke, Reflective)" className={fieldClass} />
+                          <input aria-label={`Price per blade for glass type ${index + 1}`} type="number" min="0" step="0.01" value={glass.price_per_blade ?? ""} onChange={(event) => setNewProduct((product) => ({ ...product, blade_glass_types: product.blade_glass_types.map((item, itemIndex) => itemIndex === index ? { ...item, price_per_blade: event.target.value } : item) }))} placeholder="PHP per blade" className={fieldClass} />
+                          <button type="button" aria-label={`Remove glass type ${index + 1}`} onClick={() => setNewProduct((product) => {
+                            const blade_glass_types = product.blade_glass_types.filter((_, itemIndex) => itemIndex !== index);
+                            return { ...product, blade_glass_types, default_blade_glass_type: product.default_blade_glass_type === glass.name ? blade_glass_types[0]?.name || "" : product.default_blade_glass_type };
+                          })} className={`inline-flex h-12 w-12 items-center justify-center rounded-xl border ${darkMode ? "border-slate-700 text-red-300 hover:bg-slate-800" : "border-slate-200 text-red-700 hover:bg-rose-50"}`}><Trash2 size={16} /></button>
+                        </div>
                       ))}
+                      <button type="button" onClick={() => updateField("blade_glass_types", [...(newProduct.blade_glass_types || []), { name: "", price_per_blade: "" }])} className={`inline-flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm font-semibold ${darkMode ? "border-slate-600 text-red-300 hover:bg-slate-800" : "border-red-300 text-red-800 hover:bg-rose-50"}`}><Plus size={15} />Add glass type</button>
+                    </div>
+                  </div>
+
+                  <div>
+                    {sectionHeading("What do you sell?")}
+                    <div className="space-y-2">
+                      {[["sell_blades_only", "Blades only", "Priced per blade, by glass type."], ["sell_with_frame", "Blades with frame", "Customers can choose a frame and pay its price plus the blades."]].map(([key, title, detail]) => (
+                        <label key={key} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
+                          <input type="checkbox" checked={Boolean(newProduct[key])} onChange={(event) => updateBladeSellingOption(key, event.target.checked)} className="mt-1 accent-red-700" />
+                          <span><span className={`block text-sm font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{title}</span><span className={`mt-0.5 block text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{detail}</span></span>
+                        </label>
+                      ))}
+                    </div>
+                    {!newProduct.sell_blades_only && !newProduct.sell_with_frame && <p className="mt-2 text-xs text-red-600">Enable at least one selling option.</p>}
+                  </div>
+
+                  {newProduct.sell_with_frame && (
+                    <div>
+                      {sectionHeading("Blades with Frame")}
+                      <p className={`-mt-2 mb-3 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Set the frame types customers can choose. Each frame includes a blade count and frame price.</p>
+                      <div className={`space-y-3 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+                        <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
+                          <input type="checkbox" checked={Boolean(newProduct.allow_custom_frame_size)} onChange={(event) => updateField("allow_custom_frame_size", event.target.checked)} className="mt-1 accent-red-700" />
+                          <span><span className={`block text-sm font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Allow custom frame size</span><span className={`mt-0.5 block text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Customers can enter their own width and height. Use one flat frame price.</span></span>
+                        </label>
+                        {newProduct.allow_custom_frame_size && (
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div>
+                              <label htmlFor="custom-frame-unit" className={labelClass}>Frame size unit</label>
+                              <select id="custom-frame-unit" value={newProduct.custom_frame_size_unit || "in"} onChange={(event) => updateField("custom_frame_size_unit", event.target.value)} className={fieldClass}>
+                                {MEASUREMENT_UNITS.map(([unit, label]) => <option key={unit} value={unit}>{label}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <label className={labelClass}>Custom frame price (PHP) *</label>
+                              <input type="number" min="0" step="0.01" value={newProduct.custom_frame_price} onChange={(event) => updateField("custom_frame_price", event.target.value)} placeholder="0.00" className={fieldClass} />
+                            </div>
+                          </div>
+                        )}
+                        {(newProduct.blade_frame_types || []).map((frame, index) => (
+                          <div key={`frame-${index}`} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(90px,0.35fr)_minmax(120px,0.55fr)_auto]">
+                            <input aria-label={`Frame type ${index + 1}`} value={frame.name || ""} onChange={(event) => setNewProduct((product) => ({ ...product, blade_frame_types: product.blade_frame_types.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item), default_frame_type: product.default_frame_type === frame.name ? event.target.value : product.default_frame_type || event.target.value }))} placeholder="Frame type (e.g. Small)" className={fieldClass} />
+                            <input aria-label={`Blade count for frame type ${index + 1}`} type="number" min="1" step="1" value={frame.blade_count ?? ""} onChange={(event) => setNewProduct((product) => ({ ...product, blade_frame_types: product.blade_frame_types.map((item, itemIndex) => itemIndex === index ? { ...item, blade_count: event.target.value } : item) }))} placeholder="Blades" className={fieldClass} />
+                            <input aria-label={`Frame price for frame type ${index + 1}`} type="number" min="0" step="0.01" value={frame.price ?? ""} onChange={(event) => setNewProduct((product) => ({ ...product, blade_frame_types: product.blade_frame_types.map((item, itemIndex) => itemIndex === index ? { ...item, price: event.target.value } : item) }))} placeholder="Frame price (PHP)" className={fieldClass} />
+                            <button type="button" aria-label={`Remove frame type ${index + 1}`} onClick={() => setNewProduct((product) => {
+                              const blade_frame_types = product.blade_frame_types.filter((_, itemIndex) => itemIndex !== index);
+                              return { ...product, blade_frame_types, default_frame_type: product.default_frame_type === frame.name ? blade_frame_types[0]?.name || "" : product.default_frame_type };
+                            })} className={`inline-flex h-12 w-12 items-center justify-center rounded-xl border ${darkMode ? "border-slate-700 text-red-300 hover:bg-slate-800" : "border-slate-200 text-red-700 hover:bg-rose-50"}`}><Trash2 size={16} /></button>
+                          </div>
+                        ))}
+                        <button type="button" onClick={() => updateField("blade_frame_types", [...(newProduct.blade_frame_types || []), { name: "", blade_count: "", price: "" }])} className={`inline-flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm font-semibold ${darkMode ? "border-slate-600 text-red-300 hover:bg-slate-800" : "border-red-300 text-red-800 hover:bg-rose-50"}`}><Plus size={15} />Add frame type</button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    {sectionHeading("Blade Limits")}
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className={labelClass}>Minimum blades (blades only)</label>
+                        <input type="number" min="1" step="1" value={newProduct.minimum_blades} onChange={(event) => updateField("minimum_blades", event.target.value)} className={fieldClass} />
+                      </div>
+                      <div>
+                        <label className={labelClass}>Maximum blades (optional)</label>
+                        <input type="number" min="1" step="1" value={newProduct.maximum_blades} onChange={(event) => updateField("maximum_blades", event.target.value)} placeholder="No maximum" className={fieldClass} />
+                      </div>
+                    </div>
+                    <label className={`mt-3 flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
+                      <input type="checkbox" checked={Boolean(newProduct.customer_can_choose_blade_count)} onChange={(event) => updateField("customer_can_choose_blade_count", event.target.checked)} className="mt-1 accent-red-700" />
+                      <span><span className={`block text-sm font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Customer can choose their own number of blades</span><span className={`mt-0.5 block text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Customer selection stays within the minimum and maximum.</span></span>
+                    </label>
+                    <div className="mt-5">
+                      {sectionHeading("Default Product")}
+                      <p className={`-mt-2 mb-4 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Choose what customers get when they add this product to their cart. They can still change the glass type and frame before ordering.</p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className={labelClass}>Glass type</label>
+                        <select value={defaultGlassType} onChange={(event) => updateField("default_blade_glass_type", event.target.value)} className={fieldClass}>
+                          <option value="">Select glass type</option>
+                          {defaultGlassTypes.map((glass) => <option key={glass.name} value={glass.name}>{glass.name} — {currency(glass.price_per_blade)}/blade</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className={labelClass}>Sold as</label>
+                        <select
+                          value={defaultSoldAs}
+                          onChange={(event) => {
+                            const selectedValue = event.target.value;
+                            const frameName = selectedValue.startsWith("frame:") ? selectedValue.slice("frame:".length) : "";
+                            const isCustomFrame = selectedValue === "custom_frame";
+                            setNewProduct((product) => ({
+                              ...product,
+                              default_sale_mode: frameName || isCustomFrame ? "frame" : "blades_only",
+                              default_frame_type: frameName,
+                            }));
+                          }}
+                          className={fieldClass}
+                        >
+                          {newProduct.sell_blades_only && <option value="blades_only">Blades only (no frame)</option>}
+                          {newProduct.sell_with_frame && defaultFrameTypes.map((frame) => (
+                            <option key={frame.name} value={`frame:${frame.name}`}>
+                              {frame.name} frame — {Number(frame.blade_count) || 0} blades · +{currency(frame.price)}
+                            </option>
+                          ))}
+                          {newProduct.sell_with_frame && newProduct.allow_custom_frame_size && defaultFrameTypes.length === 0 && (
+                            <option value="custom_frame">Custom frame size — +{currency(newProduct.custom_frame_price)}</option>
+                          )}
+                        </select>
+                      </div>
+                    </div>
+                    <div className={`mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
+                      <span className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Default total <strong className={darkMode ? "text-white" : "text-slate-900"}>{currency(defaultBladeTotal)}</strong></span>
+                      <button type="button" onClick={() => updateField("estimated_price_override", defaultBladeTotal > 0 ? String(defaultBladeTotal) : "")} disabled={defaultBladeTotal <= 0} className={`rounded-lg border border-dashed px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 text-red-300" : "border-red-300 text-red-800"}`}>Use as Product Price</button>
+                    </div>
+                  </div>
+
+                  <div className="mt-5">
+                    {sectionHeading("Customer Price Display")}
+                  </div>
+                  <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
+                    <input type="checkbox" checked={newProduct.show_price_per_blade !== false} onChange={(event) => updateField("show_price_per_blade", event.target.checked)} className="mt-1 accent-red-700" />
+                    <span><span className={`block text-sm font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Show price per blade</span><span className={`mt-0.5 block text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Customers see the price per blade and glass price breakdown.</span></span>
+                  </label>
+                </div>
+              )}
+
+              {pricingMethodValue === "fixed" && (
+                <p className={`text-sm ${darkMode ? "text-amber-300" : "text-amber-800"}`}>This product uses a legacy fixed price. Choose Per area or Per blade to change its pricing method.</p>
+              )}
+            </div>
+
+            <div className="mt-3">
+              <label className={labelClass}>Product Price (₱)</label>
+              <input type="number" min="0" step="0.01" value={newProduct.estimated_price_override || ""} onChange={(event) => updateField("estimated_price_override", event.target.value)} placeholder={pricingMethodValue === "blade" ? "Lowest price per blade" : "Auto-calculated"} className={fieldClass} />
+              <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                {pricingMethodValue === "blade"
+                  ? "The default price customers see on the product card. Leave blank to show the lowest price per blade instead."
+                  : "The default price customers see on the product card. Leave blank to use the calculated price."}
+              </p>
+            </div>
+
+            <div className={`mt-3 overflow-hidden rounded-xl border ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+              <button type="button" aria-expanded={extraChargesOpen} onClick={() => setExtraChargesOpen((open) => !open)} className={`flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
+                <span>Extra Charges <span className="font-normal text-slate-400">(optional)</span></span>
+                <ChevronDown size={16} className={`transition ${extraChargesOpen ? "rotate-180" : ""}`} />
+              </button>
+              {extraChargesOpen && (
+                <div className={`space-y-3 border-t p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+                  <p className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Configured charges are included in customer and inspection estimates.</p>
+                  {extraCharges.map((charge, index) => (
+                    <div key={`${index}-${charge.name}`} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(110px,0.8fr)_minmax(90px,0.6fr)_minmax(135px,0.8fr)_auto]">
+                      <input aria-label={`Extra charge ${index + 1} name`} value={charge.name || ""} onChange={(event) => setNewProduct((product) => ({ ...product, extra_charges: product.extra_charges.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) }))} placeholder="Charge name" className={fieldClass} />
+                      <select aria-label={`Extra charge ${index + 1} calculation`} value={charge.type || "fixed"} onChange={(event) => setNewProduct((product) => ({ ...product, extra_charges: product.extra_charges.map((item, itemIndex) => itemIndex === index ? { ...item, type: event.target.value } : item) }))} className={fieldClass}>
+                        <option value="fixed">Fixed / item</option>
+                        <option value="per_sqft">Per sq ft</option>
+                        <option value="per_blade">Per blade</option>
+                        <option value="percentage">Percent of base</option>
+                      </select>
+                      <input aria-label={`Extra charge ${index + 1} amount`} type="number" min="0" step="0.01" value={charge.amount ?? ""} onChange={(event) => setNewProduct((product) => ({ ...product, extra_charges: product.extra_charges.map((item, itemIndex) => itemIndex === index ? { ...item, amount: event.target.value } : item) }))} placeholder={charge.type === "percentage" ? "10" : "0.00"} className={fieldClass} />
+                      <select aria-label={`Extra charge ${index + 1} customer selection`} value={charge.is_optional ? "optional" : "required"} onChange={(event) => setNewProduct((product) => ({ ...product, extra_charges: product.extra_charges.map((item, itemIndex) => itemIndex === index ? { ...item, is_optional: event.target.value === "optional", is_default_selected: item.is_default_selected !== false } : item) }))} className={fieldClass}>
+                        <option value="required">Required</option>
+                        <option value="optional">Optional (customer choice)</option>
+                      </select>
+                      <button type="button" aria-label={`Remove extra charge ${index + 1}`} onClick={() => updateField("extra_charges", extraCharges.filter((_, itemIndex) => itemIndex !== index))} className={`inline-flex h-12 w-12 items-center justify-center rounded-xl border ${darkMode ? "border-slate-700 text-red-300 hover:bg-slate-800" : "border-slate-200 text-red-700 hover:bg-rose-50"}`}><Trash2 size={16} /></button>
+                      {charge.is_optional && (
+                        <label className={`sm:col-span-5 flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
+                          <input type="checkbox" checked={charge.is_default_selected !== false} onChange={(event) => setNewProduct((product) => ({ ...product, extra_charges: product.extra_charges.map((item, itemIndex) => itemIndex === index ? { ...item, is_default_selected: event.target.checked } : item) }))} className="mt-1 accent-red-700" />
+                          <span><span className={`block text-sm font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Checked by default</span><span className={`mt-0.5 block text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Customers see a checkbox and can untick this charge.</span></span>
+                        </label>
+                      )}
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => updateField("extra_charges", [...extraCharges, { name: "", type: "fixed", amount: "", is_active: true, is_optional: true, is_default_selected: true }])} className={`inline-flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm font-semibold ${darkMode ? "border-slate-600 text-red-300 hover:bg-slate-800" : "border-red-300 text-red-800 hover:bg-rose-50"}`}><Plus size={15} />Add charge</button>
+                </div>
+              )}
+            </div>
+
+            <div className={`mt-3 overflow-hidden rounded-xl border ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+              <button type="button" aria-expanded={sizeLimitsOpen} onClick={() => setSizeLimitsOpen((open) => !open)} className={`flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
+                <span>Size Limits <span className="font-normal text-slate-400">(optional · warns customers)</span></span>
+                <ChevronDown size={16} className={`transition ${sizeLimitsOpen ? "rotate-180" : ""}`} />
+              </button>
+              {sizeLimitsOpen && (
+                <div className={`grid grid-cols-2 gap-3 border-t p-4 sm:grid-cols-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+                  {[["min_width", "Min width"], ["max_width", "Max width"], ["min_height", "Min height"], ["max_height", "Max height"]].map(([key, label]) => (
+                    <div key={key}>
+                      <label className={labelClass}>{label}</label>
+                      <input type="number" min="0" step="0.01" value={sizeLimits[key] ?? ""} onChange={(event) => updateField("size_limits", { ...sizeLimits, [key]: event.target.value })} className={fieldClass} />
+                    </div>
+                  ))}
+                  <div>
+                    <label htmlFor="product-size-limit-unit" className={labelClass}>Unit</label>
+                    <select id="product-size-limit-unit" value={sizeLimits.unit || newProduct.unit || "in"} onChange={(event) => updateField("size_limits", { ...sizeLimits, unit: event.target.value })} className={fieldClass}>
+                      {MEASUREMENT_UNITS.map(([value]) => <option key={value} value={value}>{value}</option>)}
                     </select>
                   </div>
-                  <div className="md:col-span-3">
-                    <label className={labelClass}>Price Per Square Foot (PHP) *</label>
-                    <input type="number" min="0" value={newProduct.price_per_sqft} onChange={(event) => updateField("price_per_sqft", event.target.value)} placeholder="0.00" className={fieldClass} />
-                  </div>
-              </>
-
-              {newProduct.pricing_method === "blade" && (
-                <>
-                  <div>
-                    <label className={labelClass}>Blade Count *</label>
-                    <input type="number" min="1" value={newProduct.blade_count} onChange={(event) => updateField("blade_count", event.target.value)} placeholder="0" className={fieldClass} />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className={labelClass}>Price Per Blade (PHP) *</label>
-                    <input type="number" min="0" value={newProduct.price_per_blade} onChange={(event) => updateField("price_per_blade", event.target.value)} placeholder="0.00" className={fieldClass} />
-                  </div>
-                </>
+                </div>
               )}
+            </div>
 
-              {newProduct.pricing_method === "fixed" && !editingProduct && (
-                <>
-                  <div>
-                    <label className={labelClass}>Standard Size</label>
-                    <input type="text" value={newProduct.standard_size || ""} onChange={(event) => updateField("standard_size", event.target.value)} placeholder="e.g. 900 x 2100 mm" className={fieldClass} />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className={labelClass}>Base Price (PHP) *</label>
-                    <input type="number" min="0" value={newProduct.base_price} onChange={(event) => updateField("base_price", event.target.value)} placeholder="0.00" className={fieldClass} />
-                  </div>
-                </>
-              )}
-
-              <div className={`md:col-span-3 rounded-xl border px-5 py-4 ${darkMode ? "border-slate-700 bg-slate-800" : "border-rose-200 bg-rose-50/80"}`}>
+            <div className={`mt-3 rounded-xl border px-4 py-3 ${darkMode ? "border-red-900 bg-red-950/40" : "border-rose-300 bg-rose-50"}`}>
+              <p className={`text-sm font-bold ${darkMode ? "text-red-300" : "text-red-950"}`}>
+                {pricingMethodValue === "blade" ? "Estimated cost for the default selection" : "Estimated cost for the size above"}
+              </p>
+              <div className={`mt-3 space-y-2 text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                 <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className={`text-sm font-bold ${darkMode ? "text-red-300" : "text-red-950"}`}>Estimated Cost</p>
-                    <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-red-800/70"}`}>Auto-calculated from dimensions and pricing</p>
-                    <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-red-800/70"}`}>Estimated area: {Number(newProduct.estimated_area || 0).toFixed(2)} sq ft</p>
+                  <span>{estimatedMeasureLabel}</span>
+                  <span className={`shrink-0 text-right font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{estimatedMeasureValue}</span>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <span>Base price</span>
+                  <span className={`shrink-0 text-right font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{currency(baseEstimate)}</span>
+                </div>
+                {configuredChargeTotal > 0 && (
+                  <div className="flex items-center justify-between gap-4">
+                    <span>Extra charges</span>
+                    <span className={`shrink-0 text-right font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{currency(configuredChargeTotal)}</span>
                   </div>
-                  <p className={`shrink-0 text-2xl font-black ${darkMode ? "text-red-300" : "text-red-950"}`}>₱{displayedEstimatedPrice.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                )}
+                <div className={`flex items-center justify-between gap-4 border-t pt-2 ${darkMode ? "border-red-900 text-red-300" : "border-rose-300 text-red-950"}`}>
+                  <span className="font-bold">Estimated total</span>
+                  <span className="shrink-0 text-right text-sm font-black">{currency(displayedEstimatedPrice)}</span>
                 </div>
               </div>
-
-              <div className="md:col-span-3">
-                <label className={labelClass}>Override Estimated Cost (PHP)</label>
-                <input type="number" min="0" value={newProduct.estimated_price_override || ""} onChange={(event) => updateField("estimated_price_override", event.target.value)} placeholder="Leave blank to use auto-calculated cost" className={fieldClass} />
-              </div>
             </div>
+
           </section>
 
           <section>
@@ -725,6 +1125,15 @@ function Products() {
       return Number(product.base_price || product.unit_price || product.estimated_price || 0);
     }
 
+    if (product.pricing_method === "blade" || PRICING_METHOD[product.product_name] === "blade") {
+      const bladeRates = (product.blade_glass_types || [])
+        .map((glass) => Number(glass.price_per_blade) || 0)
+        .filter((price) => price > 0);
+      if (bladeRates.length) return Math.min(...bladeRates);
+      const legacyBladeRate = Number(product.price_per_blade || product.unit_price) || 0;
+      if (legacyBladeRate > 0) return legacyBladeRate;
+    }
+
     const savedEstimate = Number(product.estimated_price || 0);
     if (savedEstimate > 0) return savedEstimate;
 
@@ -770,8 +1179,6 @@ function Products() {
   const [products, setProducts] = useState([]);
 
   // --- Dynamic product configuration mappings ---
-  const PRODUCT_TYPES = ["Glass", "Aluminum", "Mixed System"];
-
   const PRODUCT_NAMES = {
     Glass: ["Sliding Window", "Glass Door", "Jalousie Window"],
     Aluminum: ["Aluminum Door", "Aluminum Window"],
@@ -783,30 +1190,10 @@ function Products() {
     "Aluminum Window": "sqft",
     "Sink Cabinet": "sqft",
     "Hanging Cabinet": "sqft",
-    "Glass Door": "fixed",
-    "Aluminum Door": "fixed",
+    "Glass Door": "",
+    "Aluminum Door": "",
     "Jalousie Window": "blade",
   };
-
-  const VARIANTS = {
-    "Sliding Window": ["Clear to RB", "Blue", "Reflective Blue to RG"],
-    "Aluminum Window": ["Sliding", "Owning", "Swing", "Slide Up"],
-    "Sink Cabinet": ["Modular", "Regular"],
-    "Hanging Cabinet": ["Modular", "Regular"],
-    "Jalousie Window": ["Clear to Bronze", "Smoke / Reflective Bronze to Blue", "Reflective Blue to RG"],
-    "Glass Door": ["Clear", "Tinted"],
-    "Aluminum Door": ["Standard", "Heavy Duty"],
-  };
-
-  const CATEGORY_OPTIONS = [
-    "Windows",
-    "Doors",
-    "Cabinets",
-    "Shower Enclosures",
-    "Aluminum",
-    "Glass",
-    "Accessories",
-  ];
 
   const DEFAULT_CATEGORY = "Windows";
 
@@ -841,6 +1228,15 @@ function Products() {
         seen.add(label);
         return true;
       });
+  };
+
+  const normalizeCatalogItems = (value) => {
+    const payload = getCatalogPayload(value);
+    if (!Array.isArray(payload)) return [];
+    return payload.map((item) => ({
+      id: item?._id || item?.id || getCatalogText(item).trim(),
+      name: getCatalogText(item).trim(),
+    })).filter((item) => item.name);
   };
 
   const mergeOptionValues = (...groups) => {
@@ -898,6 +1294,20 @@ function Products() {
     return grouped;
   };
 
+  const normalizeGroupedCatalogItems = (value, groupKey) => {
+    const payload = getCatalogPayload(value);
+    const grouped = {};
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return grouped;
+    Object.entries(payload).forEach(([group, options]) => {
+      grouped[group] = (Array.isArray(options) ? options : []).map((option) => ({
+        id: option?._id || option?.id || `${group}:${getCatalogText(option)}`,
+        name: getCatalogText(option).trim(),
+        [groupKey]: getCatalogText(option?.[groupKey], group).trim(),
+      })).filter((item) => item.name);
+    });
+    return grouped;
+  };
+
   const normalizeProductForState = (product, fallback = {}) => {
     const category = getCatalogText(product.category, fallback.category || DEFAULT_CATEGORY);
     const productType = getCatalogText(product.product_type || product.type, fallback.product_type || fallback.type || "");
@@ -926,10 +1336,13 @@ function Products() {
     };
   };
 
-  const [productTypesList, setProductTypesList] = useState(PRODUCT_TYPES);
+  const [productTypesList, setProductTypesList] = useState([]);
+  const [productTypeCatalogItems, setProductTypeCatalogItems] = useState([]);
   const [productNamesList, setProductNamesList] = useState(PRODUCT_NAMES);
-  const [categoryOptionsList, setCategoryOptionsList] = useState(CATEGORY_OPTIONS);
-  const [variantsList, setVariantsList] = useState(VARIANTS);
+  const [categoryOptionsList, setCategoryOptionsList] = useState([]);
+  const [categoryCatalogItems, setCategoryCatalogItems] = useState([]);
+  const [variantsList, setVariantsList] = useState({});
+  const [variantCatalogItems, setVariantCatalogItems] = useState({});
   const catalogLoadVersionRef = useRef(0);
 
   const reloadCatalogLists = async () => {
@@ -943,7 +1356,9 @@ function Products() {
     if (requestVersion !== catalogLoadVersionRef.current) return;
 
     if (types.status === "fulfilled") {
-      setProductTypesList(mergeOptionValues(PRODUCT_TYPES, normalizeOptionValues(types.value)));
+      const items = normalizeCatalogItems(types.value);
+      setProductTypeCatalogItems(items);
+      setProductTypesList(items.map((item) => item.name));
     } else {
       console.error("Failed to load product types", types.reason);
     }
@@ -955,13 +1370,16 @@ function Products() {
     }
 
     if (categories.status === "fulfilled") {
-      setCategoryOptionsList(mergeOptionValues(CATEGORY_OPTIONS, normalizeOptionValues(categories.value)));
+      const items = normalizeCatalogItems(categories.value);
+      setCategoryCatalogItems(items);
+      setCategoryOptionsList(items.map((item) => item.name));
     } else {
       console.error("Failed to load categories", categories.reason);
     }
 
     if (vars.status === "fulfilled") {
-      setVariantsList(mergeGroupedOptionValues(VARIANTS, normalizeGroupedOptionValues(vars.value, "product_name")));
+      setVariantsList(normalizeGroupedOptionValues(vars.value, "product_type"));
+      setVariantCatalogItems(normalizeGroupedCatalogItems(vars.value, "product_type"));
     } else {
       console.error("Failed to load variants", vars.reason);
     }
@@ -972,9 +1390,9 @@ function Products() {
     if (kind === "names") await catalogApi.createName({ name, product_type: newProduct.product_type });
     if (kind === "categories") await catalogApi.createCategory({ name });
     if (kind === "variants") {
-      const productName = newProduct.product_name.trim();
-      if (!productName) throw new Error("Enter a Product Name before adding a variant.");
-      await catalogApi.createVariant({ name, product_name: productName });
+      const productType = newProduct.product_type.trim();
+      if (!productType) throw new Error("Select a Product Type before adding a variant.");
+      await catalogApi.createVariant({ name, product_type: productType });
     }
 
     if (kind === "types") {
@@ -984,15 +1402,69 @@ function Products() {
       setCategoryOptionsList((current) => mergeOptionValues(current, [name]));
     }
     if (kind === "variants") {
-      const productName = newProduct.product_name.trim();
+      const productType = newProduct.product_type.trim();
       setVariantsList((current) => ({
         ...current,
-        [productName]: mergeOptionValues(current[productName] || [], [name]),
+        [productType]: mergeOptionValues(current[productType] || [], [name]),
       }));
     }
 
     await reloadCatalogLists();
     return name;
+  };
+
+  const editCatalogOption = async (kind, item, name) => {
+    const cleanName = name.trim();
+    if (!cleanName) throw new Error("Name is required.");
+    const id = item.id || item._id;
+    if (!id) throw new Error("This catalog item cannot be edited because it has no record ID.");
+    if (kind === "types") await catalogApi.updateType(id, { name: cleanName });
+    if (kind === "categories") await catalogApi.updateCategory(id, { name: cleanName });
+    if (kind === "variants") await catalogApi.updateVariant(id, { name: cleanName, product_type: item.product_type || newProduct.product_type });
+    await reloadCatalogLists();
+    if (kind === "types" && newProduct.product_type === item.name) {
+      setNewProduct((product) => ({ ...product, product_type: cleanName }));
+    }
+    if (kind === "types") {
+      setProducts((current) => current.map((product) => product.product_type === item.name
+        ? { ...product, product_type: cleanName, type: cleanName }
+        : product));
+    }
+    if (kind === "categories" && newProduct.category === item.name) {
+      setNewProduct((product) => ({ ...product, category: cleanName }));
+    }
+    if (kind === "categories") {
+      setProducts((current) => current.map((product) => product.category?.toLowerCase() === item.name.toLowerCase()
+        ? { ...product, category: cleanName.toLowerCase() }
+        : product));
+    }
+    if (kind === "variants" && newProduct.variant === item.name) {
+      setNewProduct((product) => ({ ...product, variant: cleanName }));
+    }
+    if (kind === "variants") {
+      setProducts((current) => current.map((product) => product.variant === item.name && product.product_type === (item.product_type || newProduct.product_type)
+        ? { ...product, variant: cleanName }
+        : product));
+    }
+    return cleanName;
+  };
+
+  const deleteCatalogOption = async (kind, item) => {
+    const id = item.id || item._id;
+    if (!id) throw new Error("This catalog item cannot be deleted because it has no record ID.");
+    if (kind === "types") await catalogApi.deleteType(id);
+    if (kind === "categories") await catalogApi.deleteCategory(id);
+    if (kind === "variants") await catalogApi.deleteVariant(id, item.product_type || newProduct.product_type);
+    await reloadCatalogLists();
+    if (kind === "types" && newProduct.product_type === item.name) {
+      setNewProduct((product) => ({ ...product, product_type: "", product_name: "", variant: "" }));
+    }
+    if (kind === "categories" && newProduct.category === item.name) {
+      setNewProduct((product) => ({ ...product, category: "" }));
+    }
+    if (kind === "variants" && newProduct.variant === item.name) {
+      setNewProduct((product) => ({ ...product, variant: "" }));
+    }
   };
 
   useEffect(() => {
@@ -1008,13 +1480,29 @@ function Products() {
     product_type: "",
     product_name: "",
     pricing_method: "",
-    category: DEFAULT_CATEGORY,
+    category: "",
     variant: "",
     base_price: "",
     price_per_sqft: "",
     price_per_blade: "",
+    blade_glass_types: [],
+    sell_blades_only: true,
+    sell_with_frame: false,
+    blade_frame_types: [],
+    allow_custom_frame_size: false,
+    custom_frame_size_unit: "in",
+    custom_frame_price: "",
+    minimum_blades: 1,
+    maximum_blades: "",
+    customer_can_choose_blade_count: false,
+    default_blade_glass_type: "",
+    default_sale_mode: "blades_only",
+    default_frame_type: "",
+    show_price_per_blade: true,
     customization: false,
-    customization_fee: 700,
+    customization_fee: 0,
+    extra_charges: [],
+    size_limits: { min_width: "", max_width: "", min_height: "", max_height: "", unit: "in" },
     standard_size: "",
     width: "",
     height: "",
@@ -1056,9 +1544,13 @@ function Products() {
     const bladeCount = parseInt(newProduct.blade_count, 10) || 0;
     const bladePrice = parseFloat(newProduct.price_per_blade) || 0;
     const basePrice = parseFloat(newProduct.base_price) || 0;
+    const defaultFrame = (newProduct.blade_frame_types || []).find((frame) => frame.name === newProduct.default_frame_type);
+    const defaultBladeCount = newProduct.default_sale_mode === "frame"
+      ? Number(defaultFrame?.blade_count) || Number(newProduct.minimum_blades) || 1
+      : Number(newProduct.minimum_blades) || 1;
 
     const result = newProduct.pricing_method === "fixed"
-      ? { estimated_area: 0, estimated_price: basePrice }
+      ? { estimated_area: 0 }
       : calculateEstimate({
       productName: newProduct.product_name || newProduct.name,
       categoryKey: newProduct.product_type || newProduct.category,
@@ -1074,14 +1566,49 @@ function Products() {
         : (newProduct.pricing_method === 'blade' ? bladePrice : undefined),
       });
 
+    const estimatedPrice = getProductLineTotal({
+      pricing_method: newProduct.pricing_method,
+      base_price: basePrice,
+      price_per_sqft: sqftPrice,
+      price_per_blade: bladePrice,
+      blade_count: bladeCount,
+      blade_glass_types: newProduct.blade_glass_types || [],
+      sell_blades_only: newProduct.sell_blades_only !== false,
+      sell_with_frame: Boolean(newProduct.sell_with_frame),
+      blade_frame_types: newProduct.blade_frame_types || [],
+      allow_custom_frame_size: Boolean(newProduct.allow_custom_frame_size),
+      custom_frame_price: Number(newProduct.custom_frame_price) || 0,
+      minimum_blades: Number(newProduct.minimum_blades) || 1,
+      maximum_blades: Number(newProduct.maximum_blades) || 0,
+      customer_can_choose_blade_count: Boolean(newProduct.customer_can_choose_blade_count),
+      default_blade_glass_type: newProduct.default_blade_glass_type || newProduct.blade_glass_types?.[0]?.name || "",
+      default_sale_mode: newProduct.default_sale_mode || "blades_only",
+      default_frame_type: newProduct.default_frame_type || newProduct.blade_frame_types?.[0]?.name || "",
+      show_price_per_blade: newProduct.show_price_per_blade !== false,
+      extra_charges: newProduct.extra_charges,
+      measurement_unit: newProduct.unit,
+    }, {
+      width,
+      height,
+      quantity: 1,
+      measurement_unit: newProduct.unit,
+      customized: true,
+      blade_glass_type: newProduct.default_blade_glass_type || newProduct.blade_glass_types?.[0]?.name || "",
+      sale_mode: newProduct.default_sale_mode || "blades_only",
+      frame_type: newProduct.default_frame_type || newProduct.blade_frame_types?.[0]?.name || "",
+      custom_frame_size: newProduct.default_sale_mode === "frame" && !defaultFrame && Boolean(newProduct.allow_custom_frame_size),
+      extra_charges: getDefaultExtraChargeSelections({ extra_charges: newProduct.extra_charges || [] }),
+      blade_count: defaultBladeCount,
+    });
+
     setNewProduct((prev) => {
-      if (prev.estimated_area === result.estimated_area && prev.estimated_price === result.estimated_price) {
+      if (prev.estimated_area === result.estimated_area && prev.estimated_price === estimatedPrice) {
         return prev;
       }
       return {
         ...prev,
         estimated_area: result.estimated_area,
-        estimated_price: result.estimated_price,
+        estimated_price: estimatedPrice,
       };
     });
   }, [
@@ -1091,11 +1618,26 @@ function Products() {
     newProduct.price_per_sqft,
     newProduct.blade_count,
     newProduct.price_per_blade,
+    newProduct.blade_glass_types,
+    newProduct.sell_blades_only,
+    newProduct.sell_with_frame,
+    newProduct.blade_frame_types,
+    newProduct.allow_custom_frame_size,
+    newProduct.custom_frame_size_unit,
+    newProduct.custom_frame_price,
+    newProduct.minimum_blades,
+    newProduct.maximum_blades,
+    newProduct.customer_can_choose_blade_count,
+    newProduct.default_blade_glass_type,
+    newProduct.default_sale_mode,
+    newProduct.default_frame_type,
+    newProduct.show_price_per_blade,
     newProduct.unit,
     newProduct.base_price,
     newProduct.product_name,
     newProduct.product_type,
     newProduct.variant,
+    newProduct.extra_charges,
   ]);
 
   const uploaderSections = [
@@ -1233,19 +1775,40 @@ function Products() {
       void reloadCatalogLists();
       if (product) {
         const safeProduct = normalizeProductForState(product);
+        const bladeGlassTypes = Array.isArray(product.blade_glass_types) && product.blade_glass_types.length
+          ? product.blade_glass_types.map((glass) => ({ ...glass }))
+          : Number(product.price_per_blade || product.unit_price) > 0
+            ? [{ name: "Standard", price_per_blade: Number(product.price_per_blade || product.unit_price) }]
+            : [];
         setEditingProduct(product);
         setNewProduct({
           name: safeProduct.name || "",
           product_type: safeProduct.product_type || safeProduct.type || "",
           product_name: safeProduct.product_name || safeProduct.name || "",
-          pricing_method: product.pricing_method || PRICING_METHOD[safeProduct.product_name || safeProduct.name] || "",
-          category: safeProduct.category || DEFAULT_CATEGORY,
+          pricing_method: product.pricing_method === "per_piece" ? "fixed" : product.pricing_method || PRICING_METHOD[safeProduct.product_name || safeProduct.name] || "",
+          category: product.category || "",
           variant: safeProduct.variant || "",
           base_price: product.base_price || product.unit_price || "",
           price_per_sqft: product.price_per_sqft ?? "",
           price_per_blade: product.price_per_blade ?? "",
+          blade_glass_types: bladeGlassTypes,
+          sell_blades_only: product.sell_blades_only !== false,
+          sell_with_frame: Boolean(product.sell_with_frame),
+          blade_frame_types: Array.isArray(product.blade_frame_types) ? product.blade_frame_types.map((frame) => ({ ...frame })) : [],
+          allow_custom_frame_size: Boolean(product.allow_custom_frame_size),
+          custom_frame_size_unit: product.custom_frame_size_unit || "in",
+          custom_frame_price: product.custom_frame_price ?? "",
+          minimum_blades: product.minimum_blades ?? 1,
+          maximum_blades: product.maximum_blades ?? "",
+          customer_can_choose_blade_count: Boolean(product.customer_can_choose_blade_count),
+          default_blade_glass_type: product.default_blade_glass_type || bladeGlassTypes[0]?.name || "",
+          default_sale_mode: product.default_sale_mode || "blades_only",
+          default_frame_type: product.default_frame_type || "",
+          show_price_per_blade: product.show_price_per_blade !== false,
           customization: product.customization || false,
-          customization_fee: product.customization_fee || 700,
+          customization_fee: product.customization_fee ?? 0,
+          extra_charges: Array.isArray(product.extra_charges) ? product.extra_charges.map((charge) => ({ ...charge })) : [],
+          size_limits: { min_width: "", max_width: "", min_height: "", max_height: "", unit: product.measurement_unit || "in", ...(product.size_limits || {}) },
           standard_size: product.standard_size || "",
           width: product.width ?? "",
           height: product.height ?? "",
@@ -1331,8 +1894,6 @@ function Products() {
         ? "sqft"
         : Number(newProduct.price_per_blade) > 0
         ? "blade"
-        : Number(newProduct.base_price) > 0
-        ? "fixed"
         : ""
     );
 
@@ -1348,6 +1909,11 @@ function Products() {
 
     if (!selectedCategory) {
       setModalError("Category is required.");
+      return;
+    }
+
+    if (!variant && !editingProduct && pricingMethod !== "blade") {
+      setModalError("Variant is required.");
       return;
     }
 
@@ -1375,22 +1941,72 @@ function Products() {
     }
 
     if (pricingMethod === "blade") {
-      const b = parseInt(newProduct.blade_count || 0, 10);
-      if (!b || b <= 0) {
-        setModalError("Blade count must be greater than 0.");
+      const glassTypes = newProduct.blade_glass_types || [];
+      if (!glassTypes.length || glassTypes.some((glass) => !String(glass.name || "").trim() || Number(glass.price_per_blade) <= 0)) {
+        setModalError("Add at least one glass type with a price per blade greater than zero.");
         return;
       }
-      if (!newProduct.price_per_blade) {
-        setModalError("Price per blade is required.");
+      if (!newProduct.sell_blades_only && !newProduct.sell_with_frame) {
+        setModalError("Enable at least one selling option: blades only or blades with frame.");
+        return;
+      }
+      if (newProduct.sell_with_frame && !newProduct.blade_frame_types?.length && !newProduct.allow_custom_frame_size) {
+        setModalError("Add a frame type or enable custom frame size.");
+        return;
+      }
+      if ((newProduct.blade_frame_types || []).some((frame) => !String(frame.name || "").trim() || Number(frame.blade_count) < 1 || !Number.isFinite(Number(frame.price)) || Number(frame.price) < 0)) {
+        setModalError("Each frame type needs a name, blade count, and valid frame price.");
+        return;
+      }
+      if (newProduct.allow_custom_frame_size && Number(newProduct.custom_frame_price) <= 0) {
+        setModalError("Custom frame price must be greater than zero.");
+        return;
+      }
+      const minimumBlades = Math.max(1, Number(newProduct.minimum_blades) || 1);
+      const maximumBlades = Number(newProduct.maximum_blades) || 0;
+      if (maximumBlades > 0 && maximumBlades < minimumBlades) {
+        setModalError("Maximum blades cannot be lower than minimum blades.");
+        return;
+      }
+      const defaultGlass = newProduct.default_blade_glass_type || glassTypes[0]?.name;
+      const defaultSaleMode = newProduct.default_sale_mode || (newProduct.sell_blades_only ? "blades_only" : "frame");
+      if (!glassTypes.some((glass) => glass.name === defaultGlass)) {
+        setModalError("Choose a default glass type from the configured glass types.");
+        return;
+      }
+      if ((defaultSaleMode === "blades_only" && !newProduct.sell_blades_only) || (defaultSaleMode === "frame" && !newProduct.sell_with_frame)) {
+        setModalError("Choose a default selling option that is enabled.");
+        return;
+      }
+      if (defaultSaleMode === "frame" && newProduct.blade_frame_types.length && !newProduct.blade_frame_types.some((frame) => frame.name === newProduct.default_frame_type)) {
+        setModalError("Choose a default frame type from the configured frame types.");
         return;
       }
     }
 
-    if (pricingMethod === "fixed") {
+    if (pricingMethod === "fixed" && !editingProduct) {
       if (!newProduct.base_price) {
         setModalError("Base price is required for fixed price products.");
         return;
       }
+    }
+
+    for (const charge of newProduct.extra_charges || []) {
+      if (!String(charge.name || "").trim() || String(charge.amount ?? "").trim() === "" || !Number.isFinite(Number(charge.amount)) || Number(charge.amount) < 0) {
+        setModalError("Each extra charge needs a name and a valid amount.");
+        return;
+      }
+      if (!["fixed", "per_sqft", "per_blade", "percentage"].includes(charge.type)) {
+        setModalError("Choose a valid calculation type for each extra charge.");
+        return;
+      }
+    }
+
+    const limits = newProduct.size_limits || {};
+    if ((Number(limits.min_width) > 0 && Number(limits.max_width) > 0 && Number(limits.min_width) > Number(limits.max_width))
+      || (Number(limits.min_height) > 0 && Number(limits.max_height) > 0 && Number(limits.min_height) > Number(limits.max_height))) {
+      setModalError("A minimum size cannot be greater than its maximum.");
+      return;
     }
 
     const numberIfEntered = (value) => (value === "" || value == null ? undefined : Number(value));
@@ -1419,22 +2035,55 @@ function Products() {
         // Backend compatibility fields
         name: productName,
         sku: "",
-        unit_price: Number(newProduct.estimated_price_override) || Number(newProduct.estimated_price) || Number(newProduct.base_price) || Number(newProduct.price_per_sqft) || 0,
-        unit: pricingMethod === "sqft" ? "per_sqft" : "per_piece",
+        unit_price: Number(newProduct.estimated_price_override) || Number(newProduct.estimated_price) || Number(newProduct.base_price) || Number(newProduct.price_per_sqft) || Number(newProduct.price_per_blade) || 0,
+        unit: pricingMethod === "sqft" ? "per_sqft" : pricingMethod === "blade" ? "per_blade" : "per_piece",
         measurement_unit: newProduct.unit || "in",
         image_url: finalImages.main || "",
         product_type: selectedProductType,
         product_name: newProduct.product_name || productName,
         pricing_method: pricingMethod,
         category: selectedCategory || DEFAULT_CATEGORY,
-        variant,
+        variant: pricingMethod === "blade" ? "" : variant,
         base_price: numberIfEntered(newProduct.base_price),
         price_per_sqft: numberIfEntered(newProduct.price_per_sqft),
-        price_per_blade: numberIfEntered(newProduct.price_per_blade),
+        price_per_blade: pricingMethod === "blade"
+          ? Number(newProduct.blade_glass_types?.find((glass) => glass.name === (newProduct.default_blade_glass_type || newProduct.blade_glass_types?.[0]?.name))?.price_per_blade) || 0
+          : numberIfEntered(newProduct.price_per_blade),
+        customization: Boolean(newProduct.customization),
+        customization_fee: Number(newProduct.customization_fee) || 0,
+        extra_charges: (newProduct.extra_charges || []).map((charge) => ({
+          name: String(charge.name || "").trim(),
+          type: charge.type || "fixed",
+          amount: Number(charge.amount) || 0,
+          is_active: charge.is_active !== false,
+          is_optional: Boolean(charge.is_optional),
+          is_default_selected: charge.is_default_selected !== false,
+        })),
+        size_limits: {
+          min_width: Number(newProduct.size_limits?.min_width) || 0,
+          max_width: Number(newProduct.size_limits?.max_width) || 0,
+          min_height: Number(newProduct.size_limits?.min_height) || 0,
+          max_height: Number(newProduct.size_limits?.max_height) || 0,
+          unit: newProduct.size_limits?.unit || newProduct.unit || "in",
+        },
         standard_size: newProduct.standard_size || "",
         width: numberIfEntered(newProduct.width),
         height: numberIfEntered(newProduct.height),
         blade_count: numberIfEntered(newProduct.blade_count),
+        blade_glass_types: (newProduct.blade_glass_types || []).map((glass) => ({ name: String(glass.name || "").trim(), price_per_blade: Number(glass.price_per_blade) || 0 })),
+        sell_blades_only: Boolean(newProduct.sell_blades_only),
+        sell_with_frame: Boolean(newProduct.sell_with_frame),
+        blade_frame_types: (newProduct.blade_frame_types || []).map((frame) => ({ name: String(frame.name || "").trim(), blade_count: Number(frame.blade_count) || 0, price: Number(frame.price) || 0 })),
+        allow_custom_frame_size: Boolean(newProduct.allow_custom_frame_size),
+        custom_frame_size_unit: newProduct.custom_frame_size_unit || newProduct.unit || "in",
+        custom_frame_price: Number(newProduct.custom_frame_price) || 0,
+        minimum_blades: Math.max(1, Number(newProduct.minimum_blades) || 1),
+        maximum_blades: Number(newProduct.maximum_blades) || 0,
+        customer_can_choose_blade_count: Boolean(newProduct.customer_can_choose_blade_count),
+        default_blade_glass_type: newProduct.default_blade_glass_type || newProduct.blade_glass_types?.[0]?.name || "",
+        default_sale_mode: newProduct.default_sale_mode || (newProduct.sell_blades_only ? "blades_only" : "frame"),
+        default_frame_type: newProduct.default_frame_type || "",
+        show_price_per_blade: newProduct.show_price_per_blade !== false,
         estimated_area: Number(newProduct.estimated_area) || 0,
         estimated_price: Number(newProduct.estimated_price_override) || Number(newProduct.estimated_price) || 0,
         estimated_price_override: Number(newProduct.estimated_price_override) || 0,
@@ -1532,11 +2181,8 @@ function Products() {
     categoryOptionsList,
     products.map((product) => String(product.category || "").trim()).filter(Boolean),
   );
-  const variantProductName = Object.keys(variantsList).find(
-    (productName) => productName.trim().toLowerCase() === newProduct.product_name.trim().toLowerCase(),
-  ) || newProduct.product_name;
   const variantOptions = withSelectedOption(
-    variantsList[variantProductName] || VARIANTS[variantProductName] || [],
+    variantsList[newProduct.product_type] || [],
     newProduct.variant
   );
   return (
@@ -1714,7 +2360,7 @@ function Products() {
                                 {product.category || "General"}
                               </span>
                               <h3 title={productName} className={`mt-2 truncate text-[17px] font-medium ${darkMode ? "text-white" : "text-slate-900"}`}>{productName}</h3>
-                              <p className={`mt-1 truncate text-[13px] font-normal ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{productType}{product.variant ? ` · ${product.variant}` : ""}</p>
+                              <p className={`mt-1 truncate text-[13px] font-normal ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{productType}{pricingMethod !== "blade" && product.variant ? ` · ${product.variant}` : ""}</p>
                             </div>
                             <div className="mt-auto flex items-end justify-between gap-2 pt-2">
                               <div>
@@ -1795,6 +2441,9 @@ function Products() {
           productTypeOptions={productTypeOptions}
           categoryOptions={categoryOptions}
           variantOptions={variantOptions}
+          productTypeCatalogItems={productTypeCatalogItems}
+          categoryCatalogItems={categoryCatalogItems}
+          variantCatalogItems={variantCatalogItems}
           pricingMethodByName={PRICING_METHOD}
           uploaderSections={uploaderSections}
           uploadProgress={uploadProgress}
@@ -1805,6 +2454,8 @@ function Products() {
           closeModal={closeModal}
           cancelUpload={cancelUpload}
           saveCatalogOption={saveCatalogOption}
+          editCatalogOption={editCatalogOption}
+          deleteCatalogOption={deleteCatalogOption}
         />
       )}
 

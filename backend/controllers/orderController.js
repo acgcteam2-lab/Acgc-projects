@@ -146,9 +146,18 @@ const sanitizeOrderItems = (items = []) => {
       pricing_method: item.pricing_method || "",
       price_per_sqft: Number(item.price_per_sqft) || 0,
       price_per_blade: Number(item.price_per_blade) || 0,
+      blade_glass_type: item.blade_glass_type || "",
+      sale_mode: item.sale_mode || "",
+      frame_type: item.frame_type || "",
+      frame_price: Number(item.frame_price) || 0,
+      custom_frame_size: Boolean(item.custom_frame_size),
       base_price: Number(item.base_price) || 0,
       blade_count: Number(item.blade_count) || 0,
       estimated_price_override: Number(item.estimated_price_override) || 0,
+      customization: Boolean(item.customization),
+      customization_fee: Number(item.customization_fee) || 0,
+      extra_charges: Array.isArray(item.extra_charges) ? item.extra_charges : [],
+      size_limits: item.size_limits || {},
       line_total: Number(item.line_total) || 0,
       unit: item.unit || "piece",
       category: item.category || "",
@@ -207,7 +216,7 @@ const repriceInspectionItems = async (items) => {
   const productIds = [...new Set(sanitizedItems.map((item) => item.product_id).filter(Boolean))];
   const products = productIds.length
     ? await Product.find({ _id: { $in: productIds } })
-        .select("pricing_method unit unit_price base_price price_per_sqft price_per_blade blade_count customization customization_fee estimated_price estimated_price_override width height measurement_unit")
+        .select("pricing_method unit unit_price base_price price_per_sqft price_per_blade blade_count blade_glass_types sell_blades_only sell_with_frame blade_frame_types allow_custom_frame_size custom_frame_price minimum_blades maximum_blades customer_can_choose_blade_count default_blade_glass_type default_sale_mode default_frame_type show_price_per_blade customization customization_fee extra_charges size_limits estimated_price estimated_price_override width height measurement_unit")
         .lean()
     : [];
   const productsById = new Map(products.map((product) => [String(product._id), product]));
@@ -371,7 +380,7 @@ export const createOrder = async (req, res) => {
 
     const products = productIds.length
       ? await Product.find({ _id: { $in: productIds } })
-          .select("pricing_method unit unit_price base_price price_per_sqft price_per_blade blade_count customization customization_fee estimated_price estimated_price_override width height measurement_unit")
+          .select("pricing_method unit unit_price base_price price_per_sqft price_per_blade blade_count blade_glass_types sell_blades_only sell_with_frame blade_frame_types allow_custom_frame_size custom_frame_price minimum_blades maximum_blades customer_can_choose_blade_count default_blade_glass_type default_sale_mode default_frame_type show_price_per_blade customization customization_fee extra_charges estimated_price estimated_price_override width height measurement_unit")
           .lean()
       : [];
     const productsById = new Map(products.map((product) => [String(product._id), product]));

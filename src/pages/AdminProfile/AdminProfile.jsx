@@ -3,7 +3,6 @@ import {
   User,
   Mail,
   Phone,
-  Camera,
   Save,
   ShieldCheck,
   Activity,
@@ -22,6 +21,7 @@ import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import ProfileAvatar from "../../components/ui/ProfileAvatar";
 
 function AdminProfile() {
   const isMobile = useIsMobile();
@@ -377,16 +377,12 @@ function AdminProfile() {
           <div className="mt-5 grid grid-cols-1 gap-4 sm:mt-6 sm:gap-6 xl:grid-cols-3">
             <div className="min-w-0 rounded-3xl bg-white p-5 shadow sm:p-8">
               <div className="flex flex-col items-center">
-                <div className="relative">
-                  <img
-                    src="https://i.pravatar.cc/300"
-                    alt={profileType}
-                    className="w-36 h-36 rounded-full object-cover border-4 border-red-100"
-                  />
-                  <button className="absolute bottom-2 right-2 bg-red-600 text-white p-3 rounded-full shadow-lg hover:bg-red-700">
-                    <Camera size={18} />
-                  </button>
-                </div>
+                <ProfileAvatar
+                  name={`${profile.first_name} ${profile.last_name}`}
+                  avatarOnly
+                  size="lg"
+                  className="border-4 border-red-100"
+                />
 
                 <h2 className="mt-5 break-words text-center text-xl font-bold sm:text-2xl">
                   {profile.first_name} {profile.last_name}
@@ -720,68 +716,55 @@ function AdminProfile() {
 
                       {filteredActivityLog.length > 0 ? (
                         <div className="space-y-3">
-                          {visibleActivity.map((activity) => (
-                            <div
-                              key={activity.id}
-                              className={`group flex items-start gap-4 rounded-2xl border border-gray-200 border-l-4 p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md ${
-                                activity.description === "Logged in"
-                                  ? "border-l-green-500 bg-green-50/60 hover:border-green-300"
-                                  : activity.description === "Logged out"
-                                    ? "border-l-red-500 bg-red-50/60 hover:border-red-300"
-                                    : activity.page === "Products"
-                                      ? "border-l-gray-300 bg-gray-50 hover:border-gray-400"
-                                      : "border-l-blue-500 bg-blue-50/60 hover:border-blue-300"
-                              }`}
-                            >
-                              {activity.description === "Logged in" ? (
-                                <LogIn className="mt-0.5 shrink-0 text-green-600" size={18} />
-                              ) : activity.description === "Logged out" ? (
-                                <LogOut className="mt-0.5 shrink-0 text-red-600" size={18} />
-                              ) : (
-                                <Clock3 className="mt-0.5 shrink-0 text-gray-500" size={18} />
-                              )}
-                              <div>
-                                <p
-                                  className={`font-medium ${
-                                    activity.description === "Logged in"
-                                      ? "text-green-800"
-                                      : activity.description === "Logged out"
-                                        ? "text-red-800"
-                                        : activity.page === "Products"
-                                          ? "text-gray-700"
-                                          : "text-blue-800"
-                                  }`}
-                                >
-                                  {activity.description}
-                                </p>
-                                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                                  <span
-                                    className={`rounded-full border px-2.5 py-1 font-semibold uppercase tracking-wide ${
-                                      activity.description === "Logged in" ||
-                                      activity.description === "Logged out"
-                                        ? "border-red-200 bg-red-50 text-red-600"
-                                        : activity.page === "Products"
-                                          ? "border-gray-200 bg-gray-100 text-gray-500"
-                                          : "border-blue-200 bg-blue-50 text-blue-600"
-                                    }`}
-                                  >
-                                    {activity.description === "Logged in" ||
-                                    activity.description === "Logged out"
-                                      ? "Security"
-                                      : activity.page === "Products"
-                                        ? "System"
-                                        : "Project"}
-                                  </span>
-                                  <span className="text-gray-500">
-                                    {formatDateTimeToMMMDDYYYY(activity.createdAt)}
-                                  </span>
-                                  <span className="font-semibold uppercase tracking-wide text-gray-400">
-                                    Page: {activity.page || "Admin"}
-                                  </span>
+                          {visibleActivity.map((activity) => {
+                            const isLogin = activity.description === "Logged in";
+                            const isLogout = activity.description === "Logged out";
+                            const isSystemActivity = activity.page === "Products";
+                            const activityStyles = isLogin
+                              ? darkMode
+                                ? { card: "border-l-emerald-400 bg-emerald-950/45 hover:border-emerald-700", icon: "text-emerald-300", title: "text-emerald-200", badge: "border-emerald-800 bg-emerald-950 text-emerald-200", label: "Security" }
+                                : { card: "border-l-green-500 bg-green-50/60 hover:border-green-300", icon: "text-green-600", title: "text-green-800", badge: "border-red-200 bg-red-50 text-red-600", label: "Security" }
+                              : isLogout
+                                ? darkMode
+                                  ? { card: "border-l-red-400 bg-red-950/45 hover:border-red-700", icon: "text-red-300", title: "text-red-200", badge: "border-red-800 bg-red-950 text-red-200", label: "Security" }
+                                  : { card: "border-l-red-500 bg-red-50/60 hover:border-red-300", icon: "text-red-600", title: "text-red-800", badge: "border-red-200 bg-red-50 text-red-600", label: "Security" }
+                                : isSystemActivity
+                                  ? darkMode
+                                    ? { card: "border-l-slate-500 bg-slate-800 hover:border-slate-500", icon: "text-slate-300", title: "text-slate-200", badge: "border-slate-600 bg-slate-700 text-slate-200", label: "System" }
+                                    : { card: "border-l-gray-300 bg-gray-50 hover:border-gray-400", icon: "text-gray-500", title: "text-gray-700", badge: "border-gray-200 bg-gray-100 text-gray-500", label: "System" }
+                                  : darkMode
+                                    ? { card: "border-l-sky-400 bg-sky-950/40 hover:border-sky-700", icon: "text-sky-300", title: "text-sky-200", badge: "border-sky-800 bg-sky-950 text-sky-200", label: "Project" }
+                                    : { card: "border-l-blue-500 bg-blue-50/60 hover:border-blue-300", icon: "text-gray-500", title: "text-blue-800", badge: "border-blue-200 bg-blue-50 text-blue-600", label: "Project" };
+
+                            return (
+                              <div
+                                key={activity.id}
+                                className={`group flex items-start gap-4 rounded-2xl border border-gray-200 border-l-4 p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md ${activityStyles.card}`}
+                              >
+                                {isLogin ? (
+                                  <LogIn className={`mt-0.5 shrink-0 ${activityStyles.icon}`} size={18} />
+                                ) : isLogout ? (
+                                  <LogOut className={`mt-0.5 shrink-0 ${activityStyles.icon}`} size={18} />
+                                ) : (
+                                  <Clock3 className={`mt-0.5 shrink-0 ${activityStyles.icon}`} size={18} />
+                                )}
+                                <div>
+                                  <p className={`font-medium ${activityStyles.title}`}>{activity.description}</p>
+                                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                                    <span className={`rounded-full border px-2.5 py-1 font-semibold uppercase tracking-wide ${activityStyles.badge}`}>
+                                      {activityStyles.label}
+                                    </span>
+                                    <span className={darkMode ? "text-slate-400" : "text-gray-500"}>
+                                      {formatDateTimeToMMMDDYYYY(activity.createdAt)}
+                                    </span>
+                                    <span className={`font-semibold uppercase tracking-wide ${darkMode ? "text-slate-500" : "text-gray-400"}`}>
+                                      Page: {activity.page || "Admin"}
+                                    </span>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       ) : (
                         <div className="rounded-2xl border border-dashed border-gray-200 p-8 text-center text-gray-500">

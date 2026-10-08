@@ -267,6 +267,37 @@ describe("inspection measurement calculations", () => {
     expect(calculateMeasurementSubtotal(item, product)).toBe(7300);
   });
 
+  it("calculates a site-inspection blade row using its selected glass and frame", () => {
+    const product = {
+      pricing_method: "blade",
+      price_per_blade: 50,
+      blade_glass_types: [
+        { name: "Clear", price_per_blade: 40 },
+        { name: "Tinted", price_per_blade: 75 },
+      ],
+      blade_frame_types: [{ name: "Small", blade_count: 5, price: 200 }],
+      default_blade_glass_type: "Clear",
+      default_sale_mode: "blades_only",
+      sell_blades_only: true,
+      sell_with_frame: true,
+      minimum_blades: 1,
+      extra_charges: [{ name: "Install", type: "per_blade", amount: 10 }],
+    };
+    const item = {
+      pricing_method: "blade",
+      blade_glass_type: "Tinted",
+      sale_mode: "frame",
+      frame_type: "Small",
+      blade_count: 5,
+      quantity: 1,
+      width: 24,
+      height: 48,
+      measurement_unit: "in",
+    };
+
+    expect(calculateMeasurementSubtotal(item, product)).toBe(625);
+  });
+
   it("recalculates a product estimate override when inspection dimensions differ from standard size", () => {
     const product = {
       pricing_method: "sqft",
@@ -348,6 +379,33 @@ describe("resolveInspectionProductPrice", () => {
       pricing_method: "fixed",
       width: 36,
       height: 48,
+    });
+  });
+
+  it("provides the blade configuration defaults needed by inspection rows", () => {
+    expect(resolveInspectionProductPrice({
+      _id: "blade-product",
+      pricing_method: "blade",
+      price_per_blade: 50,
+      blade_glass_types: [{ name: "Clear", price_per_blade: 50 }],
+      blade_frame_types: [{ name: "Small", blade_count: 5, price: 200 }],
+      sell_blades_only: true,
+      sell_with_frame: true,
+      default_blade_glass_type: "Clear",
+      default_sale_mode: "frame",
+      default_frame_type: "Small",
+      minimum_blades: 2,
+      allow_custom_frame_size: true,
+    })).toMatchObject({
+      pricing_method: "blade",
+      blade_glass_type: "Clear",
+      sale_mode: "frame",
+      frame_type: "Small",
+      blade_count: 5,
+      blade_glass_types: [{ name: "Clear", price_per_blade: 50 }],
+      sell_blades_only: true,
+      sell_with_frame: true,
+      allow_custom_frame_size: true,
     });
   });
 });

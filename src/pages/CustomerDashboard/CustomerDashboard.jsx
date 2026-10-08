@@ -14,7 +14,6 @@ import {
   Mail,
   Phone,
   MapPin,
-  Camera,
   Save,
   ShieldCheck,
   Ruler,
@@ -86,8 +85,9 @@ import {
   normalizeOrderStatusKey,
 } from "./orderStatusUtils";
 import { getPaymentSummary, isPaymentProofConfirmed } from "@/pages/Transactions/paymentProofUtils";
-import { buildProductPriceSnapshot, getProductLineTotal } from "@/lib/productPricing";
+import { buildProductPriceSnapshot, getDefaultExtraChargeSelections, getProductLineTotal } from "@/lib/productPricing";
 import { getFinalProjectCost } from "@/lib/orderPricing";
+import ProfileAvatar from "../../components/ui/ProfileAvatar";
 
 const PRODUCT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
@@ -289,13 +289,14 @@ function CustomerDashboard() {
   const [cartLoaded, setCartLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
+  const [productTypeFilter, setProductTypeFilter] = useState("All");
   const [productPage, setProductPage] = useState(1);
   const [productsPerPage, setProductsPerPage] = useState(8);
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [productError, setProductError] = useState("");
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedProductImageIndex, setSelectedProductImageIndex] = useState(0);
-  const [productEstimatorForm, setProductEstimatorForm] = useState({ unit: "in", width: "0", height: "0" });
+  const [productEstimatorForm, setProductEstimatorForm] = useState({ unit: "in", width: "0", height: "0", blade_glass_type: "", sale_mode: "blades_only", frame_type: "", custom_frame_size: false, blade_count: 1, extra_charges: [] });
   const [showAboutProduct, setShowAboutProduct] = useState(false);
   const [showCartDecisionModal, setShowCartDecisionModal] = useState(false);
   const [cartDecisionStep, setCartDecisionStep] = useState("choice");
@@ -306,6 +307,11 @@ function CustomerDashboard() {
     height: "",
     quantity: 1,
     notes: "",
+    blade_glass_type: "",
+    sale_mode: "blades_only",
+    frame_type: "",
+    custom_frame_size: false,
+    blade_count: 1,
   });
   const [estimateFormErrors, setEstimateFormErrors] = useState({});
   const [cartActionError, setCartActionError] = useState("");
@@ -392,6 +398,7 @@ function CustomerDashboard() {
   const [showOrderNowModal, setShowOrderNowModal] = useState(false);
   const [orderNowProduct, setOrderNowProduct] = useState(null);
   const [orderNowQuantity, setOrderNowQuantity] = useState(1);
+  const [orderNowExtraCharges, setOrderNowExtraCharges] = useState([]);
   const [showOrderSuccessModal, setShowOrderSuccessModal] = useState(false);
   const [orderSuccessData, setOrderSuccessData] = useState(null);
   const [cancelRequestModal, setCancelRequestModal] = useState({ open: false, order: null });
@@ -1210,7 +1217,7 @@ function CustomerDashboard() {
 
   useEffect(() => {
     setProductPage(1);
-  }, [searchQuery, categoryFilter, productsPerPage]);
+  }, [searchQuery, categoryFilter, productTypeFilter, productsPerPage]);
 
   useEffect(() => {
     if (loading || !user || !localStorage.getItem("token")) return undefined;
@@ -1222,10 +1229,7 @@ function CustomerDashboard() {
       setProductError("");
 
       try {
-        const response = await getProducts({
-          search: searchQuery,
-          category: categoryFilter && categoryFilter !== "All" ? categoryFilter : undefined,
-        });
+        const response = await getProducts();
         if (!active) return;
 
         const productsList = (response.products || []).sort(
@@ -1277,7 +1281,7 @@ function CustomerDashboard() {
     return () => {
       active = false;
     };
-  }, [searchQuery, categoryFilter, canUploadFeedback, loading, user?.id]);
+  }, [canUploadFeedback, loading, user?.id]);
 
   useEffect(() => {
     if (loading || !user || !localStorage.getItem("token")) return undefined;
@@ -1322,8 +1326,26 @@ function CustomerDashboard() {
     };
   }, [loading, user?.id]);
 
-  const paginatedProducts = paginateItems(products, productPage, productsPerPage);
-  const displayedProducts = isMobile ? products : paginatedProducts.items;
+  const productCategoryOptions = [...new Set(products.map((product) => String(product.category || "").trim()).filter(Boolean))]
+    .sort((first, second) => first.localeCompare(second));
+  const productTypeOptions = [...new Set(products.map((product) => String(product.product_type || product.type || "").trim()).filter(Boolean))]
+    .sort((first, second) => first.localeCompare(second));
+  const normalizedProductSearch = searchQuery.trim().toLowerCase();
+  const visibleProducts = products.filter((product) => {
+    const matchesSearch = !normalizedProductSearch || [
+      product.name,
+      product.product_name,
+      product.product_type,
+      product.category,
+      product.variant,
+      product.description,
+    ].some((value) => String(value || "").toLowerCase().includes(normalizedProductSearch));
+    const matchesCategory = categoryFilter === "All" || String(product.category || "").toLowerCase() === categoryFilter.toLowerCase();
+    const matchesType = productTypeFilter === "All" || String(product.product_type || product.type || "").toLowerCase() === productTypeFilter.toLowerCase();
+    return matchesSearch && matchesCategory && matchesType;
+  });
+  const paginatedProducts = paginateItems(visibleProducts, productPage, productsPerPage);
+  const displayedProducts = isMobile ? visibleProducts : paginatedProducts.items;
 
   useEffect(() => {
     if (!orderOwnerId) return;
@@ -1464,6 +1486,13 @@ function CustomerDashboard() {
     Number(dimensions?.quantity) > 0 &&
     Boolean(dimensions?.unit);
 
+  const hasValidOrderItemPricingDimensions = (item) => {
+    const pricingMethod = String(item?.pricing_method || item?.unit || "").toLowerCase();
+    const isBladeProduct = pricingMethod === "blade" || pricingMethod === "per_blade";
+    const needsCustomFrameDimensions = isBladeProduct && item?.sale_mode === "frame" && Boolean(item?.custom_frame_size);
+    return isBladeProduct && !needsCustomFrameDimensions || areOrderItemDimensionsValid(item?.dimensions);
+  };
+
   const getOrderItemDimensionText = (itemOrDimensions) => {
     const dimensions = itemOrDimensions?.dimensions || itemOrDimensions || {};
     if (!areOrderItemDimensionsValid(dimensions)) return "—";
@@ -1498,6 +1527,13 @@ function CustomerDashboard() {
       customized: dimensions.customized,
       area: Number(options.area) || 0,
       notes: options.notes || "",
+      blade_glass_type: options.blade_glass_type || product?.default_blade_glass_type || "",
+      sale_mode: options.sale_mode || product?.default_sale_mode || "blades_only",
+      frame_type: options.frame_type || product?.default_frame_type || "",
+      custom_frame_size: Boolean(options.custom_frame_size),
+      frame_price: options.frame_price == null ? undefined : Number(options.frame_price) || 0,
+      blade_count: Number(options.blade_count) || Number(product?.blade_count) || Number(product?.minimum_blades) || 1,
+      extra_charges: options.extra_charges || getDefaultExtraChargeSelections(product),
       estimated_price: Number(options.estimated_price) || 0,
       is_estimate: Boolean(options.is_estimate || dimensions.customized),
     };
@@ -1507,7 +1543,26 @@ function CustomerDashboard() {
     };
   };
 
-  const handleAddToCart = async (product) => {
+  const getDefaultBladeSelections = (product) => {
+    const glassTypes = Array.isArray(product?.blade_glass_types) ? product.blade_glass_types : [];
+    const frameTypes = Array.isArray(product?.blade_frame_types) ? product.blade_frame_types : [];
+    const defaultFrame = frameTypes.find((frame) => frame.name === product?.default_frame_type) || frameTypes[0];
+    const sellBladesOnly = product?.sell_blades_only !== false;
+    const defaultSaleMode = product?.default_sale_mode || (sellBladesOnly ? "blades_only" : "frame");
+    const defaultBladeCount = defaultSaleMode === "frame"
+      ? Number(defaultFrame?.blade_count) || Number(product?.minimum_blades) || 1
+      : Number(product?.minimum_blades) || Number(product?.blade_count) || 1;
+    return {
+      blade_glass_type: product?.default_blade_glass_type || glassTypes[0]?.name || "",
+      sale_mode: defaultSaleMode === "frame" && !product?.sell_with_frame ? "blades_only" : defaultSaleMode,
+      frame_type: defaultFrame?.name || "",
+      custom_frame_size: defaultSaleMode === "frame" && frameTypes.length === 0 && Boolean(product?.allow_custom_frame_size),
+      blade_count: defaultBladeCount,
+      extra_charges: getDefaultExtraChargeSelections(product),
+    };
+  };
+
+  const handleAddToCart = async (product, extraCharges = getDefaultExtraChargeSelections(product)) => {
     if (!canRequestOrders) {
       setCartActionError("Order requests are disabled for your account.");
       return false;
@@ -1516,8 +1571,14 @@ function CustomerDashboard() {
       setCartActionError("Your cart is still loading. Please try again.");
       return false;
     }
-    const cartItem = buildCustomerOrderItem(product, { quantity: 1 });
-    if (!areOrderItemDimensionsValid(cartItem.dimensions)) {
+    const isBladeProduct = ["blade", "per_blade"].includes(String(product?.pricing_method || product?.unit || "").toLowerCase());
+    const bladeSelections = isBladeProduct ? getDefaultBladeSelections(product) : {};
+    const cartItem = buildCustomerOrderItem(product, {
+      quantity: 1,
+      ...bladeSelections,
+      extra_charges: extraCharges,
+    });
+    if (!hasValidOrderItemPricingDimensions(cartItem)) {
       setCartActionError("Please provide valid product dimensions before submitting your order.");
       return false;
     }
@@ -1525,7 +1586,10 @@ function CustomerDashboard() {
     setCartActionError("");
     try {
       await commitCartItems((prev) => {
-        const existing = prev.find((p) => !p.is_estimate && (p._id === product._id || p.name === product.name));
+        const selectionKey = extraCharges.filter((charge) => charge.is_optional).map((charge) => charge.is_selected !== false).join(":");
+        const existing = prev.find((p) => !p.is_estimate
+          && (p._id === product._id || p.name === product.name)
+          && (p.extra_charges || []).filter((charge) => charge.is_optional).map((charge) => charge.is_selected !== false).join(":") === selectionKey);
         if (existing) {
           return prev.map((p) =>
             p.cartId === existing.cartId
@@ -1553,7 +1617,7 @@ function CustomerDashboard() {
     }
   };
 
-  const handleAddEstimateToCart = async ({ product, width, height, quantity, notes, measurementUnit }) => {
+  const handleAddEstimateToCart = async ({ product, width, height, quantity, notes, measurementUnit, blade_glass_type, sale_mode, frame_type, custom_frame_size, blade_count, extra_charges }) => {
     if (!canRequestOrders) {
       setCartActionError("Order requests are disabled for your account.");
       return false;
@@ -1592,6 +1656,12 @@ function CustomerDashboard() {
       measurement_unit: measurementUnit,
       quantity: parsedQuantity,
       customized: true,
+      blade_glass_type,
+      sale_mode,
+      frame_type,
+      custom_frame_size,
+      blade_count,
+      extra_charges,
     }) || estimationResult.estimated_price || 0;
 
     setCartActionError("");
@@ -1609,6 +1679,12 @@ function CustomerDashboard() {
             notes,
             estimated_price,
             is_estimate: true,
+            blade_glass_type,
+            sale_mode,
+            frame_type,
+            custom_frame_size,
+            blade_count,
+            extra_charges,
           }),
           cartId: generateCartId(),
           selected: true,
@@ -1635,7 +1711,7 @@ function CustomerDashboard() {
     setCartDecisionProduct(product);
     setCartDecisionStep(step);
     setShowCartDecisionModal(true);
-    setEstimateForm({ unit: "in", width: "", height: "", quantity: 1, notes: "" });
+    setEstimateForm({ unit: "in", width: "", height: "", quantity: 1, notes: "", ...getDefaultBladeSelections(product) });
     setEstimateFormErrors({});
     setCartActionError("");
     setEstimateFlowType(step === "estimate" ? "estimate_product" : null);
@@ -1695,6 +1771,11 @@ function CustomerDashboard() {
       quantity: estimateForm.quantity,
       notes: estimateForm.notes,
       measurementUnit: estimateForm.unit,
+      blade_glass_type: estimateForm.blade_glass_type,
+      sale_mode: estimateForm.sale_mode,
+      frame_type: estimateForm.frame_type,
+      custom_frame_size: estimateForm.custom_frame_size,
+      blade_count: estimateForm.blade_count,
     });
     if (added) closeCartDecisionModal();
   };
@@ -1705,7 +1786,9 @@ function CustomerDashboard() {
       return;
     }
     if (!cartDecisionProduct) return;
-    if (!estimateForm.width || !estimateForm.height) {
+    const needsDimensions = cartDecisionProduct?.pricing_method !== "blade"
+      || (estimateForm.sale_mode === "frame" && estimateForm.custom_frame_size);
+    if (needsDimensions && (!estimateForm.width || !estimateForm.height)) {
       setCartActionError("Please enter width and height to estimate.");
       return;
     }
@@ -1724,11 +1807,13 @@ function CustomerDashboard() {
       setCartActionError("Your estimate is ready, but order requests are disabled for your account.");
       return;
     }
-    if (!estimateForm.width || !estimateForm.height) {
+    const needsDimensions = cartDecisionProduct?.pricing_method !== "blade"
+      || (estimateForm.sale_mode === "frame" && estimateForm.custom_frame_size);
+    if (needsDimensions && (!estimateForm.width || !estimateForm.height)) {
       setCartActionError("Please enter width and height to request an order.");
       return;
     }
-    if (Number(estimateForm.width) <= 0 || Number(estimateForm.height) <= 0) {
+    if (needsDimensions && (Number(estimateForm.width) <= 0 || Number(estimateForm.height) <= 0)) {
       setCartActionError("Width and height must be greater than 0.");
       return;
     }
@@ -1832,6 +1917,14 @@ function CustomerDashboard() {
         const parsedWidth = Number(estimateForm.width) || 0;
         const parsedHeight = Number(estimateForm.height) || 0;
         const parsedQuantity = Number(estimateForm.quantity) || 1;
+        const bladeSelections = {
+          blade_glass_type: estimateForm.blade_glass_type,
+          sale_mode: estimateForm.sale_mode,
+          frame_type: estimateForm.frame_type,
+          custom_frame_size: estimateForm.custom_frame_size,
+          blade_count: estimateForm.blade_count,
+          extra_charges: estimateForm.extra_charges,
+        };
 
         const estimationResult = calculateEstimate({
           productName: cartDecisionProduct.product_name || cartDecisionProduct.name,
@@ -1854,6 +1947,7 @@ function CustomerDashboard() {
           measurement_unit: estimateForm.unit,
           quantity: parsedQuantity,
           customized: true,
+          ...bladeSelections,
         }) || estimationResult.estimated_price || 0;
         const item = buildCustomerOrderItem(cartDecisionProduct, {
           quantity: parsedQuantity,
@@ -1865,9 +1959,10 @@ function CustomerDashboard() {
           estimated_price: estimatedPrice,
           notes: estimateForm.notes || "",
           is_estimate: true,
+          ...bladeSelections,
         });
 
-        if (!areOrderItemDimensionsValid(item.dimensions)) {
+        if (!hasValidOrderItemPricingDimensions(item)) {
           setCartActionError("Please provide valid product dimensions before submitting your order.");
           return;
         }
@@ -2058,7 +2153,7 @@ function CustomerDashboard() {
   const handleViewProduct = (product) => {
     setSelectedProduct(product);
     setSelectedProductImageIndex(0);
-    setProductEstimatorForm({ unit: "in", width: "0", height: "0" });
+    setProductEstimatorForm({ unit: product?.custom_frame_size_unit || "in", width: "0", height: "0", ...getDefaultBladeSelections(product) });
     setShowAboutProduct(false);
   };
 
@@ -2075,6 +2170,11 @@ function CustomerDashboard() {
     }
     setOrderNowProduct(product);
     setOrderNowQuantity(1);
+    setOrderNowExtraCharges(
+      selectedProduct?._id === product?._id
+        ? productEstimatorForm.extra_charges
+        : getDefaultExtraChargeSelections(product),
+    );
     setDeliveryConfirmMode("orderNow");
     setDeliveryConfirmForm({
       phone: profileForm.phone || user?.phone || "",
@@ -2097,11 +2197,10 @@ function CustomerDashboard() {
 
     setCartDecisionProduct(product);
     setEstimateForm({
-      unit: productEstimatorForm.unit,
-      width: productEstimatorForm.width,
-      height: productEstimatorForm.height,
       quantity: 1,
       notes: "",
+      ...getDefaultBladeSelections(product),
+      ...productEstimatorForm,
     });
     setEstimateFormErrors({});
     setDeliveryConfirmMode("estimate");
@@ -2150,7 +2249,10 @@ function CustomerDashboard() {
 
     const quantity = Math.max(1, Number(orderNowQuantity) || 1);
     const dimensions = getProductDefaultDimensions(orderNowProduct, quantity);
-    const lineTotal = getProductLineTotal(orderNowProduct, dimensions);
+    const lineTotal = getProductLineTotal(orderNowProduct, {
+      ...dimensions,
+      extra_charges: orderNowExtraCharges,
+    });
 
     const item = buildCustomerOrderItem(orderNowProduct, {
       quantity,
@@ -2159,11 +2261,12 @@ function CustomerDashboard() {
       measurementUnit: dimensions.unit,
       area: 0,
       estimated_price: lineTotal,
+      extra_charges: orderNowExtraCharges,
       notes: "",
       is_estimate: false,
     });
 
-    if (!areOrderItemDimensionsValid(item.dimensions)) {
+    if (!hasValidOrderItemPricingDimensions(item)) {
       setCartActionError("Please provide valid product dimensions before submitting your order.");
       return;
     }
@@ -2593,7 +2696,7 @@ function CustomerDashboard() {
         })
       );
 
-      if (orderItems.some((item) => !areOrderItemDimensionsValid(item.dimensions))) {
+      if (orderItems.some((item) => !hasValidOrderItemPricingDimensions(item))) {
         setCheckoutError("Please provide valid product dimensions before submitting your order.");
         return;
       }
@@ -2642,6 +2745,17 @@ function CustomerDashboard() {
 
   const getProductPrice = (product) => {
     if (!product) return "Contact us";
+    const override = Number(product.estimated_price_override) || 0;
+    if (override > 0) return formatCurrency(override);
+    if (product.pricing_method === "blade" || product.unit === "per_blade") {
+      const bladeRates = (product.blade_glass_types || [])
+        .map((glass) => Number(glass.price_per_blade) || 0)
+        .filter((price) => price > 0);
+      const lowestBladeRate = bladeRates.length
+        ? Math.min(...bladeRates)
+        : Number(product.price_per_blade || product.unit_price) || 0;
+      if (lowestBladeRate > 0) return `${formatCurrency(lowestBladeRate)} / blade`;
+    }
     const dimensions = getProductDefaultDimensions(product, 1);
     const price = getProductLineTotal(product, dimensions);
     return price > 0 ? formatCurrency(price) : "Contact us";
@@ -2682,6 +2796,7 @@ function CustomerDashboard() {
       return `₱${pricePerSqft.toLocaleString()} / ${label}`;
     }
     if (product.pricing_method === "blade" && pricePerBlade > 0) {
+      if (product.show_price_per_blade === false) return `Starting from ${getProductPrice(product)}`;
       return `₱${pricePerBlade.toLocaleString()} / ${label}`;
     }
     if (pricePerSqft > 0 && label === "sq ft") {
@@ -3219,12 +3334,27 @@ function CustomerDashboard() {
           measurement_unit: estimateForm.unit,
           quantity: estimateQuantity,
           customized: true,
+          blade_glass_type: estimateForm.blade_glass_type,
+          sale_mode: estimateForm.sale_mode,
+          frame_type: estimateForm.frame_type,
+          custom_frame_size: estimateForm.custom_frame_size,
+          blade_count: estimateForm.blade_count,
+          extra_charges: estimateForm.extra_charges,
         }),
       }
     : rawEstimateResult;
 
   const productEstimatorWidth = Number(productEstimatorForm.width) || 0;
   const productEstimatorHeight = Number(productEstimatorForm.height) || 0;
+  const isBladeEstimator = selectedProduct?.pricing_method === "blade";
+  const productBladeGlassTypes = Array.isArray(selectedProduct?.blade_glass_types) ? selectedProduct.blade_glass_types : [];
+  const productBladeFrameTypes = Array.isArray(selectedProduct?.blade_frame_types) ? selectedProduct.blade_frame_types : [];
+  const selectedBladeGlass = productBladeGlassTypes.find((glass) => glass.name === productEstimatorForm.blade_glass_type);
+  const selectedBladeFrame = productBladeFrameTypes.find((frame) => frame.name === productEstimatorForm.frame_type);
+  const estimatorBladeCount = productEstimatorForm.sale_mode === "frame"
+    ? Number(selectedBladeFrame?.blade_count) || Number(productEstimatorForm.blade_count) || 0
+    : Number(productEstimatorForm.blade_count) || Number(selectedProduct?.minimum_blades) || 1;
+  const productEstimatorNeedsDimensions = !isBladeEstimator || (productEstimatorForm.sale_mode === "frame" && productEstimatorForm.custom_frame_size);
   const rawProductEstimatorResult = selectedProduct ? calculateEstimate({
     productName: selectedProduct.product_name || selectedProduct.name,
     categoryKey: selectedProduct.product_type || selectedProduct.category,
@@ -3233,7 +3363,7 @@ function CustomerDashboard() {
     height: productEstimatorHeight,
     measurementUnit: productEstimatorForm.unit,
     quantity: 1,
-    blade_count: selectedProduct.blade_count || 0,
+    blade_count: estimatorBladeCount || selectedProduct.blade_count || 0,
     base_price: selectedProduct.base_price || undefined,
     overrideRate: getProductEstimateRate(selectedProduct),
     customization: selectedProduct.customization || false,
@@ -3248,9 +3378,33 @@ function CustomerDashboard() {
           measurement_unit: productEstimatorForm.unit,
           quantity: 1,
           customized: true,
+          blade_glass_type: productEstimatorForm.blade_glass_type,
+          sale_mode: productEstimatorForm.sale_mode,
+          frame_type: productEstimatorForm.frame_type,
+          custom_frame_size: productEstimatorForm.custom_frame_size,
+          blade_count: estimatorBladeCount,
+          extra_charges: productEstimatorForm.extra_charges,
         }),
+        rate: isBladeEstimator ? Number(selectedBladeGlass?.price_per_blade) || 0 : rawProductEstimatorResult?.rate || 0,
+        areaDisplay: isBladeEstimator ? `${estimatorBladeCount} blade(s)` : rawProductEstimatorResult?.areaDisplay,
       }
     : null;
+  const hasBladeEstimate = Boolean(
+    isBladeEstimator &&
+    selectedBladeGlass &&
+    Number(selectedBladeGlass.price_per_blade) > 0 &&
+    estimatorBladeCount >= Math.max(1, Number(selectedProduct.minimum_blades) || 1) &&
+    (!(Number(selectedProduct.maximum_blades) > 0) || estimatorBladeCount <= Number(selectedProduct.maximum_blades)) &&
+    (productEstimatorForm.sale_mode === "blades_only"
+      ? selectedProduct.sell_blades_only !== false
+      : selectedProduct.sell_with_frame && (productEstimatorForm.custom_frame_size
+        ? selectedProduct.allow_custom_frame_size && productEstimatorWidth > 0 && productEstimatorHeight > 0
+        : Boolean(selectedBladeFrame))) &&
+    Number(productEstimatorResult?.estimated_price) > 0
+  );
+  const hasProductEstimatorEstimate = isBladeEstimator
+    ? hasBladeEstimate
+    : productEstimatorWidth > 0 && productEstimatorHeight > 0 && Number(productEstimatorResult?.estimated_price) > 0;
 
   const estimateArea = estimateResult.estimated_area || 0;
   const estimateTotalArea = estimateArea;
@@ -3301,6 +3455,7 @@ function CustomerDashboard() {
     ? getProductLineTotal(orderNowProduct, {
         ...getProductDefaultDimensions(orderNowProduct, Math.max(1, Number(orderNowQuantity) || 1)),
         quantity: Math.max(1, Number(orderNowQuantity) || 1),
+        extra_charges: orderNowExtraCharges,
       })
     : 0;
   const orderNowAdditionalCharges = Number(orderNowProduct?.customization_fee || 0);
@@ -3327,6 +3482,43 @@ function CustomerDashboard() {
   const confirmAdditionalCharges = deliveryConfirmMode === "orderNow" ? orderNowAdditionalCharges : estimateCustomizationFee;
   const confirmInstallationFee = deliveryConfirmMode === "orderNow" ? orderNowInstallationFee : estimateInstallationFee;
   const confirmGrandTotal = deliveryConfirmMode === "orderNow" ? orderNowGrandTotal : estimateGrandTotal;
+  const isConfirmBladeProduct = ["blade", "per_blade"].includes(String(confirmProduct?.pricing_method || "").toLowerCase());
+  const confirmBladeSelections = deliveryConfirmMode === "orderNow"
+    ? { ...getDefaultBladeSelections(confirmProduct || {}), extra_charges: orderNowExtraCharges }
+    : estimateForm;
+  const confirmGlassType = (confirmProduct?.blade_glass_types || []).find((glass) => glass.name === confirmBladeSelections.blade_glass_type);
+  const confirmBladeRate = Number(confirmGlassType?.price_per_blade ?? confirmProduct?.price_per_blade) || 0;
+  const confirmFrameType = (confirmProduct?.blade_frame_types || []).find((frame) => frame.name === confirmBladeSelections.frame_type);
+  const confirmBladeCount = Math.max(0, Number(confirmBladeSelections.blade_count) || Number(confirmFrameType?.blade_count) || Number(confirmProduct?.minimum_blades) || 0);
+  const confirmFramePrice = confirmBladeSelections.sale_mode === "frame"
+    ? Number(confirmBladeSelections.custom_frame_size ? confirmProduct?.custom_frame_price : confirmFrameType?.price) || 0
+    : 0;
+  const confirmBladePricingItem = {
+    width: deliveryConfirmMode === "orderNow" ? Number(orderNowDimensions?.width) || 0 : estimateWidth,
+    height: deliveryConfirmMode === "orderNow" ? Number(orderNowDimensions?.height) || 0 : estimateHeight,
+    measurement_unit: deliveryConfirmMode === "orderNow" ? orderNowDimensions?.unit || "in" : estimateForm.unit,
+    quantity: confirmQuantity,
+    blade_glass_type: confirmBladeSelections.blade_glass_type,
+    sale_mode: confirmBladeSelections.sale_mode,
+    frame_type: confirmBladeSelections.frame_type,
+    custom_frame_size: Boolean(confirmBladeSelections.custom_frame_size),
+    blade_count: confirmBladeCount,
+  };
+  const confirmBladeBaseTotal = isConfirmBladeProduct
+    ? getProductLineTotal({ ...confirmProduct, extra_charges: [] }, confirmBladePricingItem)
+    : 0;
+  const confirmExtraChargeRows = isConfirmBladeProduct
+    ? (confirmProduct?.extra_charges || []).flatMap((charge, index) => {
+        if (charge.is_active === false) return [];
+        const selection = confirmBladeSelections.extra_charges?.[index];
+        if (charge.is_optional && (selection?.is_selected ?? charge.is_default_selected !== false) === false) return [];
+        const amount = getProductLineTotal(
+          { ...confirmProduct, extra_charges: [charge] },
+          { ...confirmBladePricingItem, extra_charges: [{ is_selected: true }] },
+        ) - confirmBladeBaseTotal;
+        return [{ name: charge.name, amount: Math.max(0, amount) }];
+      })
+    : [];
   const isDeliveryConfirmValid = Boolean(
     deliveryConfirmForm.phone.trim() &&
     deliveryConfirmForm.street_address.trim()
@@ -3347,7 +3539,6 @@ function CustomerDashboard() {
     )
     : "N/A";
   const profileDisplayName = `${profileForm.first_name || user?.first_name || ""} ${profileForm.last_name || user?.last_name || ""}`.trim() || "Customer";
-  const profileInitials = profileDisplayName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "C";
   const profileEmail = profileForm.email || user?.email || "";
 
   if (loading) {
@@ -3359,7 +3550,7 @@ function CustomerDashboard() {
   }
 
   return (
-    <div className={`admin-theme-shell relative flex min-h-screen flex-col overflow-x-clip pb-[calc(6rem+env(safe-area-inset-bottom))] lg:pb-0 ${darkMode
+    <div className={`admin-theme-shell customer-dashboard-shell relative flex min-h-screen flex-col overflow-x-clip pb-[calc(6rem+env(safe-area-inset-bottom))] lg:pb-0 ${darkMode
       ? "admin-theme-dark"
       : "admin-theme-light"
     }`}>
@@ -3404,7 +3595,7 @@ function CustomerDashboard() {
       )}
       <div className={`${activeTab === "home"
         ? darkMode
-          ? "border-b border-white/10 bg-[rgba(8,13,24,0.58)] shadow-lg shadow-black/10 backdrop-blur-2xl"
+          ? "border-b border-white/10 bg-[rgba(27,39,57,0.84)] shadow-lg shadow-black/10 backdrop-blur-2xl"
           : "border-b border-white/40 bg-[rgba(255,255,255,0.55)] shadow-sm backdrop-blur-2xl"
         : darkMode ? "bg-slate-900/90 border-b border-slate-700 shadow-lg shadow-slate-950/20" : "bg-white/90 border-b border-slate-200 shadow-sm"
       } sticky top-0 z-50`}>
@@ -3762,7 +3953,7 @@ function CustomerDashboard() {
         aria-label="Customer navigation"
         className={`customer-mobile-navigation fixed inset-x-0 bottom-0 z-[60] flex w-full items-center justify-around gap-0 border-t px-1 pt-1.5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-2xl lg:hidden ${activeTab === "home"
           ? darkMode
-            ? "border-white/15 bg-[rgba(8,13,24,0.68)]"
+            ? "border-white/15 bg-[rgba(27,39,57,0.88)]"
             : "border-white/55 bg-[rgba(255,255,255,0.58)]"
           : darkMode ? "border-slate-800 bg-slate-950/95" : "border-slate-200 bg-white/95"
         }`}
@@ -3821,8 +4012,8 @@ function CustomerDashboard() {
 
       {activeTab === "home" && (
         <>
-          <section className={`relative overflow-hidden ${darkMode ? "bg-[#0d1117]/75 text-white" : "bg-[#45151f]/75 text-white"}`}>
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.16),transparent_26%),radial-gradient(circle_at_bottom_right,_rgba(239,68,68,0.18),transparent_28%),linear-gradient(135deg,#170d11_0%,#4b1017_38%,#140d13_100%)]" />
+          <section className={`customer-home-hero relative overflow-hidden ${darkMode ? "bg-[#1a273a] text-white" : "bg-[#45151f]/75 text-white"}`}>
+            <div className="customer-home-hero-glow absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.16),transparent_26%),radial-gradient(circle_at_bottom_right,_rgba(239,68,68,0.18),transparent_28%),linear-gradient(135deg,#170d11_0%,#4b1017_38%,#140d13_100%)]" />
             <div className="absolute -left-16 top-10 h-72 w-72 rounded-full border border-white/10" />
             <div className="absolute -right-10 bottom-6 h-80 w-80 rounded-full border border-white/10" />
             <div className="absolute left-1/2 top-1/2 h-[460px] w-[460px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/10" />
@@ -4006,13 +4197,13 @@ function CustomerDashboard() {
         {activeTab === "products" && (
           <>
             <div>
-              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
-                <div>
-                  <h2 className={`text-3xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Products</h2>
-                  <p className={darkMode ? "text-slate-300" : "text-gray-500"}>Browse available aluminum & glass products</p>
+              <div className="mb-6 grid gap-4 lg:grid-cols-[minmax(17rem,0.8fr)_minmax(0,2.2fr)] lg:items-center">
+                <div className="min-w-0">
+                  <h2 className={`text-3xl font-bold leading-tight ${darkMode ? "text-white" : "text-slate-900"}`}>Products</h2>
+                  <p className={`mt-1 text-sm leading-5 ${darkMode ? "text-slate-300" : "text-gray-500"}`}>Browse available aluminum &amp; glass products</p>
                 </div>
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-end w-full max-w-3xl">
-                  <div className="relative w-full sm:w-80">
+                <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(9rem,12rem)_minmax(9rem,12rem)]">
+                  <div className="relative min-w-0">
                     <Search size={18} className="absolute left-3 top-3 text-gray-400" />
                     <input
                       type="text"
@@ -4022,20 +4213,30 @@ function CustomerDashboard() {
                       className={`w-full pl-10 pr-4 py-3 border rounded-2xl ${darkMode ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400" : "border-slate-200 bg-white text-slate-900"}`}
                     />
                   </div>
-                  <div className="w-full sm:w-56">
+                  <div className="min-w-0">
                     <select
+                      aria-label="Filter by product type"
+                      value={productTypeFilter}
+                      onChange={(event) => setProductTypeFilter(event.target.value)}
+                      className={`w-full rounded-2xl border px-4 py-3 ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                    >
+                      <option value="All">All types</option>
+                      {productTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
+                    </select>
+                  </div>
+                  <div className="min-w-0">
+                    <select
+                      aria-label="Filter by category"
                       value={categoryFilter}
                       onChange={(e) => setCategoryFilter(e.target.value)}
-                      className={`w-full border rounded-2xl py-3 px-4 ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                      className={`w-full rounded-2xl border px-4 py-3 ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
                     >
                       <option value="All">All categories</option>
-                        <option value="Windows">Windows</option>
-                        <option value="Doors">Doors</option>
-                        <option value="Cabinets">Cabinets</option>
-                        <option value="Shower Enclosures">Shower Enclosures</option>
-                        <option value="Aluminum">Aluminum</option>
-                        <option value="Glass">Glass</option>
-                        <option value="Accessories">Accessories</option>
+                      {productCategoryOptions.map((category) => (
+                        <option key={category} value={category}>
+                          {category.charAt(0).toUpperCase() + category.slice(1)}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -4045,7 +4246,7 @@ function CustomerDashboard() {
 
               {isLoadingProducts ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">{[...Array(6)].map((_, i) => <div key={i} className="animate-pulse bg-white rounded-3xl p-6 h-96" />)}</div>
-              ) : products.length === 0 ? (
+              ) : visibleProducts.length === 0 ? (
                 <div className={`rounded-3xl p-10 text-center shadow ${darkMode ? "bg-slate-800 text-slate-200" : "bg-white text-gray-600"}`}><p className={darkMode ? "text-slate-300" : "text-gray-600"}>No products matched your search.</p></div>
               ) : (
                 <>
@@ -4053,7 +4254,7 @@ function CustomerDashboard() {
                     {displayedProducts.map((product) => (
                       <div
                         key={product._id || product.name}
-                        className={`group relative flex h-full min-w-0 cursor-pointer flex-col overflow-hidden rounded-[26px] border transition-all duration-300 ease-out hover:-translate-y-1.5 motion-reduce:transition-none ${
+                        className={`customer-product-card group relative flex h-full min-w-0 cursor-pointer flex-col overflow-hidden rounded-[26px] border transition-all duration-300 ease-out hover:-translate-y-1.5 motion-reduce:transition-none ${
                           darkMode
                             ? "border-slate-700 bg-[linear-gradient(180deg,#0f172a_0%,#111827_100%)] shadow-[0_20px_45px_rgba(2,6,23,0.45)] hover:border-red-500/60 hover:shadow-[0_26px_60px_rgba(239,68,68,0.16)]"
                             : "border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff7f7_100%)] shadow-[0_16px_40px_rgba(15,23,42,0.08)] hover:border-red-200 hover:shadow-[0_22px_55px_rgba(127,29,29,0.12)]"
@@ -4131,6 +4332,13 @@ function CustomerDashboard() {
                             </div>
                           )}
 
+                          {String(product.pricing_method || product.unit).toLowerCase() === "blade" && product.sell_with_frame && product.blade_frame_types?.length > 0 && (
+                            <p className={`truncate text-[12px] font-medium ${darkMode ? "text-slate-300" : "text-slate-600"}`} title={`With frame: ${product.blade_frame_types.map((frame) => frame.name).join(" / ")}`}>
+                              With frame: {product.blade_frame_types.map((frame) => frame.name).join(" / ")}
+                            </p>
+                          )}
+
+                          {String(product.pricing_method || product.unit).toLowerCase() !== "blade" && (
                           <div className={`grid gap-2 rounded-2xl border px-3 py-2.5 ${darkMode ? "border-slate-700 bg-slate-900/75" : "border-slate-200 bg-slate-50"}`}>
                             {product.dimensions ? (
                               <p className="flex items-center justify-between gap-2 text-[11px]">
@@ -4154,6 +4362,7 @@ function CustomerDashboard() {
                               <span className={`font-semibold ${darkMode ? "text-slate-100" : "text-slate-700"}`}>{getProductUnitRate(product)}</span>
                             </p>
                           </div>
+                          )}
 
                           <div className={`mt-auto border-t pt-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                             <p className={`text-[10px] uppercase tracking-[0.14em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Starting from</p>
@@ -4164,7 +4373,7 @@ function CustomerDashboard() {
                     ))}
                   </div>
 
-                  {products.length > 0 && !isMobile && (
+                  {visibleProducts.length > 0 && !isMobile && (
                     <div className={`mt-8 grid gap-4 rounded-[20px] border p-4 shadow-[0_12px_30px_rgba(15,23,42,0.06)] md:grid-cols-[1fr_auto_1fr] md:items-center ${
                       darkMode ? "border-slate-700 bg-slate-800" : "border-red-100 bg-white"
                     }`}>
@@ -4186,7 +4395,7 @@ function CustomerDashboard() {
                         </select>
                       </div>
 
-                      {products.length > 0 && (
+                      {visibleProducts.length > 0 && (
                         <div className="flex items-center justify-center gap-2">
                           <button
                             type="button"
@@ -4237,7 +4446,7 @@ function CustomerDashboard() {
 
                       <div className={`text-right text-sm font-medium ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                         Showing {paginatedProducts.items.length ? (paginatedProducts.currentPage - 1) * productsPerPage + 1 : 0}
-                        {paginatedProducts.items.length ? `-${Math.min(paginatedProducts.currentPage * productsPerPage, products.length)}` : ""} of {products.length} products
+                        {paginatedProducts.items.length ? `-${Math.min(paginatedProducts.currentPage * productsPerPage, visibleProducts.length)}` : ""} of {visibleProducts.length} products
                       </div>
                     </div>
                   )}
@@ -4250,28 +4459,28 @@ function CustomerDashboard() {
                 <div className={`mobile-fullscreen-dialog order-flow-modal relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   {/* Header with cleaner elevated styling */}
                   {!isProductModalReadOnly && (
-                    <div className="flex-shrink-0 border-b border-red-500/30 bg-gradient-to-r from-red-600 via-red-600 to-red-700 px-5 py-4 shadow-[0_12px_24px_rgba(220,38,38,0.18)] sm:px-6">
+                    <div className="flex-shrink-0 border-b border-red-500/30 bg-gradient-to-r from-red-600 via-red-600 to-red-700 px-4 py-1.5 shadow-[0_8px_18px_rgba(220,38,38,0.16)] sm:px-5 sm:py-2">
                       <div className="flex min-w-0 items-center justify-between gap-4">
-                        <div className="flex min-w-0 items-center gap-3 text-white">
-                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/12 ring-1 ring-white/20 backdrop-blur-sm">
-                            <Package size={20} aria-hidden="true" />
+                        <div className="flex min-w-0 items-center gap-2.5 text-white">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/12 ring-1 ring-white/20 backdrop-blur-sm sm:h-9 sm:w-9">
+                            <Package size={16} aria-hidden="true" />
                           </div>
                           <div className="min-w-0">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-red-100/90">Product details</p>
-                            <h3 className="truncate text-lg font-black sm:text-2xl">{selectedProduct.name}</h3>
+                            <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-red-100/90">Product details</p>
+                            <h3 className="truncate text-base font-black sm:text-lg">{selectedProduct.name}</h3>
                           </div>
                         </div>
                         <button
                           type="button"
                           onClick={closeProductModal}
                           aria-label="Close product details"
-                          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-white/60"
+                          className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-white/60 sm:h-9 sm:w-9"
                         >
                           <X size={20} aria-hidden="true" />
                         </button>
                       </div>
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <span className="rounded-full border border-white/25 bg-white/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-red-50">
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        <span className="rounded-full border border-white/25 bg-white/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-red-50">
                           {selectedProduct.category || selectedProduct.product_type || "General"}
                         </span>
                         <span className="text-xs text-red-100/90">Ready for inquiry</span>
@@ -4401,7 +4610,7 @@ function CustomerDashboard() {
                             <Ruler size={16} className="text-red-600" aria-hidden="true" />
                             <h4 id="product-estimator-title" className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Price Estimator</h4>
                           </div>
-                          <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(88px,0.8fr)]">
+                          {productEstimatorNeedsDimensions && <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(88px,0.8fr)]">
                             <label className="min-w-0">
                               <span className={`mb-1 block text-[9px] font-bold uppercase tracking-wider ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Width</span>
                               <input
@@ -4433,29 +4642,109 @@ function CustomerDashboard() {
                                 className={`h-9 w-full rounded-lg border px-2 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/15 ${darkMode ? "border-slate-600 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
                               >
                                 <option value="in">in</option>
+                                <option value="ft">ft</option>
                                 <option value="cm">cm</option>
                                 <option value="m">m</option>
                               </select>
                             </label>
-                          </div>
-                          {productEstimatorWidth > 0 && productEstimatorHeight > 0 ? (
+                          </div>}
+                          {isBladeEstimator && (
+                            <div className={`mt-4 space-y-3 rounded-lg border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
+                              <label className="block">
+                                <span className={`mb-1 block text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Glass type</span>
+                                <select value={productEstimatorForm.blade_glass_type} onChange={(event) => setProductEstimatorForm((current) => ({ ...current, blade_glass_type: event.target.value }))} className={`h-10 w-full rounded-lg border px-3 text-sm ${darkMode ? "border-slate-600 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}>
+                                  <option value="">Choose glass type</option>
+                                  {productBladeGlassTypes.map((glass) => <option key={glass.name} value={glass.name}>{glass.name} · {formatCurrency(glass.price_per_blade)} / blade</option>)}
+                                </select>
+                              </label>
+                              <div>
+                                <span className={`mb-1 block text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Purchase option</span>
+                                <div className="grid grid-cols-2 gap-2">
+                                  {selectedProduct.sell_blades_only !== false && <button type="button" aria-pressed={productEstimatorForm.sale_mode === "blades_only"} onClick={() => setProductEstimatorForm((current) => ({ ...current, sale_mode: "blades_only", custom_frame_size: false, blade_count: Math.max(1, Number(selectedProduct.minimum_blades) || 1) }))} className={`min-h-10 rounded-lg border px-2 text-xs font-semibold ${productEstimatorForm.sale_mode === "blades_only" ? "border-red-600 bg-red-50 text-red-800" : darkMode ? "border-slate-600 text-slate-300" : "border-slate-200 text-slate-600"}`}>Blades only</button>}
+                                  {selectedProduct.sell_with_frame && <button type="button" aria-pressed={productEstimatorForm.sale_mode === "frame"} onClick={() => setProductEstimatorForm((current) => ({ ...current, sale_mode: "frame", frame_type: current.frame_type || productBladeFrameTypes[0]?.name || "", blade_count: Number(productBladeFrameTypes.find((frame) => frame.name === (current.frame_type || productBladeFrameTypes[0]?.name))?.blade_count) || Number(selectedProduct.minimum_blades) || 1 }))} className={`min-h-10 rounded-lg border px-2 text-xs font-semibold ${productEstimatorForm.sale_mode === "frame" ? "border-red-600 bg-red-50 text-red-800" : darkMode ? "border-slate-600 text-slate-300" : "border-slate-200 text-slate-600"}`}>Blades with frame</button>}
+                                </div>
+                              </div>
+                              {productEstimatorForm.sale_mode === "frame" && productBladeFrameTypes.length > 0 && (
+                                <label className="block">
+                                  <span className={`mb-1 block text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Frame type</span>
+                                  <select value={productEstimatorForm.frame_type} onChange={(event) => {
+                                    const frame = productBladeFrameTypes.find((item) => item.name === event.target.value);
+                                    setProductEstimatorForm((current) => ({ ...current, frame_type: event.target.value, blade_count: Number(frame?.blade_count) || current.blade_count }));
+                                  }} className={`h-10 w-full rounded-lg border px-3 text-sm ${darkMode ? "border-slate-600 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}>
+                                    {productBladeFrameTypes.map((frame) => <option key={frame.name} value={frame.name}>{frame.name} · {frame.blade_count} blades · {formatCurrency(frame.price)}</option>)}
+                                  </select>
+                                </label>
+                              )}
+                              {productEstimatorForm.sale_mode === "frame" && selectedProduct.allow_custom_frame_size && (
+                                <label className={`flex items-center gap-2 text-xs ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+                                  <input type="checkbox" checked={Boolean(productEstimatorForm.custom_frame_size)} onChange={(event) => setProductEstimatorForm((current) => ({ ...current, custom_frame_size: event.target.checked, unit: selectedProduct.custom_frame_size_unit || current.unit }))} className="accent-red-700" />
+                                  Enter custom frame size ({selectedProduct.custom_frame_size_unit || "in"})
+                                </label>
+                              )}
+                              {productEstimatorForm.sale_mode === "blades_only" && selectedProduct.customer_can_choose_blade_count && (
+                                <label className="block">
+                                  <span className={`mb-1 block text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Blade count</span>
+                                  <input type="number" min={Math.max(1, Number(selectedProduct.minimum_blades) || 1)} max={Number(selectedProduct.maximum_blades) || undefined} step="1" value={productEstimatorForm.blade_count} onChange={(event) => setProductEstimatorForm((current) => ({ ...current, blade_count: event.target.value }))} className={`h-10 w-full rounded-lg border px-3 text-sm ${darkMode ? "border-slate-600 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`} />
+                                  <span className={`mt-1 block text-[10px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Minimum {Math.max(1, Number(selectedProduct.minimum_blades) || 1)}{Number(selectedProduct.maximum_blades) > 0 ? ` · Maximum ${selectedProduct.maximum_blades}` : ""}</span>
+                                </label>
+                              )}
+                              {selectedProduct.show_price_per_blade !== false && selectedBladeGlass && <p className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Glass rate: {formatCurrency(selectedBladeGlass.price_per_blade)} per blade</p>}
+                            </div>
+                          )}
+                          {(selectedProduct.extra_charges || []).some((charge) => charge.is_optional) && (
+                            <div className={`mt-3 space-y-2 rounded-lg border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
+                              <p className={`text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Optional charges</p>
+                              {(selectedProduct.extra_charges || []).map((charge, index) => {
+                                if (!charge.is_optional) return null;
+                                const selectedCharge = productEstimatorForm.extra_charges?.[index];
+                                const checked = typeof selectedCharge?.is_selected === "boolean"
+                                  ? selectedCharge.is_selected
+                                  : charge.is_default_selected !== false;
+                                const chargeRateLabel = charge.type === "percentage"
+                                  ? `${Number(charge.amount) || 0}% of subtotal`
+                                  : `${formatCurrency(charge.amount)}${charge.type === "per_blade" ? " / blade" : charge.type === "per_sqft" ? " / sq ft" : " / item"}`;
+                                return (
+                                  <label key={`${index}-${charge.name}`} className={`flex cursor-pointer items-start gap-2 rounded-md border p-2 text-xs ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={(event) => setProductEstimatorForm((current) => ({
+                                        ...current,
+                                        extra_charges: (current.extra_charges || getDefaultExtraChargeSelections(selectedProduct)).map((item, itemIndex) => (
+                                          itemIndex === index ? { ...item, is_selected: event.target.checked } : item
+                                        )),
+                                      }))}
+                                      className="mt-0.5 accent-red-700"
+                                    />
+                                    <span className="flex min-w-0 flex-1 items-start justify-between gap-3">
+                                      <span className="font-semibold">{charge.name}</span>
+                                      <span className={darkMode ? "shrink-0 text-slate-400" : "shrink-0 text-slate-500"}>{chargeRateLabel}</span>
+                                    </span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                          {hasProductEstimatorEstimate ? (
                             <div className={`mt-4 space-y-3 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`} aria-live="polite">
                               <div className="flex items-center justify-between gap-3">
-                                <span className="inline-flex items-center gap-2"><Ruler size={13} aria-hidden="true" />Area</span>
+                                <span className="inline-flex items-center gap-2"><Ruler size={13} aria-hidden="true" />{isBladeEstimator ? "Blades" : "Area"}</span>
                                 <span className={`font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
-                                  {Number(productEstimatorResult?.estimated_area) > 0
+                                  {isBladeEstimator
+                                    ? `${estimatorBladeCount} blade(s)`
+                                    : Number(productEstimatorResult?.estimated_area) > 0
                                     ? `${Number(productEstimatorResult.estimated_area).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq ft`
                                     : productEstimatorResult?.areaDisplay || "—"}
                                 </span>
                               </div>
-                              <div className="flex items-center justify-between gap-3">
+                              {(!isBladeEstimator || selectedProduct.show_price_per_blade !== false) && <div className="flex items-center justify-between gap-3">
                                 <span>Base Rate</span>
                                 <span className={`font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
                                   {Number(productEstimatorResult?.rate) > 0
-                                    ? `${formatCurrency(productEstimatorResult.rate)} / ${productEstimatorResult?.areaDisplay?.includes("blade") ? "blade" : Number(productEstimatorResult?.estimated_area) > 0 ? "sq ft" : "unit"}`
+                                    ? `${formatCurrency(productEstimatorResult.rate)} / ${isBladeEstimator || productEstimatorResult?.areaDisplay?.includes("blade") ? "blade" : Number(productEstimatorResult?.estimated_area) > 0 ? "sq ft" : "unit"}`
                                     : "Contact us"}
                                 </span>
-                              </div>
+                              </div>}
                               <div className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-3 ${darkMode ? "border-red-900 bg-slate-800 text-red-300" : "border-red-100 bg-white text-red-800"}`}>
                                 <span className="font-bold">Estimated Total</span>
                                 <span className="text-base font-black">
@@ -4475,7 +4764,7 @@ function CustomerDashboard() {
                             </div>
                           ) : (
                             <div className={`mt-3 flex min-h-12 items-center justify-center rounded-lg px-3 py-2.5 text-center text-xs ${darkMode ? "bg-slate-800 text-slate-300" : "bg-slate-50 text-slate-500"}`}>
-                              Enter width &amp; height to calculate your estimate.
+                              {isBladeEstimator ? "Choose a glass type and valid blade or frame option to estimate." : "Enter width &amp; height to calculate your estimate."}
                             </div>
                           )}
                           <p className={`mt-2 text-[11px] font-bold leading-4 ${darkMode ? "text-slate-500" : "text-slate-700"}`}>
@@ -4488,11 +4777,7 @@ function CustomerDashboard() {
                         <button
                           type="button"
                           onClick={() => {
-                            const hasEstimate =
-                              Number(productEstimatorForm.width) > 0 &&
-                              Number(productEstimatorForm.height) > 0 &&
-                              Number(productEstimatorResult?.estimated_price) > 0;
-                            if (hasEstimate) {
+                            if (hasProductEstimatorEstimate) {
                               openEstimatedProductOrder(selectedProduct);
                             } else {
                               openOrderNowModal(selectedProduct);
@@ -4508,12 +4793,7 @@ function CustomerDashboard() {
                         <button
                           type="button"
                           onClick={() => {
-                            const hasEstimate =
-                              Number(productEstimatorForm.width) > 0 &&
-                              Number(productEstimatorForm.height) > 0 &&
-                              Number(productEstimatorResult?.estimated_price) > 0;
-
-                            if (hasEstimate) {
+                            if (hasProductEstimatorEstimate) {
                               if (!canEstimatePricing) {
                                 showPermissionNotice("Pricing estimates are disabled for your account.");
                                 return;
@@ -4524,6 +4804,12 @@ function CustomerDashboard() {
                                 height: productEstimatorForm.height,
                                 quantity: 1,
                                 notes: "",
+                                blade_glass_type: productEstimatorForm.blade_glass_type,
+                                sale_mode: productEstimatorForm.sale_mode,
+                                frame_type: productEstimatorForm.frame_type,
+                                custom_frame_size: productEstimatorForm.custom_frame_size,
+                                blade_count: productEstimatorForm.blade_count,
+                                extra_charges: productEstimatorForm.extra_charges,
                                 measurementUnit: productEstimatorForm.unit,
                               });
                             } else {
@@ -4531,7 +4817,7 @@ function CustomerDashboard() {
                                 showPermissionNotice("Order requests are disabled for your account.");
                                 return;
                               }
-                              handleAddToCart(selectedProduct);
+                              handleAddToCart(selectedProduct, productEstimatorForm.extra_charges);
                             }
                             closeProductModal();
                           }}
@@ -5032,36 +5318,96 @@ function CustomerDashboard() {
                           <div className={`rounded-3xl p-4 border ${darkMode ? "border-slate-700 bg-slate-800" : "bg-slate-50 border-slate-200"}`}>
                             <p className={`text-sm font-semibold mb-3 ${darkMode ? "text-slate-200" : "text-gray-700"}`}>Product Details</p>
                             <div className={`grid gap-3 text-sm sm:grid-cols-2 ${darkMode ? "text-slate-300" : "text-gray-700"}`}>
-                              <div>
-                                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Quantity</p>
-                                <p className={`mt-2 font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{confirmQuantity}</p>
-                              </div>
-                              <div>
-                                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Unit Price</p>
-                                <p className={`mt-2 font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{formatCurrency(deliveryConfirmMode === "orderNow" ? Number(orderNowProduct?.unit_price || orderNowProduct?.price_per_sqft || 0) : estimateUnitRate)}</p>
-                              </div>
-                              <div>
-                                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Width</p>
-                                <p className={`mt-2 font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{confirmWidth}</p>
-                              </div>
-                              <div>
-                                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Height</p>
-                                <p className={`mt-2 font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{confirmHeight}</p>
-                              </div>
-                              <div className="sm:col-span-2">
-                                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Color / Variant</p>
-                                <p className={`mt-2 font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{confirmProduct?.variant || confirmProduct?.color || "Standard"}</p>
-                              </div>
+                              {isConfirmBladeProduct ? (
+                                <>
+                                  <div>
+                                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Quantity</p>
+                                    <p className={`mt-2 font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{confirmQuantity}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Glass</p>
+                                    <p className={`mt-2 font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{confirmGlassType?.name || confirmBladeSelections.blade_glass_type || "—"}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Frame</p>
+                                    <p className={`mt-2 font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>
+                                      {confirmBladeSelections.sale_mode === "frame"
+                                        ? confirmBladeSelections.custom_frame_size ? "Custom frame" : confirmFrameType?.name || "Frame"
+                                        : "No frame"}
+                                    </p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Blades</p>
+                                    <p className={`mt-2 font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{confirmBladeCount}</p>
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <div>
+                                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Quantity</p>
+                                    <p className={`mt-2 font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{confirmQuantity}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Unit Price</p>
+                                    <p className={`mt-2 font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{formatCurrency(deliveryConfirmMode === "orderNow" ? Number(orderNowProduct?.unit_price || orderNowProduct?.price_per_sqft || 0) : estimateUnitRate)}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Width</p>
+                                    <p className={`mt-2 font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{confirmWidth}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Height</p>
+                                    <p className={`mt-2 font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{confirmHeight}</p>
+                                  </div>
+                                  <div className="sm:col-span-2">
+                                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Color / Variant</p>
+                                    <p className={`mt-2 font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{confirmProduct?.variant || confirmProduct?.color || "Standard"}</p>
+                                  </div>
+                                </>
+                              )}
                             </div>
                           </div>
 
                           <div className={`rounded-3xl p-4 border ${darkMode ? "border-slate-700 bg-slate-800" : "bg-slate-50 border-slate-200"}`}>
                             <p className={`text-sm font-semibold mb-3 ${darkMode ? "text-slate-200" : "text-gray-700"}`}>Pricing Breakdown</p>
                             <div className={`space-y-3 text-sm ${darkMode ? "text-slate-300" : "text-gray-700"}`}>
-                              <div className="flex items-center justify-between">
-                                <span>Subtotal</span>
-                                <span className={`font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{formatCurrency(confirmSubtotal)}</span>
-                              </div>
+                              {isConfirmBladeProduct ? (
+                                <>
+                                  <div className="flex items-center justify-between gap-3">
+                                    <span>Rate</span>
+                                    <span className={`font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{formatCurrency(confirmBladeRate)} / blade</span>
+                                  </div>
+                                  {confirmBladeSelections.sale_mode === "frame" && (
+                                    <div className="flex items-center justify-between gap-3">
+                                      <span>Frame ({confirmBladeSelections.custom_frame_size ? "Custom" : confirmFrameType?.name || "Frame"})</span>
+                                      <span className={`font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{formatCurrency(confirmFramePrice * confirmQuantity)}</span>
+                                    </div>
+                                  )}
+                                  {confirmExtraChargeRows.map((charge, index) => (
+                                    <div key={`${index}-${charge.name}`} className="flex items-center justify-between gap-3">
+                                      <span>{charge.name}</span>
+                                      <span className={`font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{formatCurrency(charge.amount)}</span>
+                                    </div>
+                                  ))}
+                                  {confirmAdditionalCharges > 0 && (
+                                    <div className="flex items-center justify-between gap-3">
+                                      <span>Customization</span>
+                                      <span className={`font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{formatCurrency(confirmAdditionalCharges)}</span>
+                                    </div>
+                                  )}
+                                  {confirmInstallationFee > 0 && (
+                                    <div className="flex items-center justify-between gap-3">
+                                      <span>Installation</span>
+                                      <span className={`font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{formatCurrency(confirmInstallationFee)}</span>
+                                    </div>
+                                  )}
+                                </>
+                              ) : (
+                                <div className="flex items-center justify-between">
+                                  <span>Subtotal</span>
+                                  <span className={`font-semibold ${darkMode ? "text-white" : "text-gray-900"}`}>{formatCurrency(confirmSubtotal)}</span>
+                                </div>
+                              )}
                               
                               <div className={`border-t pt-3 flex items-center justify-between text-base font-semibold ${darkMode ? "border-slate-700 text-white" : "border-gray-200 text-gray-900"}`}>
                                 <span>Total</span>
@@ -5171,6 +5517,37 @@ function CustomerDashboard() {
                           </div>
                           <p className="mt-3 text-sm text-gray-500">Adjust the number of units before moving to the summary page.</p>
                         </div>
+                        {(orderNowProduct.extra_charges || []).some((charge) => charge.is_optional) && (
+                          <div className="space-y-2 rounded-3xl border border-gray-200 bg-white p-5">
+                            <h4 className="text-sm font-semibold text-gray-700">Optional charges</h4>
+                            {(orderNowProduct.extra_charges || []).map((charge, index) => {
+                              if (!charge.is_optional) return null;
+                              const checked = orderNowExtraCharges[index]?.is_selected ?? charge.is_default_selected !== false;
+                              const rateLabel = charge.type === "percentage"
+                                ? `${Number(charge.amount) || 0}% of subtotal`
+                                : `${formatCurrency(charge.amount)}${charge.type === "per_blade" ? " / blade" : charge.type === "per_sqft" ? " / sq ft" : " / item"}`;
+                              return (
+                                <label key={`${index}-${charge.name}`} className="flex cursor-pointer items-start gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(event) => setOrderNowExtraCharges((current) => {
+                                      const charges = current.length ? current : getDefaultExtraChargeSelections(orderNowProduct);
+                                      return charges.map((item, itemIndex) => (
+                                        itemIndex === index ? { ...item, is_selected: event.target.checked } : item
+                                      ));
+                                    })}
+                                    className="mt-0.5 accent-red-700"
+                                  />
+                                  <span className="flex min-w-0 flex-1 justify-between gap-3">
+                                    <span className="font-medium">{charge.name}</span>
+                                    <span className="shrink-0 text-gray-500">{rateLabel}</span>
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
                         </div>
 
                     <div className="space-y-6 rounded-[32px] border border-gray-200 bg-white p-6 shadow-sm">
@@ -5338,7 +5715,9 @@ function CustomerDashboard() {
                                     <div className="min-w-0">
                                       <div className={`truncate text-base font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{item.name}</div>
                                       <div className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                                        {item.is_estimate && item.width && item.height
+                                        {["blade", "per_blade"].includes(String(item.pricing_method || item.unit).toLowerCase())
+                                          ? formatOrderItemMeasurements(item)
+                                          : item.is_estimate && item.width && item.height
                                           ? `${item.width} x ${item.height} = ${Number(item.area || ((Number(item.width) * Number(item.height)) / 144)).toLocaleString(undefined, { maximumFractionDigits: 2 })} sq.ft`
                                           : item.dimensions?.width && item.dimensions?.height
                                             ? `${item.dimensions.width} x ${item.dimensions.height} = ${Number(item.dimensions.area || ((Number(item.dimensions.width) * Number(item.dimensions.height)) / 144)).toLocaleString(undefined, { maximumFractionDigits: 2 })} sq.ft`
@@ -7204,9 +7583,12 @@ function CustomerDashboard() {
               />
               <div className="flex flex-wrap items-end justify-between gap-4 px-6 pb-5.5">
                 <div className="flex min-w-0 flex-1 items-end gap-4">
-                  <div className={`-mt-[42px] flex size-[84px] shrink-0 items-center justify-center rounded-full border-4 text-[26px] font-medium text-white ${darkMode ? "border-slate-800 bg-brand-dark-fill" : "border-white bg-brand"}`} aria-hidden="true">
-                    {profileInitials}
-                  </div>
+                  <ProfileAvatar
+                    name={profileDisplayName}
+                    avatarOnly
+                    size="profile"
+                    className={`-mt-[42px] border-4 ${darkMode ? "border-slate-800" : "border-white"}`}
+                  />
                   <div className="min-w-0 pb-1">
                     <h1 className="truncate text-2xl font-medium">{profileDisplayName}</h1>
                     <p className={`truncate text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{profileEmail || "Email not set"}</p>
@@ -7273,16 +7655,12 @@ function CustomerDashboard() {
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
             <div className={`rounded-2xl shadow p-4 sm:p-5 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
               <div className="flex flex-col items-center">
-                <div className="relative">
-                  <img
-                    src="https://i.pravatar.cc/300"
-                    alt="User avatar"
-                    className="h-28 w-28 rounded-full object-cover border-4 border-red-100"
-                  />
-                  <button className="absolute bottom-2 right-2 bg-red-600 p-2.5 text-white rounded-full shadow-lg hover:bg-red-700">
-                    <Camera size={16} />
-                  </button>
-                </div>
+                <ProfileAvatar
+                  name={`${profileForm.first_name || user?.first_name || ""} ${profileForm.last_name || user?.last_name || ""}`.trim() || "Customer"}
+                  avatarOnly
+                  size="lg"
+                  className="border-4 border-red-100"
+                />
 
                 <h2 className={`mt-4 text-xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{`${profileForm.first_name || user?.first_name || ""} ${profileForm.last_name || user?.last_name || ""}`.trim() || "Customer"}</h2>
                 <p className={darkMode ? "text-sm text-slate-300 capitalize" : "text-sm text-gray-500 capitalize"}>{user?.role || "customer"}</p>

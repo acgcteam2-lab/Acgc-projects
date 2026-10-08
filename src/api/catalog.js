@@ -22,7 +22,7 @@ export const deleteName = async (id) => await handle(`/catalog/names/${id}`, { m
 export const getVariants = async () => await handle(`/catalog/variants`, { method: "GET" });
 export const createVariant = async (body) => await handle(`/catalog/variants`, { method: "POST", body: JSON.stringify(body) });
 export const updateVariant = async (id, body) => await handle(`/catalog/variants/${id}`, { method: "PUT", body: JSON.stringify(body) });
-export const deleteVariant = async (id) => await handle(`/catalog/variants/${id}`, { method: "DELETE" });
+export const deleteVariant = async (id, productType = "") => await handle(`/catalog/variants/${id}${productType ? `?product_type=${encodeURIComponent(productType)}` : ""}`, { method: "DELETE" });
 
 export const getCategories = async () => await handle(`/catalog/categories`, { method: "GET" }).catch(()=>[]);
 export const createCategory = async (body) => await handle(`/catalog/categories`, { method: "POST", body: JSON.stringify(body) });

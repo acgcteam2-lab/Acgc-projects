@@ -58,12 +58,27 @@ export const formatOrderItemMeasurements = (item) => {
   const firstPositiveNumber = (...values) => values
     .map(Number)
     .find((value) => Number.isFinite(value) && value > 0) || 0;
+  const pricingMethod = String(item?.pricing_method || item?.unit || product?.pricing_method || product?.unit || "").toLowerCase();
+  const isBladeProduct = pricingMethod === "blade" || pricingMethod === "per_blade";
+  const frameTypes = item?.blade_frame_types || product?.blade_frame_types || [];
+  const frameName = item?.frame_type || item?.default_frame_type || product?.default_frame_type || "";
+  const frame = frameTypes.find((entry) => entry.name === frameName);
+  const saleMode = item?.sale_mode || item?.default_sale_mode || product?.default_sale_mode || "blades_only";
+  const glassType = item?.blade_glass_type || item?.default_blade_glass_type || product?.default_blade_glass_type || "";
+  const bladeCount = firstPositiveNumber(item?.blade_count, frame?.blade_count, item?.minimum_blades, product?.minimum_blades, product?.blade_count);
+  const bladeSelection = isBladeProduct
+    ? [
+        glassType,
+        saleMode === "frame" ? item?.custom_frame_size ? "Custom frame" : `${frameName || "Frame"} frame` : "Blades only",
+        bladeCount > 0 ? `${bladeCount} blades` : "",
+      ].filter(Boolean).join(" · ")
+    : "";
   const width = firstPositiveNumber(dimensions.width, item?.width, productDimensions.width, product?.width);
   const height = firstPositiveNumber(dimensions.height, item?.height, productDimensions.height, product?.height);
   const standardSize = item?.standard_size || product?.standard_size || product?.size || "";
 
   if (!(width > 0 && height > 0)) {
-    return standardSize ? `Size: ${standardSize}` : "Measurements not provided";
+    return bladeSelection || (standardSize ? `Size: ${standardSize}` : "Measurements not provided");
   }
 
   const unit = String(
@@ -87,7 +102,8 @@ export const formatOrderItemMeasurements = (item) => {
   const formattedHeight = height.toLocaleString(undefined, { maximumFractionDigits: 2 });
   const formattedArea = area.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
-  return `Size: ${formattedWidth}${unitSymbol} x ${formattedHeight}${unitSymbol} (${formattedArea} sq ft)`;
+  const measurementText = `Size: ${formattedWidth}${unitSymbol} x ${formattedHeight}${unitSymbol} (${formattedArea} sq ft)`;
+  return bladeSelection ? `${measurementText} · ${bladeSelection}` : measurementText;
 };
 
 export const getVisibleCompletedStageSubStages = (step) =>

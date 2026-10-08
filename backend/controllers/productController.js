@@ -28,8 +28,10 @@ const validateProductPayload = (payload, existingProduct = null) => {
   if (!productName) return "Product name is required.";
   if (!productType) return "Product type is required.";
   if (!category) return "Category is required.";
+  if (!trimText(merged.variant) && !existingProduct && pricingMethod !== "blade") return "Variant is required.";
   if (!hasProductImage({ image_url, images })) return "Main product photo is required.";
-  if (!["sqft", "blade", "fixed", "per_piece"].includes(pricingMethod)) {
+    const allowedMethods = existingProduct ? ["sqft", "blade", "fixed", "per_piece"] : ["sqft", "blade"];
+    if (!allowedMethods.includes(pricingMethod)) {
     return "A valid pricing method is required.";
   }
 
@@ -43,16 +45,68 @@ const validateProductPayload = (payload, existingProduct = null) => {
   }
 
   if (pricingMethod === "blade") {
-    if (toNonNegativeNumber(merged.blade_count) <= 0) {
-      return "Blade count must be greater than 0.";
+    const glassTypes = Array.isArray(merged.blade_glass_types) ? merged.blade_glass_types : [];
+    if (!glassTypes.length && toNonNegativeNumber(merged.price_per_blade) <= 0) {
+      return "Add at least one glass type with a price per blade.";
     }
-    if (toNonNegativeNumber(merged.price_per_blade) <= 0) {
-      return "Price per blade is required.";
+    if (glassTypes.some((glass) => !trimText(glass?.name) || toNonNegativeNumber(glass?.price_per_blade) <= 0)) {
+      return "Each glass type needs a name and a price per blade greater than zero.";
+    }
+    if (!merged.sell_blades_only && !merged.sell_with_frame) {
+      return "Enable at least one selling option: blades only or blades with frame.";
+    }
+    const frameTypes = Array.isArray(merged.blade_frame_types) ? merged.blade_frame_types : [];
+    if (merged.sell_with_frame && !frameTypes.length && !merged.allow_custom_frame_size) {
+      return "Add at least one frame type or enable custom frame size.";
+    }
+    if (frameTypes.some((frame) => !trimText(frame?.name) || toNonNegativeNumber(frame?.blade_count) <= 0 || !Number.isFinite(Number(frame?.price)) || Number(frame.price) < 0)) {
+      return "Each frame type needs a name, blade count, and valid frame price.";
+    }
+    if (merged.allow_custom_frame_size && toNonNegativeNumber(merged.custom_frame_price) <= 0) {
+      return "Custom frame price must be greater than zero.";
+    }
+    const minimumBlades = Math.max(1, Number(merged.minimum_blades) || 1);
+    const maximumBlades = Number(merged.maximum_blades) || 0;
+    if (maximumBlades > 0 && maximumBlades < minimumBlades) {
+      return "Maximum blades cannot be lower than minimum blades.";
+    }
+    if (glassTypes.length && !glassTypes.some((glass) => glass.name === merged.default_blade_glass_type)) {
+      return "Choose a default glass type from the configured glass types.";
+    }
+    if (merged.default_sale_mode === "frame" && !merged.sell_with_frame) {
+      return "The default sale mode must be one of the enabled selling options.";
+    }
+    if (merged.default_sale_mode === "blades_only" && !merged.sell_blades_only) {
+      return "The default sale mode must be one of the enabled selling options.";
+    }
+    if (merged.default_sale_mode === "frame" && frameTypes.length && !frameTypes.some((frame) => frame.name === merged.default_frame_type)) {
+      return "Choose a default frame type from the configured frame types.";
     }
   }
 
   if ((pricingMethod === "fixed" || pricingMethod === "per_piece") && toNonNegativeNumber(merged.base_price || merged.unit_price) <= 0) {
     return "Base price is required for fixed price products.";
+  }
+
+  if (merged.extra_charges != null && !Array.isArray(merged.extra_charges)) {
+    return "Extra charges must be a list.";
+  }
+  for (const charge of merged.extra_charges || []) {
+    if (!trimText(charge?.name) || trimText(charge?.amount) === "" || !Number.isFinite(Number(charge.amount)) || Number(charge.amount) < 0) {
+      return "Each extra charge needs a name and a valid amount.";
+    }
+    if (!["fixed", "per_sqft", "per_blade", "percentage"].includes(charge.type)) {
+      return "Each extra charge needs a valid calculation type.";
+    }
+  }
+
+  const limits = merged.size_limits || {};
+  if (limits.unit && !["in", "ft", "cm", "m"].includes(limits.unit)) {
+    return "Size limit unit must be in, ft, cm, or m.";
+  }
+  if ((Number(limits.min_width) > 0 && Number(limits.max_width) > 0 && Number(limits.min_width) > Number(limits.max_width))
+    || (Number(limits.min_height) > 0 && Number(limits.max_height) > 0 && Number(limits.min_height) > Number(limits.max_height))) {
+    return "A minimum size cannot be greater than its maximum.";
   }
 
   return "";
@@ -122,11 +176,28 @@ export const createProduct = async (req, res) => {
       base_price,
       price_per_sqft,
       price_per_blade,
+      customization,
       customization_fee,
+      extra_charges,
+      size_limits,
       standard_size,
       width,
       height,
       blade_count,
+      blade_glass_types,
+      sell_blades_only,
+      sell_with_frame,
+      blade_frame_types,
+      allow_custom_frame_size,
+      custom_frame_size_unit,
+      custom_frame_price,
+      minimum_blades,
+      maximum_blades,
+      customer_can_choose_blade_count,
+      default_blade_glass_type,
+      default_sale_mode,
+      default_frame_type,
+      show_price_per_blade,
       estimated_area,
       estimated_price,
       estimated_price_override,
@@ -161,11 +232,28 @@ export const createProduct = async (req, res) => {
       base_price: Number(base_price) || 0,
       price_per_sqft: Number(price_per_sqft) || 0,
       price_per_blade: Number(price_per_blade) || 0,
+      customization: Boolean(customization),
       customization_fee: Number(customization_fee) || 0,
+      extra_charges: Array.isArray(extra_charges) ? extra_charges : [],
+      size_limits: size_limits || {},
       standard_size: standard_size || "",
       width: Number(width) || 0,
       height: Number(height) || 0,
       blade_count: Number(blade_count) || 0,
+      blade_glass_types: Array.isArray(blade_glass_types) ? blade_glass_types : [],
+      sell_blades_only: sell_blades_only !== false,
+      sell_with_frame: Boolean(sell_with_frame),
+      blade_frame_types: Array.isArray(blade_frame_types) ? blade_frame_types : [],
+      allow_custom_frame_size: Boolean(allow_custom_frame_size),
+      custom_frame_size_unit: custom_frame_size_unit || measurement_unit || "in",
+      custom_frame_price: Number(custom_frame_price) || 0,
+      minimum_blades: Math.max(1, Number(minimum_blades) || 1),
+      maximum_blades: Number(maximum_blades) || 0,
+      customer_can_choose_blade_count: Boolean(customer_can_choose_blade_count),
+      default_blade_glass_type: default_blade_glass_type || "",
+      default_sale_mode: default_sale_mode || (sell_blades_only === false ? "frame" : "blades_only"),
+      default_frame_type: default_frame_type || "",
+      show_price_per_blade: show_price_per_blade !== false,
       estimated_area: Number(estimated_area) || 0,
       estimated_price: Number(estimated_price) || 0,
       estimated_price_override: Number(estimated_price_override) || 0,
@@ -213,11 +301,28 @@ export const updateProduct = async (req, res) => {
       base_price: req.body.base_price != null ? Number(req.body.base_price) : product.base_price,
       price_per_sqft: req.body.price_per_sqft != null ? Number(req.body.price_per_sqft) : product.price_per_sqft,
       price_per_blade: req.body.price_per_blade != null ? Number(req.body.price_per_blade) : product.price_per_blade,
+      customization: req.body.customization != null ? Boolean(req.body.customization) : product.customization,
       customization_fee: req.body.customization_fee != null ? Number(req.body.customization_fee) : product.customization_fee,
+      extra_charges: req.body.extra_charges != null ? req.body.extra_charges : product.extra_charges,
+      size_limits: req.body.size_limits != null ? req.body.size_limits : product.size_limits,
       standard_size: req.body.standard_size != null ? String(req.body.standard_size) : product.standard_size,
       width: req.body.width != null ? Number(req.body.width) : product.width,
       height: req.body.height != null ? Number(req.body.height) : product.height,
       blade_count: req.body.blade_count != null ? Number(req.body.blade_count) : product.blade_count,
+      blade_glass_types: req.body.blade_glass_types != null ? req.body.blade_glass_types : product.blade_glass_types,
+      sell_blades_only: req.body.sell_blades_only != null ? Boolean(req.body.sell_blades_only) : product.sell_blades_only,
+      sell_with_frame: req.body.sell_with_frame != null ? Boolean(req.body.sell_with_frame) : product.sell_with_frame,
+      blade_frame_types: req.body.blade_frame_types != null ? req.body.blade_frame_types : product.blade_frame_types,
+      allow_custom_frame_size: req.body.allow_custom_frame_size != null ? Boolean(req.body.allow_custom_frame_size) : product.allow_custom_frame_size,
+      custom_frame_size_unit: req.body.custom_frame_size_unit ?? product.custom_frame_size_unit,
+      custom_frame_price: req.body.custom_frame_price != null ? Number(req.body.custom_frame_price) : product.custom_frame_price,
+      minimum_blades: req.body.minimum_blades != null ? Number(req.body.minimum_blades) : product.minimum_blades,
+      maximum_blades: req.body.maximum_blades != null ? Number(req.body.maximum_blades) : product.maximum_blades,
+      customer_can_choose_blade_count: req.body.customer_can_choose_blade_count != null ? Boolean(req.body.customer_can_choose_blade_count) : product.customer_can_choose_blade_count,
+      default_blade_glass_type: req.body.default_blade_glass_type ?? product.default_blade_glass_type,
+      default_sale_mode: req.body.default_sale_mode ?? product.default_sale_mode,
+      default_frame_type: req.body.default_frame_type ?? product.default_frame_type,
+      show_price_per_blade: req.body.show_price_per_blade != null ? Boolean(req.body.show_price_per_blade) : product.show_price_per_blade,
       estimated_area: req.body.estimated_area != null ? Number(req.body.estimated_area) : product.estimated_area,
       estimated_price: req.body.estimated_price != null ? Number(req.body.estimated_price) : product.estimated_price,
       estimated_price_override: req.body.estimated_price_override != null ? Number(req.body.estimated_price_override) : product.estimated_price_override || 0,

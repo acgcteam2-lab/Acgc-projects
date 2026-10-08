@@ -191,6 +191,16 @@ describe("buildBatchProductTimelineStages", () => {
     expect(formatOrderItemMeasurements({ quantity: 1 })).toBe("Measurements not provided");
   });
 
+  it("shows the selected blade glass, frame, and blade count without dimensions", () => {
+    expect(formatOrderItemMeasurements({
+      pricing_method: "blade",
+      blade_glass_type: "Reflective",
+      sale_mode: "frame",
+      frame_type: "Large",
+      blade_count: 8,
+    })).toBe("Reflective · Large frame · 8 blades");
+  });
+
   it("resolves product photos from item, populated product, and nested image fields", () => {
     expect(getOrderItemImageSource({
       product_id: { images: { main: "/uploads/product-main.png" } },

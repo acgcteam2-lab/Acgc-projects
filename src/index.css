@@ -529,6 +529,65 @@ body:has(.mobile-fullscreen-overlay) .customer-mobile-navigation {
   color-scheme: dark;
 }
 
+.customer-dashboard-shell.admin-theme-dark {
+  background-color: #1a273a;
+}
+
+.customer-dashboard-shell.admin-theme-dark .bg-slate-950 {
+  background-color: #1a273a !important;
+}
+
+.customer-dashboard-shell.admin-theme-dark .bg-slate-900 {
+  background-color: #25364d !important;
+}
+
+.customer-dashboard-shell.admin-theme-dark .bg-slate-800 {
+  background-color: #31445d !important;
+}
+
+.customer-dashboard-shell.admin-theme-dark .customer-home-hero-glow {
+  background-image:
+    radial-gradient(circle at top left, rgb(255 255 255 / 0.16), transparent 26%),
+    radial-gradient(circle at bottom right, rgb(239 68 68 / 0.18), transparent 28%),
+    linear-gradient(135deg, #26364c 0%, #482a38 42%, #223149 100%);
+}
+
+.customer-dashboard-shell.admin-theme-dark .order-flow-modal-dark {
+  background-color: #25364d;
+}
+
+.admin-theme-light {
+  min-height: 100vh;
+  background-color: #f1f2f1;
+  color: #26313b;
+  color-scheme: light;
+}
+
+.admin-theme-light .bg-white {
+  background-color: #faf9f6 !important;
+}
+
+.admin-theme-light .bg-gray-50,
+.admin-theme-light .bg-slate-50 {
+  background-color: #f1f2ef !important;
+}
+
+.admin-theme-light .bg-gray-100,
+.admin-theme-light .bg-slate-100 {
+  background-color: #e9eceb !important;
+}
+
+.admin-theme-light .bg-white\/90,
+.admin-theme-light .bg-white\/95 {
+  background-color: rgb(250 249 246 / 0.94) !important;
+}
+
+.admin-theme-light input:not([type="checkbox"]):not([type="radio"]),
+.admin-theme-light select,
+.admin-theme-light textarea {
+  background-color: #faf9f6;
+}
+
 .admin-theme-dark main,
 .admin-theme-dark section,
 .admin-theme-dark article {

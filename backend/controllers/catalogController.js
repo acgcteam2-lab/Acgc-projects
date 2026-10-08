@@ -23,12 +23,30 @@ const mapNamesByType = (items) => {
   return map;
 };
 
-const mapVariantsByName = (items) => {
+const mapVariantsByType = (variants, names, products) => {
   const map = {};
-  items.forEach((it) => {
-    const n = it.meta?.product_name || it.meta?.name || "";
-    if (!map[n]) map[n] = [];
-    map[n].push({ id: it._id, name: it.name, product_name: n });
+  const typesByName = new Map();
+  const addTypeMapping = (productName, productType) => {
+    const name = String(productName || "").trim().toLowerCase();
+    const type = String(productType || "").trim();
+    if (!name || !type) return;
+    const types = typesByName.get(name) || new Set();
+    types.add(type);
+    typesByName.set(name, types);
+  };
+
+  names.forEach((item) => addTypeMapping(item.name, item.meta?.product_type));
+  products.forEach((product) => addTypeMapping(product.product_name || product.name, product.product_type));
+
+  variants.forEach((item) => {
+    const productName = item.meta?.product_name || item.meta?.name || "";
+    const productTypes = item.meta?.product_type
+      ? [String(item.meta.product_type).trim()]
+      : [...(typesByName.get(String(productName).trim().toLowerCase()) || [])];
+    productTypes.filter(Boolean).forEach((productType) => {
+      if (!map[productType]) map[productType] = [];
+      map[productType].push({ id: item._id, name: item.name, product_type: productType });
+    });
   });
   return map;
 };
@@ -62,8 +80,20 @@ export const updateType = async (req, res) => {
   try {
     const item = await findCatalogItem(req.params.id, "type");
     if (!item) return res.status(404).json({ success: false, message: "Not found" });
-    item.name = req.body.name || item.name;
+    const previousName = item.name;
+    const nextName = String(req.body.name || "").trim();
+    if (!nextName) return res.status(400).json({ success: false, message: "Name is required" });
+    const duplicate = await CatalogItem.findOne({ kind: "type", name: nextName, _id: { $ne: item._id } });
+    if (duplicate) return res.status(409).json({ success: false, message: "Type already exists" });
+    item.name = nextName;
     await item.save();
+    if (previousName !== nextName) {
+      await Promise.all([
+        Product.updateMany({ product_type: previousName }, { $set: { product_type: nextName } }),
+        CatalogItem.updateMany({ kind: "name", "meta.product_type": previousName }, { $set: { "meta.product_type": nextName } }),
+        CatalogItem.updateMany({ kind: "variant", "meta.product_type": previousName }, { $set: { "meta.product_type": nextName } }),
+      ]);
+    }
     res.json({ success: true, item });
   } catch (err) {
     console.error(err);
@@ -75,7 +105,12 @@ export const deleteType = async (req, res) => {
   try {
     const item = await findCatalogItem(req.params.id, "type");
     if (!item) return res.status(404).json({ success: false, message: "Not found" });
-    const count = await Product.countDocuments({ $or: [{ product_type: item.name }, { category: { $regex: new RegExp(item.name, "i") } }] });
+    const [productCount, nameCount, variantCount] = await Promise.all([
+      Product.countDocuments({ product_type: item.name }),
+      CatalogItem.countDocuments({ kind: "name", "meta.product_type": item.name }),
+      CatalogItem.countDocuments({ kind: "variant", "meta.product_type": item.name }),
+    ]);
+    const count = productCount + nameCount + variantCount;
     if (count > 0) return res.status(400).json({ success: false, message: "Item in use", count });
     await item.deleteOne();
     res.json({ success: true });
@@ -141,8 +176,12 @@ export const deleteName = async (req, res) => {
 
 export const getVariants = async (req, res) => {
   try {
-    const variants = await CatalogItem.find({ kind: "variant" }).sort({ name: 1 });
-    const map = mapVariantsByName(variants);
+    const [variants, names, products] = await Promise.all([
+      CatalogItem.find({ kind: "variant" }).sort({ name: 1 }).lean(),
+      CatalogItem.find({ kind: "name" }).select("name meta").lean(),
+      Product.find({}).select("name product_name product_type").lean(),
+    ]);
+    const map = mapVariantsByType(variants, names, products);
     res.json(map);
   } catch (err) {
     console.error(err);
@@ -152,11 +191,12 @@ export const getVariants = async (req, res) => {
 
 export const createVariant = async (req, res) => {
   try {
-    const { name, product_name } = req.body;
-    if (!name || !product_name) return res.status(400).json({ success: false, message: "Name and product_name are required" });
-    const exists = await CatalogItem.findOne({ kind: "variant", name, "meta.product_name": product_name });
-    if (exists) return res.status(409).json({ success: false, message: "Variant already exists for this product name" });
-    const item = new CatalogItem({ kind: "variant", name, meta: { product_name }, created_by: req.user?.id });
+    const name = String(req.body.name || "").trim();
+    const productType = String(req.body.product_type || "").trim();
+    if (!name || !productType) return res.status(400).json({ success: false, message: "Name and product_type are required" });
+    const exists = await CatalogItem.findOne({ kind: "variant", name, "meta.product_type": productType });
+    if (exists) return res.status(409).json({ success: false, message: "Variant already exists for this product type" });
+    const item = new CatalogItem({ kind: "variant", name, meta: { product_type: productType }, created_by: req.user?.id });
     await item.save();
     res.status(201).json({ success: true, item });
   } catch (err) {
@@ -169,9 +209,18 @@ export const updateVariant = async (req, res) => {
   try {
     const item = await findCatalogItem(req.params.id, "variant");
     if (!item) return res.status(404).json({ success: false, message: "Not found" });
-    item.name = req.body.name || item.name;
-    if (req.body.product_name) item.meta = { ...item.meta, product_name: req.body.product_name };
+    const previousName = item.name;
+    const nextName = String(req.body.name || "").trim();
+    const productType = String(req.body.product_type || item.meta?.product_type || "").trim();
+    if (!nextName || !productType) return res.status(400).json({ success: false, message: "Name and product_type are required" });
+    const duplicate = await CatalogItem.findOne({ kind: "variant", name: nextName, "meta.product_type": productType, _id: { $ne: item._id } });
+    if (duplicate) return res.status(409).json({ success: false, message: "Variant already exists for this product type" });
+    item.name = nextName;
+    item.meta = { ...item.meta, product_type: productType };
     await item.save();
+    if (previousName !== nextName) {
+      await Product.updateMany({ variant: previousName, product_type: productType }, { $set: { variant: nextName } });
+    }
     res.json({ success: true, item });
   } catch (err) {
     console.error(err);
@@ -183,7 +232,12 @@ export const deleteVariant = async (req, res) => {
   try {
     const item = await findCatalogItem(req.params.id, "variant");
     if (!item) return res.status(404).json({ success: false, message: "Not found" });
-    const count = await Product.countDocuments({ variant: item.name });
+    const requestedType = String(req.query.product_type || "").trim();
+    const productType = requestedType || item.meta?.product_type || "";
+    const count = await Product.countDocuments({
+      variant: item.name,
+      ...(productType ? { product_type: productType } : {}),
+    });
     if (count > 0) return res.status(400).json({ success: false, message: "Item in use", count });
     await item.deleteOne();
     res.json({ success: true });
@@ -222,8 +276,16 @@ export const updateCategory = async (req, res) => {
   try {
     const item = await findCatalogItem(req.params.id, "category");
     if (!item) return res.status(404).json({ success: false, message: "Not found" });
-    item.name = req.body.name || item.name;
+    const previousName = item.name;
+    const nextName = String(req.body.name || "").trim();
+    if (!nextName) return res.status(400).json({ success: false, message: "Name is required" });
+    const duplicate = await CatalogItem.findOne({ kind: "category", name: nextName, _id: { $ne: item._id } });
+    if (duplicate) return res.status(409).json({ success: false, message: "Category already exists" });
+    item.name = nextName;
     await item.save();
+    if (previousName !== nextName) {
+      await Product.updateMany({ category: previousName.toLowerCase() }, { $set: { category: nextName.toLowerCase() } });
+    }
     res.json({ success: true, item });
   } catch (err) {
     console.error(err);
@@ -235,7 +297,7 @@ export const deleteCategory = async (req, res) => {
   try {
     const item = await findCatalogItem(req.params.id, "category");
     if (!item) return res.status(404).json({ success: false, message: "Not found" });
-    const count = await Product.countDocuments({ category: item.name });
+    const count = await Product.countDocuments({ category: item.name.toLowerCase() });
     if (count > 0) return res.status(400).json({ success: false, message: "Item in use", count });
     await item.deleteOne();
     res.json({ success: true });
@@ -252,11 +314,21 @@ export const checkUsage = async (req, res) => {
     if (!item) return res.status(404).json({ success: false, message: "Not found" });
     let count = 0;
     if (kind === "types" || item.kind === "type") {
-      count = await Product.countDocuments({ $or: [{ product_type: item.name }, { category: { $regex: new RegExp(item.name, "i") } }] });
+      const [productCount, nameCount, variantCount] = await Promise.all([
+        Product.countDocuments({ product_type: item.name }),
+        CatalogItem.countDocuments({ kind: "name", "meta.product_type": item.name }),
+        CatalogItem.countDocuments({ kind: "variant", "meta.product_type": item.name }),
+      ]);
+      count = productCount + nameCount + variantCount;
     } else if (kind === "names" || item.kind === "name") {
       count = await Product.countDocuments({ product_name: item.name });
     } else if (kind === "variants" || item.kind === "variant") {
-      count = await Product.countDocuments({ variant: item.name });
+      count = await Product.countDocuments({
+        variant: item.name,
+        ...(item.meta?.product_type ? { product_type: item.meta.product_type } : {}),
+      });
+    } else if (kind === "categories" || item.kind === "category") {
+      count = await Product.countDocuments({ category: item.name.toLowerCase() });
     } else {
       count = 0;
     }
