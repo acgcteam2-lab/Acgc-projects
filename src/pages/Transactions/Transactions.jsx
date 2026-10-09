@@ -1383,7 +1383,8 @@ function Transactions() {
                         <tr
                           key={activeTable === "feedback" ? `${order._id || order.id || index}-${Number.isInteger(order.reviewItemIndex) ? `item-${order.reviewItemIndex}` : "order-review"}` : order._id || index}
                           data-notification-record-id={order._id || order.id ? String(order._id || order.id) : undefined}
-                          className={`border-t transition-colors ${highlightedNotificationRecordId === String(order._id || order.id || "") ? "bg-amber-100 ring-2 ring-inset ring-amber-500" : "hover:bg-gray-50"}`}
+                          data-notification-target="payment"
+                          className={`border-t transition-colors ${highlightedNotificationRecordId === String(order._id || order.id || "") ? "notification-target-highlight" : "hover:bg-gray-50"}`}
                         >
                           {activeTable === "feedback" ? (
                             <>
@@ -1493,7 +1494,8 @@ function Transactions() {
                   <div
                     key={order._id || index}
                     data-notification-record-id={order._id || order.id ? String(order._id || order.id) : undefined}
-                    className={`rounded-2xl border p-3 transition-colors ${highlightedNotificationRecordId === String(order._id || order.id || "") ? "border-amber-500 bg-amber-100 ring-2 ring-amber-400" : "border-gray-200 bg-gray-50"}`}
+                    data-notification-target="payment"
+                    className={`rounded-2xl border p-3 transition-colors ${highlightedNotificationRecordId === String(order._id || order.id || "") ? "notification-target-highlight" : "border-gray-200 bg-gray-50"}`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">

@@ -27,6 +27,8 @@ describe("buildDelayNotifications", () => {
     expect(notifications[0]).toMatchObject({
       notificationType: "delay",
       delayStageName: "Cutting",
+      delayStageKey: "cutting",
+      delayItemIndex: 0,
       delayReason: "Supplier delivery was delayed",
       delayProductName: "Glass Door",
     });

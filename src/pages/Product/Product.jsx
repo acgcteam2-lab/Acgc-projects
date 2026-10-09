@@ -32,6 +32,7 @@ import { recordActivity } from "@/lib/activityLog";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { resolveBackendImageUrl } from "@/lib/resolveBackendImageUrl";
 import { getDefaultExtraChargeSelections, getProductLineTotal } from "@/lib/productPricing";
+import { getProductEstimatorState } from "@/components/ProductPriceEstimator";
 
 const PRODUCT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
@@ -368,15 +369,62 @@ function ProductFormModal({
 
   const updateBladeSellingOption = (field, enabled) => setNewProduct((product) => {
     const updated = { ...product, [field]: enabled };
-    if (field === "sell_blades_only" && !enabled && product.default_sale_mode === "blades_only" && product.sell_with_frame) {
+    const frameTypes = Array.isArray(product.blade_frame_types) ? product.blade_frame_types : [];
+    const firstFrameName = frameTypes.find((frame) => String(frame.name || "").trim())?.name || "";
+
+    if (field === "sell_blades_only" && !enabled && product.default_sale_mode === "blades_only") {
       updated.default_sale_mode = "frame";
+      updated.default_frame_type = firstFrameName;
+    }
+    if (field === "sell_with_frame" && enabled && product.default_sale_mode === "frame" && !product.default_frame_type) {
+      updated.default_frame_type = firstFrameName;
     }
     if (field === "sell_with_frame" && !enabled) {
       updated.allow_custom_frame_size = false;
       updated.default_frame_type = "";
-      if (product.default_sale_mode === "frame" && product.sell_blades_only) updated.default_sale_mode = "blades_only";
+      if (product.default_sale_mode === "frame") updated.default_sale_mode = product.sell_blades_only ? "blades_only" : "";
+    }
+    if (!updated.sell_blades_only && !updated.sell_with_frame) {
+      updated.default_sale_mode = "";
+      updated.default_frame_type = "";
     }
     return updated;
+  });
+
+  const updateBladeFrameTypes = (updater) => setNewProduct((product) => {
+    const blade_frame_types = updater(Array.isArray(product.blade_frame_types) ? product.blade_frame_types : []);
+    const defaultFrameExists = blade_frame_types.some((frame) => frame.name === product.default_frame_type);
+    return {
+      ...product,
+      blade_frame_types,
+      default_frame_type: defaultFrameExists ? product.default_frame_type : blade_frame_types[0]?.name || "",
+      default_sale_mode: product.default_sale_mode === "frame" && !blade_frame_types.length && !product.allow_custom_frame_size && product.sell_blades_only
+        ? "blades_only"
+        : product.default_sale_mode,
+    };
+  });
+
+  const updatePricingMethod = (method) => setNewProduct((product) => {
+    if (method !== "blade") return { ...product, pricing_method: method };
+
+    const bladeGlassTypes = Array.isArray(product.blade_glass_types) && product.blade_glass_types.length
+      ? product.blade_glass_types
+      : [{ name: "Standard", price_per_blade: product.price_per_blade || "" }];
+    const defaultGlass = product.default_blade_glass_type || bladeGlassTypes.find((glass) => String(glass.name || "").trim())?.name || "";
+    const sellBladesOnly = product.sell_blades_only !== false;
+    const sellWithFrame = Boolean(product.sell_with_frame);
+    const defaultSaleMode = product.default_sale_mode || (sellBladesOnly ? "blades_only" : sellWithFrame ? "frame" : "blades_only");
+
+    return {
+      ...product,
+      pricing_method: method,
+      blade_glass_types: bladeGlassTypes,
+      sell_blades_only: sellBladesOnly,
+      default_blade_glass_type: defaultGlass,
+      default_sale_mode: defaultSaleMode,
+      minimum_blades: Math.max(1, Number(product.minimum_blades) || 1),
+      show_price_per_blade: product.show_price_per_blade !== false,
+    };
   });
 
   const setImageFile = (key, file) => {
@@ -509,8 +557,19 @@ function ProductFormModal({
       ? Number(newProduct.blade_frame_types?.find((frame) => frame.name === (newProduct.default_frame_type || newProduct.blade_frame_types?.[0]?.name))?.blade_count) || Number(newProduct.minimum_blades) || 1
       : Number(newProduct.minimum_blades) || 1,
   };
+  const adminEstimatorState = getProductEstimatorState(estimateProduct, {
+    unit: estimateItem.measurement_unit,
+    width: String(estimateItem.width || 0),
+    height: String(estimateItem.height || 0),
+    blade_glass_type: estimateItem.blade_glass_type,
+    sale_mode: estimateItem.sale_mode,
+    frame_type: estimateItem.frame_type,
+    custom_frame_size: estimateItem.custom_frame_size,
+    blade_count: estimateItem.blade_count,
+    extra_charges: defaultExtraCharges,
+  });
   const defaultBladeTotal = pricingMethodValue === "blade"
-    ? getProductLineTotal(estimateProduct, { ...estimateItem, extra_charges: defaultExtraCharges })
+    ? Number(adminEstimatorState.result?.estimated_price) || 0
     : 0;
   const displayedEstimatedPrice = pricingMethodValue === "blade"
     ? defaultBladeTotal
@@ -521,13 +580,89 @@ function ProductFormModal({
   const configuredChargeTotal = Math.max(0, displayedEstimatedPrice - baseEstimate);
   const estimatedMeasureLabel = pricingMethodValue === "blade" ? "Default blade count" : "Estimated area";
   const estimatedMeasureValue = pricingMethodValue === "blade"
-    ? `${Number(estimateItem.blade_count) || 0} blade${Number(estimateItem.blade_count) === 1 ? "" : "s"}`
+    ? adminEstimatorState.result?.areaDisplay || `${Number(estimateItem.blade_count) || 0} blade${Number(estimateItem.blade_count) === 1 ? "" : "s"}`
     : `${Number(newProduct.estimated_area || 0).toFixed(2)} sq ft`;
   const pricingMethodCards = [
     { key: "sqft", title: "Per area", badge: "sq ft", description: "Width × height, charged by area" },
     { key: "blade", title: "Per blade", badge: "blade", description: "Glass rate, with optional frame" },
   ];
   const currency = (value) => `PHP ${Number(value || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const configuredGlassTypes = newProduct.blade_glass_types || [];
+  const configuredFrameTypes = newProduct.blade_frame_types || [];
+  const minimumBlades = Math.max(1, Number(newProduct.minimum_blades) || 1);
+  const maximumBlades = Number(newProduct.maximum_blades) || 0;
+  const defaultSaleMode = newProduct.default_sale_mode || (newProduct.sell_blades_only ? "blades_only" : "frame");
+  const defaultGlassIsValid = configuredGlassTypes.some((glass) => glass.name === (newProduct.default_blade_glass_type || configuredGlassTypes[0]?.name));
+  const bladeConfigurationIsValid = configuredGlassTypes.length > 0
+    && configuredGlassTypes.every((glass) => String(glass.name || "").trim() && Number(glass.price_per_blade) > 0)
+    && (newProduct.sell_blades_only || newProduct.sell_with_frame)
+    && (!newProduct.sell_with_frame || configuredFrameTypes.length > 0 || newProduct.allow_custom_frame_size)
+    && configuredFrameTypes.every((frame) => String(frame.name || "").trim() && Number(frame.blade_count) >= 1 && Number.isFinite(Number(frame.price)) && Number(frame.price) >= 0)
+    && (!newProduct.allow_custom_frame_size || Number(newProduct.custom_frame_price) > 0)
+    && (!maximumBlades || maximumBlades >= minimumBlades)
+    && (!maximumBlades || Math.max(0, ...configuredFrameTypes.map((frame) => Number(frame.blade_count) || 0)) <= maximumBlades)
+    && defaultGlassIsValid
+    && (defaultSaleMode !== "blades_only" || newProduct.sell_blades_only)
+    && (defaultSaleMode !== "frame" || newProduct.sell_with_frame)
+    && (defaultSaleMode !== "frame" || !configuredFrameTypes.length || configuredFrameTypes.some((frame) => frame.name === newProduct.default_frame_type))
+    && (defaultSaleMode !== "frame" || configuredFrameTypes.length > 0 || newProduct.allow_custom_frame_size);
+  const extraChargesAreValid = (newProduct.extra_charges || []).every((charge) => (
+    String(charge.name || "").trim()
+    && String(charge.amount ?? "").trim() !== ""
+    && Number.isFinite(Number(charge.amount))
+    && Number(charge.amount) >= 0
+  ));
+  const pricingConfigurationIsValid = pricingMethodValue === "blade"
+    ? bladeConfigurationIsValid
+    : pricingMethodValue === "sqft"
+      ? Number(newProduct.width) > 0 && Number(newProduct.height) > 0 && Number(newProduct.price_per_sqft) > 0
+      : pricingMethodValue === "fixed"
+        ? Boolean(editingProduct || Number(newProduct.base_price) > 0)
+        : false;
+  const isEstimateReady = pricingMethodValue === "blade"
+    ? bladeConfigurationIsValid && adminEstimatorState.hasEstimate
+    : pricingConfigurationIsValid && extraChargesAreValid;
+  const bladeEstimateIssues = [];
+  if (pricingMethodValue === "blade") {
+    if (!configuredGlassTypes.length) {
+      bladeEstimateIssues.push("Add at least one glass type.");
+    } else if (configuredGlassTypes.some((glass) => !String(glass.name || "").trim() || !(Number(glass.price_per_blade) > 0))) {
+      bladeEstimateIssues.push("Enter a name and price greater than zero for every glass type.");
+    }
+    if (!newProduct.sell_blades_only && !newProduct.sell_with_frame) {
+      bladeEstimateIssues.push("Choose at least one selling option.");
+    }
+    if (newProduct.sell_with_frame && !configuredFrameTypes.length && !newProduct.allow_custom_frame_size) {
+      bladeEstimateIssues.push("Add a frame type or enable custom frame size.");
+    }
+    if (configuredFrameTypes.some((frame) => !String(frame.name || "").trim() || !(Number(frame.blade_count) >= 1) || !Number.isFinite(Number(frame.price)) || Number(frame.price) < 0)) {
+      bladeEstimateIssues.push("Complete each frame type with a name, blade count, and valid price.");
+    }
+    if (newProduct.allow_custom_frame_size && !(Number(newProduct.custom_frame_price) > 0)) {
+      bladeEstimateIssues.push("Enter a custom frame price greater than zero.");
+    }
+    if (maximumBlades > 0 && maximumBlades < minimumBlades) {
+      bladeEstimateIssues.push("Maximum blades cannot be lower than minimum blades.");
+    }
+    if (maximumBlades > 0 && Math.max(0, ...configuredFrameTypes.map((frame) => Number(frame.blade_count) || 0)) > maximumBlades) {
+      bladeEstimateIssues.push("Maximum blades cannot be lower than a frame type's blade count.");
+    }
+    if (!defaultGlassIsValid) {
+      bladeEstimateIssues.push("Choose a valid default glass type.");
+    }
+    if ((defaultSaleMode === "blades_only" && !newProduct.sell_blades_only) || (defaultSaleMode === "frame" && !newProduct.sell_with_frame)) {
+      bladeEstimateIssues.push("Choose a default selling option that is enabled.");
+    }
+    if (defaultSaleMode === "frame" && configuredFrameTypes.length && !configuredFrameTypes.some((frame) => frame.name === newProduct.default_frame_type)) {
+      bladeEstimateIssues.push("Choose a valid default frame type.");
+    }
+    if (adminEstimatorState.needsDimensions && (!(estimateItem.width > 0) || !(estimateItem.height > 0))) {
+      bladeEstimateIssues.push("Enter width and height for the custom frame estimate.");
+    }
+    if (!bladeEstimateIssues.length && !adminEstimatorState.hasEstimate) {
+      bladeEstimateIssues.push("Check the default glass, sale mode, and blade or frame selection.");
+    }
+  }
 
   return (
     <div className="mobile-fullscreen-overlay fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-2 backdrop-blur-sm sm:p-4">
@@ -650,7 +785,7 @@ function ProductFormModal({
                     key={method.key}
                     type="button"
                     aria-pressed={selected}
-                    onClick={() => updateField("pricing_method", method.key)}
+                    onClick={() => updatePricingMethod(method.key)}
                     className={`min-w-0 rounded-xl border px-3 py-3 text-left transition ${selected ? darkMode ? "border-red-400 bg-red-950/40 ring-1 ring-red-400" : "border-red-800 bg-rose-100 ring-1 ring-red-800" : darkMode ? "border-slate-700 bg-slate-800 hover:border-slate-500" : "border-slate-200 bg-white hover:border-slate-300"}`}
                   >
                     <span className="flex items-center justify-between gap-2">
@@ -735,7 +870,19 @@ function ProductFormModal({
                       <p className={`-mt-2 mb-3 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Set the frame types customers can choose. Each frame includes a blade count and frame price.</p>
                       <div className={`space-y-3 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
                         <label className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
-                          <input type="checkbox" checked={Boolean(newProduct.allow_custom_frame_size)} onChange={(event) => updateField("allow_custom_frame_size", event.target.checked)} className="mt-1 accent-red-700" />
+                          <input
+                            type="checkbox"
+                            checked={Boolean(newProduct.allow_custom_frame_size)}
+                            onChange={(event) => {
+                              const enabled = event.target.checked;
+                              setNewProduct((product) => ({
+                                ...product,
+                                allow_custom_frame_size: enabled,
+                                default_sale_mode: !enabled && product.default_sale_mode === "frame" && !(product.blade_frame_types || []).length && product.sell_blades_only ? "blades_only" : product.default_sale_mode,
+                              }));
+                            }}
+                            className="mt-1 accent-red-700"
+                          />
                           <span><span className={`block text-sm font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Allow custom frame size</span><span className={`mt-0.5 block text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Customers can enter their own width and height. Use one flat frame price.</span></span>
                         </label>
                         {newProduct.allow_custom_frame_size && (
@@ -755,15 +902,15 @@ function ProductFormModal({
                         {(newProduct.blade_frame_types || []).map((frame, index) => (
                           <div key={`frame-${index}`} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(90px,0.35fr)_minmax(120px,0.55fr)_auto]">
                             <input aria-label={`Frame type ${index + 1}`} value={frame.name || ""} onChange={(event) => setNewProduct((product) => ({ ...product, blade_frame_types: product.blade_frame_types.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item), default_frame_type: product.default_frame_type === frame.name ? event.target.value : product.default_frame_type || event.target.value }))} placeholder="Frame type (e.g. Small)" className={fieldClass} />
-                            <input aria-label={`Blade count for frame type ${index + 1}`} type="number" min="1" step="1" value={frame.blade_count ?? ""} onChange={(event) => setNewProduct((product) => ({ ...product, blade_frame_types: product.blade_frame_types.map((item, itemIndex) => itemIndex === index ? { ...item, blade_count: event.target.value } : item) }))} placeholder="Blades" className={fieldClass} />
-                            <input aria-label={`Frame price for frame type ${index + 1}`} type="number" min="0" step="0.01" value={frame.price ?? ""} onChange={(event) => setNewProduct((product) => ({ ...product, blade_frame_types: product.blade_frame_types.map((item, itemIndex) => itemIndex === index ? { ...item, price: event.target.value } : item) }))} placeholder="Frame price (PHP)" className={fieldClass} />
+                            <input aria-label={`Blade count for frame type ${index + 1}`} type="number" min="1" step="1" value={frame.blade_count ?? ""} onChange={(event) => updateBladeFrameTypes((frames) => frames.map((item, itemIndex) => itemIndex === index ? { ...item, blade_count: event.target.value } : item))} placeholder="Blades" className={fieldClass} />
+                            <input aria-label={`Frame price for frame type ${index + 1}`} type="number" min="0" step="0.01" value={frame.price ?? ""} onChange={(event) => updateBladeFrameTypes((frames) => frames.map((item, itemIndex) => itemIndex === index ? { ...item, price: event.target.value } : item))} placeholder="Frame price (PHP)" className={fieldClass} />
                             <button type="button" aria-label={`Remove frame type ${index + 1}`} onClick={() => setNewProduct((product) => {
                               const blade_frame_types = product.blade_frame_types.filter((_, itemIndex) => itemIndex !== index);
                               return { ...product, blade_frame_types, default_frame_type: product.default_frame_type === frame.name ? blade_frame_types[0]?.name || "" : product.default_frame_type };
                             })} className={`inline-flex h-12 w-12 items-center justify-center rounded-xl border ${darkMode ? "border-slate-700 text-red-300 hover:bg-slate-800" : "border-slate-200 text-red-700 hover:bg-rose-50"}`}><Trash2 size={16} /></button>
                           </div>
                         ))}
-                        <button type="button" onClick={() => updateField("blade_frame_types", [...(newProduct.blade_frame_types || []), { name: "", blade_count: "", price: "" }])} className={`inline-flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm font-semibold ${darkMode ? "border-slate-600 text-red-300 hover:bg-slate-800" : "border-red-300 text-red-800 hover:bg-rose-50"}`}><Plus size={15} />Add frame type</button>
+                        <button type="button" onClick={() => updateBladeFrameTypes((frames) => [...frames, { name: "", blade_count: "", price: "" }])} className={`inline-flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm font-semibold ${darkMode ? "border-slate-600 text-red-300 hover:bg-slate-800" : "border-red-300 text-red-800 hover:bg-rose-50"}`}><Plus size={15} />Add frame type</button>
                       </div>
                     </div>
                   )}
@@ -825,8 +972,8 @@ function ProductFormModal({
                       </div>
                     </div>
                     <div className={`mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
-                      <span className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Default total <strong className={darkMode ? "text-white" : "text-slate-900"}>{currency(defaultBladeTotal)}</strong></span>
-                      <button type="button" onClick={() => updateField("estimated_price_override", defaultBladeTotal > 0 ? String(defaultBladeTotal) : "")} disabled={defaultBladeTotal <= 0} className={`rounded-lg border border-dashed px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 text-red-300" : "border-red-300 text-red-800"}`}>Use as Product Price</button>
+                      <span className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Default total <strong className={darkMode ? "text-white" : "text-slate-900"}>{isEstimateReady ? currency(defaultBladeTotal) : "—"}</strong></span>
+                      <button type="button" onClick={() => updateField("estimated_price_override", defaultBladeTotal > 0 ? String(defaultBladeTotal) : "")} disabled={!isEstimateReady || defaultBladeTotal <= 0} className={`rounded-lg border border-dashed px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 text-red-300" : "border-red-300 text-red-800"}`}>Use as Product Price</button>
                     </div>
                   </div>
 
@@ -864,7 +1011,7 @@ function ProductFormModal({
                 <div className={`space-y-3 border-t p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
                   <p className={`text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Configured charges are included in customer and inspection estimates.</p>
                   {extraCharges.map((charge, index) => (
-                    <div key={`${index}-${charge.name}`} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(110px,0.8fr)_minmax(90px,0.6fr)_minmax(135px,0.8fr)_auto]">
+                    <div key={`extra-charge-${index}`} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(110px,0.8fr)_minmax(90px,0.6fr)_minmax(135px,0.8fr)_auto]">
                       <input aria-label={`Extra charge ${index + 1} name`} value={charge.name || ""} onChange={(event) => setNewProduct((product) => ({ ...product, extra_charges: product.extra_charges.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) }))} placeholder="Charge name" className={fieldClass} />
                       <select aria-label={`Extra charge ${index + 1} calculation`} value={charge.type || "fixed"} onChange={(event) => setNewProduct((product) => ({ ...product, extra_charges: product.extra_charges.map((item, itemIndex) => itemIndex === index ? { ...item, type: event.target.value } : item) }))} className={fieldClass}>
                         <option value="fixed">Fixed / item</option>
@@ -916,28 +1063,42 @@ function ProductFormModal({
 
             <div className={`mt-3 rounded-xl border px-4 py-3 ${darkMode ? "border-red-900 bg-red-950/40" : "border-rose-300 bg-rose-50"}`}>
               <p className={`text-sm font-bold ${darkMode ? "text-red-300" : "text-red-950"}`}>
-                {pricingMethodValue === "blade" ? "Estimated cost for the default selection" : "Estimated cost for the size above"}
+                {pricingMethodValue === "blade" ? "Estimated cost for the default selection" : pricingMethodValue === "sqft" ? "Estimated cost for the size above" : "Estimated cost"}
               </p>
-              <div className={`mt-3 space-y-2 text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                <div className="flex items-center justify-between gap-4">
-                  <span>{estimatedMeasureLabel}</span>
-                  <span className={`shrink-0 text-right font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{estimatedMeasureValue}</span>
-                </div>
-                <div className="flex items-center justify-between gap-4">
-                  <span>Base price</span>
-                  <span className={`shrink-0 text-right font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{currency(baseEstimate)}</span>
-                </div>
-                {configuredChargeTotal > 0 && (
+              {isEstimateReady ? (
+                <div className={`mt-3 space-y-2 text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                   <div className="flex items-center justify-between gap-4">
-                    <span>Extra charges</span>
-                    <span className={`shrink-0 text-right font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{currency(configuredChargeTotal)}</span>
+                    <span>{estimatedMeasureLabel}</span>
+                    <span className={`shrink-0 text-right font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{estimatedMeasureValue}</span>
                   </div>
-                )}
-                <div className={`flex items-center justify-between gap-4 border-t pt-2 ${darkMode ? "border-red-900 text-red-300" : "border-rose-300 text-red-950"}`}>
-                  <span className="font-bold">Estimated total</span>
-                  <span className="shrink-0 text-right text-sm font-black">{currency(displayedEstimatedPrice)}</span>
+                  <div className="flex items-center justify-between gap-4">
+                    <span>Base price</span>
+                    <span className={`shrink-0 text-right font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{currency(baseEstimate)}</span>
+                  </div>
+                  {configuredChargeTotal > 0 && (
+                    <div className="flex items-center justify-between gap-4">
+                      <span>Extra charges</span>
+                      <span className={`shrink-0 text-right font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{currency(configuredChargeTotal)}</span>
+                    </div>
+                  )}
+                  <div className={`flex items-center justify-between gap-4 border-t pt-2 ${darkMode ? "border-red-900 text-red-300" : "border-rose-300 text-red-950"}`}>
+                    <span className="font-bold">Estimated total</span>
+                    <span className="shrink-0 text-right text-sm font-black">{currency(displayedEstimatedPrice)}</span>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <>
+                  <p className={`mt-2 text-sm ${darkMode ? "text-slate-400" : "text-slate-600"}`}>—</p>
+                  {pricingMethodValue === "blade" && bladeEstimateIssues.length > 0 && (
+                    <div role="status" aria-live="polite" className={`mt-3 rounded-lg border px-3 py-2 ${darkMode ? "border-amber-800 bg-amber-950/40 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                      <p className="text-xs font-semibold">Complete the blade setup to show the estimate:</p>
+                      <ul className="mt-1 list-inside list-disc space-y-1 text-xs">
+                        {bladeEstimateIssues.map((issue) => <li key={issue}>{issue}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
           </section>
@@ -1968,6 +2129,11 @@ function Products() {
         setModalError("Maximum blades cannot be lower than minimum blades.");
         return;
       }
+      const largestFrameBladeCount = Math.max(0, ...(newProduct.blade_frame_types || []).map((frame) => Number(frame.blade_count) || 0));
+      if (maximumBlades > 0 && largestFrameBladeCount > maximumBlades) {
+        setModalError("Maximum blades cannot be lower than the blade count of any frame type.");
+        return;
+      }
       const defaultGlass = newProduct.default_blade_glass_type || glassTypes[0]?.name;
       const defaultSaleMode = newProduct.default_sale_mode || (newProduct.sell_blades_only ? "blades_only" : "frame");
       if (!glassTypes.some((glass) => glass.name === defaultGlass)) {
@@ -1980,6 +2146,10 @@ function Products() {
       }
       if (defaultSaleMode === "frame" && newProduct.blade_frame_types.length && !newProduct.blade_frame_types.some((frame) => frame.name === newProduct.default_frame_type)) {
         setModalError("Choose a default frame type from the configured frame types.");
+        return;
+      }
+      if (defaultSaleMode === "frame" && !newProduct.blade_frame_types.length && !newProduct.allow_custom_frame_size) {
+        setModalError("Choose a default frame type or enable custom frame size.");
         return;
       }
     }

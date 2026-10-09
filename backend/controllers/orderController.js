@@ -120,6 +120,35 @@ const normalizeProductId = (productId) => {
   return String(productId);
 };
 
+const getOrderItemPricingMethod = (product = {}, item = {}) => {
+  const method = String(product.pricing_method || item.pricing_method || "").toLowerCase();
+  if (method) return method;
+  const unit = String(product.unit || item.unit || "").toLowerCase();
+  if (unit === "per_blade") return "blade";
+  if (unit === "per_sqft") return "sqft";
+  return unit;
+};
+
+const hasValidDimensions = (item) =>
+  Number(item.dimensions?.width) > 0 &&
+  Number(item.dimensions?.height) > 0 &&
+  Number(item.dimensions?.quantity) > 0 &&
+  Boolean(item.dimensions?.unit);
+
+const requiresOrderItemDimensions = (product = {}, item = {}) => {
+  const pricingMethod = getOrderItemPricingMethod(product, item);
+  const isBladeProduct = pricingMethod === "blade" || pricingMethod === "per_blade";
+  return !isBladeProduct || (item.sale_mode === "frame" && Boolean(item.custom_frame_size));
+};
+
+const hasValidOrderItemPricingInput = (product = {}, item = {}) => {
+  const pricingMethod = getOrderItemPricingMethod(product, item);
+  const isBladeProduct = pricingMethod === "blade" || pricingMethod === "per_blade";
+  if (!isBladeProduct) return hasValidDimensions(item);
+  if (requiresOrderItemDimensions(product, item) && !hasValidDimensions(item)) return false;
+  return Number(item.dimensions?.quantity) > 0 && Number(item.blade_count) > 0;
+};
+
 const sanitizeOrderItems = (items = []) => {
   return (items || []).map((item) => {
     const incomingDimensions = item.dimensions || {};
@@ -151,6 +180,19 @@ const sanitizeOrderItems = (items = []) => {
       frame_type: item.frame_type || "",
       frame_price: Number(item.frame_price) || 0,
       custom_frame_size: Boolean(item.custom_frame_size),
+      blade_glass_types: Array.isArray(item.blade_glass_types) ? item.blade_glass_types : [],
+      sell_blades_only: item.sell_blades_only !== false,
+      sell_with_frame: Boolean(item.sell_with_frame),
+      blade_frame_types: Array.isArray(item.blade_frame_types) ? item.blade_frame_types : [],
+      allow_custom_frame_size: Boolean(item.allow_custom_frame_size),
+      custom_frame_size_unit: item.custom_frame_size_unit || item.measurement_unit || measurement_unit,
+      minimum_blades: Math.max(1, Number(item.minimum_blades) || 1),
+      maximum_blades: Number(item.maximum_blades) || 0,
+      customer_can_choose_blade_count: Boolean(item.customer_can_choose_blade_count),
+      default_blade_glass_type: item.default_blade_glass_type || "",
+      default_sale_mode: item.default_sale_mode || "",
+      default_frame_type: item.default_frame_type || "",
+      show_price_per_blade: item.show_price_per_blade !== false,
       base_price: Number(item.base_price) || 0,
       blade_count: Number(item.blade_count) || 0,
       estimated_price_override: Number(item.estimated_price_override) || 0,
@@ -355,21 +397,6 @@ export const createOrder = async (req, res) => {
     }
 
     const sanitizedItems = sanitizeOrderItems(items);
-    const hasInvalidDimensions = sanitizedItems.some(
-      (item) =>
-        Number(item.dimensions?.width) <= 0 ||
-        Number(item.dimensions?.height) <= 0 ||
-        Number(item.dimensions?.quantity) <= 0 ||
-        !item.dimensions?.unit
-    );
-
-    if (hasInvalidDimensions) {
-      return res.status(400).json({
-        success: false,
-        message: "Please provide valid product dimensions before submitting your order.",
-      });
-    }
-
     const productIds = [...new Set(sanitizedItems.map((item) => item.product_id).filter(Boolean))];
     if (
       productIds.length !== sanitizedItems.length ||
@@ -387,6 +414,18 @@ export const createOrder = async (req, res) => {
     if (productsById.size !== productIds.length) {
       return res.status(400).json({ success: false, message: "One or more selected products are no longer available." });
     }
+    const hasInvalidPricingInput = sanitizedItems.some((item) => {
+      const product = productsById.get(String(item.product_id));
+      return !hasValidOrderItemPricingInput(product, item);
+    });
+
+    if (hasInvalidPricingInput) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide valid product dimensions before submitting your order.",
+      });
+    }
+
     const pricedItems = sanitizedItems.map((item) => {
       const product = productsById.get(String(item.product_id));
       return { ...item, ...buildProductPriceSnapshot(product, item) };

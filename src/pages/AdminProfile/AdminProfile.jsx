@@ -13,6 +13,7 @@ import {
   LogOut,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { getPhilippinePhoneError, isValidPhilippinePhone, normalizePhoneInput } from "@/lib/phoneValidation";
 import { getActivityStorageKey, readActivityLog } from "@/lib/activityLog";
 import { getAdminOrder } from "@/api/orders";
 import { formatDateTimeToMMMDDYYYY } from "@/lib/dateUtils";
@@ -253,7 +254,7 @@ function AdminProfile() {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setProfile((prev) => ({ ...prev, [name]: value }));
+    setProfile((prev) => ({ ...prev, [name]: name === "phone" ? normalizePhoneInput(value) : value }));
   };
 
   const profileHasChanges = () => {
@@ -272,6 +273,11 @@ function AdminProfile() {
   };
 
   const performSave = async () => {
+    if (profile.phone.trim() && !isValidPhilippinePhone(profile.phone)) {
+      setError(getPhilippinePhoneError(profile.phone));
+      return false;
+    }
+
     if (!profile.current_password) {
       setError("Please enter your current password to save profile changes.");
       return false;
@@ -535,10 +541,13 @@ function AdminProfile() {
                         <div className="relative mt-2">
                           <Phone size={18} className="absolute left-4 top-4 text-gray-400" />
                           <input
-                            type="text"
+                            type="tel"
+                            inputMode="tel"
+                            maxLength={13}
                             name="phone"
                             value={profile.phone}
                             onChange={handleChange}
+                            placeholder="+639171234567 or 09171234567"
                             className="w-full pl-12 pr-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
                           />
                         </div>

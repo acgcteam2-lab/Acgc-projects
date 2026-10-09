@@ -101,7 +101,15 @@ export const getProductLineTotal = (product = {}, item = {}) => {
     ? product.extra_charges ?? item.extra_charges
     : [];
   const itemCharges = Array.isArray(item.extra_charges) ? item.extra_charges : [];
-  const charges = configuredCharges.filter((charge, index) => {
+  const charges = configuredCharges.map((charge, index) => ({
+    ...charge,
+    ...(itemCharges[index] || {}),
+    is_optional: charge?.is_optional,
+    is_active: charge?.is_active,
+    type: itemCharges[index]?.type || charge?.type,
+    label: itemCharges[index]?.label || charge?.label,
+    name: itemCharges[index]?.name || charge?.name,
+  })).filter((charge, index) => {
     if (charge?.is_active === false) return false;
     if (charge?.is_optional !== true) return true;
     const isSelected = itemCharges[index]?.is_selected;
@@ -239,6 +247,7 @@ export const buildProductPriceSnapshot = (product, item) => {
     sell_with_frame: Boolean(product.sell_with_frame),
     blade_frame_types: Array.isArray(product.blade_frame_types) ? product.blade_frame_types : [],
     allow_custom_frame_size: Boolean(product.allow_custom_frame_size),
+    custom_frame_size_unit: product.custom_frame_size_unit || product.measurement_unit || item.measurement_unit || "in",
     custom_frame_price: toNonNegativeNumber(product.custom_frame_price),
     minimum_blades: Math.max(1, Number(product.minimum_blades) || 1),
     maximum_blades: toNonNegativeNumber(product.maximum_blades),

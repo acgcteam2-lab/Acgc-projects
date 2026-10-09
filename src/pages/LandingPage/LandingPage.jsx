@@ -24,6 +24,7 @@ import {
   CircleX,
 } from "lucide-react";
 import OrderProgressTimeline from "@/components/OrderProgressTimeline";
+import ProductPriceEstimator from "@/components/ProductPriceEstimator";
 import { getPaymentSummary } from "@/pages/Transactions/paymentProofUtils";
 import { getProducts } from "../../api/products";
 import { getProductReviewSummary, trackOrder } from "../../api/orders";
@@ -39,11 +40,12 @@ function LandingPage() {
   const [active, setActive] = useState("home");
   const [mobileMenu, setMobileMenu] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
-  const [productEstimatorForm, setProductEstimatorForm] = useState({ unit: "in", width: "0", height: "0" });
+  const [productEstimatorForm, setProductEstimatorForm] = useState({ unit: "in", width: "0", height: "0", blade_glass_type: "", sale_mode: "blades_only", frame_type: "", custom_frame_size: false, blade_count: 1 });
   const [featuredProducts, setFeaturedProducts] = useState([]);
   const [catalogProducts, setCatalogProducts] = useState([]);
   const [productSearch, setProductSearch] = useState("");
   const [productCategory, setProductCategory] = useState("All");
+  const [productType, setProductType] = useState("All");
   const [productPage, setProductPage] = useState(1);
   const [productsPerPage, setProductsPerPage] = useState(8);
   const [featuredProductStats, setFeaturedProductStats] = useState({});
@@ -65,9 +67,34 @@ function LandingPage() {
     setMobileMenu(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+  const isBladeProduct = (product) => ["blade", "per_blade"].includes(
+    String(product?.pricing_method || product?.unit || "").toLowerCase()
+  );
+
+  const getDefaultBladeSelections = (product) => {
+    const glassTypes = Array.isArray(product?.blade_glass_types) ? product.blade_glass_types : [];
+    const frameTypes = Array.isArray(product?.blade_frame_types) ? product.blade_frame_types : [];
+    const defaultFrame = frameTypes.find((frame) => frame.name === product?.default_frame_type) || frameTypes[0];
+    const sellBladesOnly = product?.sell_blades_only !== false;
+    const defaultSaleMode = product?.default_sale_mode || (sellBladesOnly ? "blades_only" : "frame");
+    const saleMode = defaultSaleMode === "frame" && !product?.sell_with_frame ? "blades_only" : defaultSaleMode;
+
+    const defaultBladeCount = saleMode === "frame"
+      ? Number(defaultFrame?.blade_count) || Number(product?.minimum_blades) || 1
+      : Number(product?.minimum_blades) || Number(product?.blade_count) || 1;
+
+    return {
+      blade_glass_type: product?.default_blade_glass_type || glassTypes[0]?.name || "",
+      sale_mode: saleMode,
+      frame_type: defaultFrame?.name || "",
+      custom_frame_size: saleMode === "frame" && frameTypes.length === 0 && Boolean(product?.allow_custom_frame_size),
+      blade_count: product?.customer_can_choose_blade_count ? "" : defaultBladeCount,
+    };
+  };
+
   const openProductDetails = (product) => {
     setSelectedProduct(product);
-    setProductEstimatorForm({ unit: "in", width: "0", height: "0" });
+    setProductEstimatorForm({ unit: "in", width: "0", height: "0", ...getDefaultBladeSelections(product) });
   };
 
   useEffect(() => {
@@ -209,6 +236,21 @@ function LandingPage() {
 
   const getProductPrice = (product) => {
     if (!product) return "Contact us";
+    const override = Number(product.estimated_price_override) || 0;
+    if (override > 0) {
+      return `₱${override.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+    if (isBladeProduct(product) && product.show_price_per_blade !== false) {
+      const glassRates = (product.blade_glass_types || [])
+        .map((glass) => Number(glass.price_per_blade) || 0)
+        .filter((price) => price > 0);
+      const bladeRate = glassRates.length
+        ? Math.min(...glassRates)
+        : Number(product.price_per_blade || product.unit_price) || 0;
+      if (bladeRate > 0) {
+        return `₱${bladeRate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / blade`;
+      }
+    }
     const price = getProductLineTotal(product, getProductDefaultDimensions(product));
     return price > 0
       ? `₱${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -234,6 +276,15 @@ function LandingPage() {
     };
     const label = unitLabels[unitKey] || unitKey;
 
+    if (isBladeProduct(product)) {
+      if (product.show_price_per_blade === false) return `Starting from ${getProductPrice(product)}`;
+      const glassRates = (product.blade_glass_types || [])
+        .map((glass) => Number(glass.price_per_blade) || 0)
+        .filter((price) => price > 0);
+      const bladeRate = glassRates.length ? Math.min(...glassRates) : pricePerBlade || unitPrice;
+      if (bladeRate > 0) return `₱${bladeRate.toLocaleString()} / blade`;
+    }
+
     if ((product.pricing_method === "sqft" || label === "sq ft") && pricePerSqft > 0) {
       return `₱${pricePerSqft.toLocaleString()} / ${label}`;
     }
@@ -247,23 +298,33 @@ function LandingPage() {
   const getProductEstimateRate = (product) => {
     const pricingMethod = String(product?.pricing_method || "").toLowerCase();
     const legacyUnit = String(product?.unit || "").toLowerCase();
-    if (pricingMethod === "sqft" || (!pricingMethod && legacyUnit === "per_sqft")) {
+    if (pricingMethod === "sqft" || (!pricingMethod && ["per_sqft", "sqft"].includes(legacyUnit))) {
       return Number(product?.price_per_sqft) || undefined;
     }
-    if (pricingMethod === "blade" || (!pricingMethod && legacyUnit === "per_blade")) {
-      return Number(product?.price_per_blade) || undefined;
+    if (isBladeProduct(product)) {
+      const selectedGlass = (product?.blade_glass_types || []).find(
+        (glass) => glass.name === productEstimatorForm.blade_glass_type
+      );
+      return Number(selectedGlass?.price_per_blade ?? product?.price_per_blade) || undefined;
     }
     return undefined;
   };
 
+  const productCategoryOptions = [...new Set(catalogProducts
+    .map((product) => String(product.category || "").trim())
+    .filter(Boolean))]
+    .sort((first, second) => first.localeCompare(second));
+  const productTypeOptions = [...new Set(catalogProducts
+    .map((product) => String(product.product_type || product.type || "").trim())
+    .filter(Boolean))]
+    .sort((first, second) => first.localeCompare(second));
   const visibleProducts = catalogProducts.filter((product) => {
     const query = productSearch.trim().toLowerCase();
     const matchesSearch = !query || `${product.name || ""} ${product.product_name || ""} ${product.product_type || ""} ${product.category || ""} ${product.description || ""}`
       .toLowerCase().includes(query);
-    const matchesCategory = productCategory === "All" || [product.category, product.product_type, product.type]
-      .filter(Boolean)
-      .some((category) => String(category).toLowerCase() === productCategory.toLowerCase());
-    return matchesSearch && matchesCategory;
+    const matchesCategory = productCategory === "All" || String(product.category || "").toLowerCase() === productCategory.toLowerCase();
+    const matchesType = productType === "All" || String(product.product_type || product.type || "").toLowerCase() === productType.toLowerCase();
+    return matchesSearch && matchesCategory && matchesType;
   });
   const productPageCount = Math.max(1, Math.ceil(visibleProducts.length / productsPerPage));
   const currentProductPage = Math.min(productPage, productPageCount);
@@ -272,6 +333,14 @@ function LandingPage() {
   const displayedProducts = isMobile ? visibleProducts : pagedProducts;
   const productEstimatorWidth = Number(productEstimatorForm.width) || 0;
   const productEstimatorHeight = Number(productEstimatorForm.height) || 0;
+  const selectedProductFrame = (selectedProduct?.blade_frame_types || []).find((frame) => frame.name === productEstimatorForm.frame_type);
+  const productBladeMinimum = Math.max(1, Number(selectedProduct?.minimum_blades) || 1);
+  const productBladeMaximum = Number(selectedProduct?.maximum_blades) || 0;
+  const selectedFrameBladeCount = Number(selectedProductFrame?.blade_count) || 0;
+  const bladeCountMinimum = productEstimatorForm.sale_mode === "frame" && !productEstimatorForm.custom_frame_size && selectedFrameBladeCount > 0
+    ? selectedFrameBladeCount
+    : productBladeMinimum;
+  const effectiveBladeCount = Number(productEstimatorForm.blade_count) || bladeCountMinimum;
   const rawProductEstimatorResult = selectedProduct ? calculateEstimate({
     productName: selectedProduct.product_name || selectedProduct.name,
     categoryKey: selectedProduct.product_type || selectedProduct.category,
@@ -280,23 +349,33 @@ function LandingPage() {
     height: productEstimatorHeight,
     measurementUnit: productEstimatorForm.unit,
     quantity: 1,
-    blade_count: selectedProduct.blade_count || 0,
+    blade_count: isBladeProduct(selectedProduct) ? effectiveBladeCount : selectedProduct.blade_count || 0,
     base_price: selectedProduct.base_price || undefined,
     overrideRate: getProductEstimateRate(selectedProduct),
     customization: selectedProduct.customization || false,
     customization_fee: selectedProduct.customization_fee || 0,
   }) : null;
   const productEstimatorResult = selectedProduct
-    ? {
-        ...rawProductEstimatorResult,
-        estimated_price: getProductLineTotal(selectedProduct, {
-          width: productEstimatorWidth,
-          height: productEstimatorHeight,
-          measurement_unit: productEstimatorForm.unit,
-          quantity: 1,
-          customized: true,
-        }),
-      }
+    ? isBladeProduct(selectedProduct)
+      ? {
+          estimated_price: getProductLineTotal(selectedProduct, {
+            ...productEstimatorForm,
+            quantity: 1,
+            blade_count: effectiveBladeCount,
+          }),
+          rate: getProductEstimateRate(selectedProduct),
+          areaDisplay: `${effectiveBladeCount} blade${effectiveBladeCount === 1 ? "" : "s"}`,
+        }
+      : {
+          ...rawProductEstimatorResult,
+          estimated_price: getProductLineTotal(selectedProduct, {
+            width: productEstimatorWidth,
+            height: productEstimatorHeight,
+            measurement_unit: productEstimatorForm.unit,
+            quantity: 1,
+            customized: true,
+          }),
+        }
     : null;
   const selectedProductRating = selectedProduct
     ? featuredProductStats[selectedProduct._id || selectedProduct.id] || { averageRating: 0, ratingsCount: 0 }
@@ -767,7 +846,7 @@ function LandingPage() {
         <h2 className="mt-3 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">Browse Products</h2>
         <p className="mt-2 text-sm text-slate-600">Browse available aluminum &amp; glass products.</p>
       </div>
-      <div className="flex w-full flex-col gap-3 sm:flex-row md:max-w-2xl md:justify-end">
+      <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(9rem,12rem)_minmax(9rem,12rem)] md:max-w-4xl md:justify-end">
         <label className="relative min-w-0 flex-1">
           <span className="sr-only">Search products</span>
           <Search size={18} className="absolute left-3 top-3.5 text-slate-400" aria-hidden="true" />
@@ -781,7 +860,21 @@ function LandingPage() {
             className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-slate-900 outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-100"
           />
         </label>
-        <label className="sm:w-56">
+        <label className="min-w-0">
+          <span className="sr-only">Filter by product type</span>
+          <select
+            value={productType}
+            onChange={(event) => {
+              setProductType(event.target.value);
+              setProductPage(1);
+            }}
+            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-100"
+          >
+            <option value="All">All types</option>
+            {productTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
+          </select>
+        </label>
+        <label className="min-w-0">
           <span className="sr-only">Filter by category</span>
           <select
             value={productCategory}
@@ -792,13 +885,11 @@ function LandingPage() {
             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-100"
           >
             <option value="All">All categories</option>
-            <option value="Windows">Windows</option>
-            <option value="Doors">Doors</option>
-            <option value="Cabinets">Cabinets</option>
-            <option value="Shower Enclosures">Shower Enclosures</option>
-            <option value="Aluminum">Aluminum</option>
-            <option value="Glass">Glass</option>
-            <option value="Accessories">Accessories</option>
+            {productCategoryOptions.map((category) => (
+              <option key={category} value={category}>
+                {category.charAt(0).toUpperCase() + category.slice(1)}
+              </option>
+            ))}
           </select>
         </label>
       </div>
@@ -1057,11 +1148,105 @@ function LandingPage() {
               <p className="mt-1 text-sm font-bold text-slate-800">{getProductUnitRate(selectedProduct)}</p>
             </div>
           </div>
-          <section className="overflow-hidden rounded-xl border border-slate-200 border-t-2 border-t-red-600 bg-white p-4" aria-labelledby="landing-product-estimator-title">
+          <ProductPriceEstimator
+            product={selectedProduct}
+            form={productEstimatorForm}
+            onFormChange={setProductEstimatorForm}
+            formatCurrency={formatCurrency}
+          />
+          {false && <section className="overflow-hidden rounded-xl border border-slate-200 border-t-2 border-t-red-600 bg-white p-4" aria-labelledby="landing-product-estimator-title">
             <div className="flex items-center gap-2">
               <Ruler size={16} className="text-red-600" aria-hidden="true" />
               <h4 id="landing-product-estimator-title" className="text-sm font-bold text-slate-900">Price Estimator</h4>
             </div>
+            {isBladeProduct(selectedProduct) && (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                {Array.isArray(selectedProduct.blade_glass_types) && selectedProduct.blade_glass_types.length > 0 && (
+                  <label className="min-w-0">
+                    <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-slate-500">Glass type</span>
+                    <select
+                      value={productEstimatorForm.blade_glass_type}
+                      onChange={(event) => setProductEstimatorForm((current) => ({ ...current, blade_glass_type: event.target.value }))}
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/15"
+                    >
+                      {selectedProduct.blade_glass_types.map((glass) => (
+                        <option key={glass.name} value={glass.name}>{glass.name} — {formatCurrency(glass.price_per_blade)} / blade</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {selectedProduct.sell_with_frame && selectedProduct.sell_blades_only !== false && (
+                  <label className="min-w-0">
+                    <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-slate-500">Sold as</span>
+                    <select
+                      value={productEstimatorForm.custom_frame_size ? "custom_frame" : productEstimatorForm.sale_mode === "frame" ? `frame:${productEstimatorForm.frame_type}` : "blades_only"}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (value === "blades_only") {
+                          const bladeCount = Number(selectedProduct.minimum_blades) || Number(selectedProduct.blade_count) || 1;
+                          setProductEstimatorForm((current) => ({ ...current, sale_mode: value, frame_type: "", custom_frame_size: false, blade_count: selectedProduct.customer_can_choose_blade_count ? "" : bladeCount }));
+                        } else if (value === "custom_frame") {
+                          const bladeCount = Number(selectedProduct.minimum_blades) || 1;
+                          setProductEstimatorForm((current) => ({ ...current, sale_mode: "frame", frame_type: "", custom_frame_size: true, blade_count: selectedProduct.customer_can_choose_blade_count ? "" : bladeCount }));
+                        } else {
+                          const frame = selectedProduct.blade_frame_types.find((item) => `frame:${item.name}` === value);
+                          const bladeCount = Number(frame?.blade_count) || Number(selectedProduct.minimum_blades) || 1;
+                          setProductEstimatorForm((current) => ({ ...current, sale_mode: "frame", frame_type: frame?.name || "", custom_frame_size: false, blade_count: selectedProduct.customer_can_choose_blade_count ? "" : bladeCount }));
+                        }
+                      }}
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/15"
+                    >
+                      <option value="blades_only">Blades only</option>
+                      {(selectedProduct.blade_frame_types || []).map((frame) => (
+                        <option key={frame.name} value={`frame:${frame.name}`}>{frame.name} — {Number(frame.blade_count) || 0} blades + {formatCurrency(frame.price)}</option>
+                      ))}
+                      {selectedProduct.allow_custom_frame_size && <option value="custom_frame">Custom frame — {formatCurrency(selectedProduct.custom_frame_price)}</option>}
+                    </select>
+                  </label>
+                )}
+                {productEstimatorForm.sale_mode === "frame" && !productEstimatorForm.custom_frame_size && (selectedProduct.blade_frame_types || []).length > 0 && (
+                  <label className="min-w-0">
+                    <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-slate-500">Frame type</span>
+                    <select
+                      value={productEstimatorForm.frame_type}
+                      onChange={(event) => {
+                        const frame = selectedProduct.blade_frame_types.find((item) => item.name === event.target.value);
+                        const bladeCount = Number(frame?.blade_count) || Number(selectedProduct.minimum_blades) || 1;
+                        setProductEstimatorForm((current) => ({ ...current, frame_type: event.target.value, blade_count: selectedProduct.customer_can_choose_blade_count ? "" : bladeCount }));
+                      }}
+                      className="h-10 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/15"
+                    >
+                      {selectedProduct.blade_frame_types.map((frame) => <option key={frame.name} value={frame.name}>{frame.name} — {Number(frame.blade_count) || 0} blades</option>)}
+                    </select>
+                  </label>
+                )}
+                <label className="min-w-0">
+                  <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-slate-500">Blade count</span>
+                  {selectedProduct.customer_can_choose_blade_count ? (
+                    <>
+                      <input
+                        type="number"
+                        min={bladeCountMinimum}
+                        max={productBladeMaximum || undefined}
+                        step="1"
+                        value={productEstimatorForm.blade_count}
+                        onChange={(event) => setProductEstimatorForm((current) => ({ ...current, blade_count: event.target.value }))}
+                        placeholder={`min ${bladeCountMinimum}`}
+                        className="h-10 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-red-500 focus:ring-2 focus:ring-red-500/15"
+                      />
+                      <span className="mt-1 block text-[10px] leading-4 text-slate-500">
+                        Minimum for your size: <strong>{bladeCountMinimum} blade{bladeCountMinimum === 1 ? "" : "s"}</strong>. {productBladeMaximum > 0 ? <>Maximum: <strong>{productBladeMaximum} blade{productBladeMaximum === 1 ? "" : "s"}</strong>. </> : null}Final count is confirmed by our team.
+                      </span>
+                    </>
+                  ) : (
+                    <span className="flex h-10 items-center rounded-lg border border-slate-200 bg-slate-50 px-2 text-sm font-semibold text-slate-700">
+                      {effectiveBladeCount}
+                    </span>
+                  )}
+                </label>
+              </div>
+            )}
+            {(!isBladeProduct(selectedProduct) || productEstimatorForm.custom_frame_size) && (
             <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(88px,0.8fr)]">
               <label className="min-w-0">
                 <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-slate-500">Width</span>
@@ -1099,12 +1284,19 @@ function LandingPage() {
                 </select>
               </label>
             </div>
-            {productEstimatorWidth > 0 && productEstimatorHeight > 0 ? (
+            )}
+            {(isBladeProduct(selectedProduct)
+              ? effectiveBladeCount >= bladeCountMinimum
+                && (!productBladeMaximum || effectiveBladeCount <= productBladeMaximum)
+                && (!selectedProduct.blade_glass_types?.length || Boolean(productEstimatorForm.blade_glass_type))
+              : productEstimatorWidth > 0 && productEstimatorHeight > 0) ? (
               <div className="mt-4 space-y-3 text-sm text-slate-600" aria-live="polite">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="inline-flex items-center gap-2"><Ruler size={13} aria-hidden="true" />Area</span>
+                  <span className="inline-flex items-center gap-2"><Ruler size={13} aria-hidden="true" />{isBladeProduct(selectedProduct) ? "Blade count" : "Area"}</span>
                   <span className="font-bold text-slate-900">
-                    {Number(productEstimatorResult?.estimated_area) > 0
+                    {isBladeProduct(selectedProduct)
+                      ? productEstimatorResult?.areaDisplay
+                      : Number(productEstimatorResult?.estimated_area) > 0
                       ? `${Number(productEstimatorResult.estimated_area).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq ft`
                       : productEstimatorResult?.areaDisplay || "—"}
                   </span>
@@ -1132,18 +1324,18 @@ function LandingPage() {
               </div>
             ) : (
               <div className="mt-3 flex min-h-12 items-center justify-center rounded-lg bg-slate-50 px-3 py-2.5 text-center text-xs text-slate-500">
-                Enter width &amp; height to calculate your estimate.
+                {isBladeProduct(selectedProduct) ? "Choose a glass type and valid blade count to calculate your estimate." : "Enter width &amp; height to calculate your estimate."}
               </div>
             )}
             <p className="mt-2 text-[11px] font-semibold leading-4 text-slate-500">
               Final pricing is subject to negotiation during shop discussion or on-site inspection.
             </p>
-          </section>
+          </section>}
           <Link
             to="/login"
             className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
           >
-            Sign in to order <ArrowRight size={16} aria-hidden="true" />
+            Place Order Request <ArrowRight size={16} aria-hidden="true" />
           </Link>
         </aside>
       </div>

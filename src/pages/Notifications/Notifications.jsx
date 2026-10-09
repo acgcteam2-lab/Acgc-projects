@@ -205,8 +205,15 @@ export default function Notifications() {
                       : n.category === "orders"
                         ? "/dashboard"
                         : `/site-inspection?view=${recordId}`;
+                    const recordType = n.category === "payments"
+                      ? "payment"
+                      : n.category === "inspections"
+                        ? "inspection"
+                        : ["accepted", "declined", "sent"].includes(n.category)
+                          ? "contract"
+                          : "order";
                     navigate(destination, {
-                      state: { notificationHighlight: { recordId, recordType: "order" } },
+                      state: { notificationHighlight: { recordId, recordType } },
                     });
                   }}
                   className={`flex w-full gap-3 border-l-[3px] p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500 sm:gap-4 sm:p-4 ${n.read ? darkMode ? "border-l-transparent bg-slate-900 hover:bg-slate-800" : "border-l-transparent bg-white hover:bg-slate-50" : darkMode ? "border-l-sky-400 bg-sky-950/20 hover:bg-sky-950/35" : "border-l-sky-500 bg-sky-50/70 hover:bg-sky-50"}`}

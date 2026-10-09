@@ -89,6 +89,10 @@ const formatStageSummary = (rows) => {
 const getAllExpandedKeys = (entries) => entries.flatMap((entry) => entry.groupItems
   ? [entry.key, ...entry.groupItems.map((row) => row.key)]
   : [entry.key]);
+const normalizeNotificationStageKey = (value) => String(value || "")
+  .replace(/^batch_\d+_/, "")
+  .toLowerCase()
+  .replace(/[\s-]+/g, "_");
 
 function LoadingRows({ darkMode }) {
   return (
@@ -117,6 +121,7 @@ export default function OrderTimelineModal({
   getItemDimension,
   fallbackImage = "",
   onContactSupport,
+  notificationTarget = null,
 }) {
   const items = Array.isArray(order?.items) ? order.items : EMPTY_ITEMS;
   const rows = useMemo(
@@ -149,6 +154,56 @@ export default function OrderTimelineModal({
       if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus();
     };
   }, []);
+
+  useEffect(() => {
+    if (!notificationTarget?.stageKey && !notificationTarget?.stageName) return undefined;
+
+    const requestedItemIndex = Number.isInteger(notificationTarget.itemIndex)
+      ? notificationTarget.itemIndex
+      : null;
+    const matchesStage = (stage) => (
+      (notificationTarget.stageKey && normalizeNotificationStageKey(stage?.key) === normalizeNotificationStageKey(notificationTarget.stageKey)) ||
+      (notificationTarget.stageName && String(stage?.label || stage?.name || "").toLowerCase() === String(notificationTarget.stageName).toLowerCase())
+    );
+    const targetRow = rows.find((row) => (
+      (requestedItemIndex === null || row.index === requestedItemIndex) && row.stages.some(matchesStage)
+    ));
+    const targetEntry = targetRow && entries.find((entry) => (
+      entry.key === targetRow.key || entry.groupItems?.some((row) => row.key === targetRow.key)
+    ));
+
+    if (targetRow) {
+      setExpandedKeys((current) => {
+        const next = new Set(current);
+        if (targetEntry) next.add(targetEntry.key);
+        next.add(targetRow.key);
+        return next;
+      });
+    }
+
+    let attempts = 0;
+    const scrollToStage = () => {
+      const target = Array.from(dialogRef.current?.querySelectorAll("[data-notification-stage-key]") || [])
+        .find((element) => (
+          matchesStage({ key: element.dataset.notificationStageKey, label: element.dataset.notificationStageName }) &&
+          (requestedItemIndex === null || Number(element.dataset.notificationItemIndex) === requestedItemIndex)
+        ));
+      if (target) {
+        window.clearInterval(scrollInterval);
+        target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      } else if (attempts >= 30) {
+        window.clearInterval(scrollInterval);
+      }
+      attempts += 1;
+    };
+    const scrollInterval = window.setInterval(scrollToStage, 100);
+    const frame = window.requestAnimationFrame(scrollToStage);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearInterval(scrollInterval);
+    };
+  }, [notificationTarget, rows, entries]);
 
   const trackingId = order?.trackingId || order?.tracking || order?._id || order?.id || "Order";
   const placedDate = order?.createdAt || order?.created_at;
@@ -326,6 +381,7 @@ export default function OrderTimelineModal({
               getItemDimension={getItemDimension}
               fallbackImage={fallbackImage}
               onPhotoOpen={setPhotoGallery}
+                  notificationTarget={notificationTarget}
             />
           ) : (
             <div className="space-y-2.5">
@@ -341,6 +397,7 @@ export default function OrderTimelineModal({
                   expandedKeys={expandedKeys}
                   onToggleKey={toggleKey}
                   onPhotoOpen={setPhotoGallery}
+                  notificationTarget={notificationTarget}
                 />
               ))}
             </div>

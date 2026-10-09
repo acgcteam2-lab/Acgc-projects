@@ -36,6 +36,52 @@ const OrderItemSchema = new mongoose.Schema(
     frame_type: { type: String, trim: true, default: "" },
     frame_price: { type: Number, min: 0, default: 0 },
     custom_frame_size: { type: Boolean, default: false },
+    blade_glass_types: {
+      type: [mongoose.Schema.Types.Mixed],
+      default: [],
+    },
+    sell_blades_only: {
+      type: Boolean,
+      default: true,
+    },
+    sell_with_frame: {
+      type: Boolean,
+      default: false,
+    },
+    blade_frame_types: {
+      type: [mongoose.Schema.Types.Mixed],
+      default: [],
+    },
+    allow_custom_frame_size: {
+      type: Boolean,
+      default: false,
+    },
+    custom_frame_size_unit: {
+      type: String,
+      enum: ["in", "ft", "cm", "m"],
+      default: "in",
+    },
+    minimum_blades: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
+    maximum_blades: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    customer_can_choose_blade_count: {
+      type: Boolean,
+      default: false,
+    },
+    default_blade_glass_type: { type: String, trim: true, default: "" },
+    default_sale_mode: { type: String, enum: ["blades_only", "frame", ""], default: "" },
+    default_frame_type: { type: String, trim: true, default: "" },
+    show_price_per_blade: {
+      type: Boolean,
+      default: true,
+    },
     base_price: {
       type: Number,
       default: 0,

@@ -267,7 +267,13 @@ function NotificationMenu() {
       state: {
         notificationHighlight: {
           recordId: notification.recordId,
-          recordType: "order",
+          recordType: notification.category === "payments"
+            ? "payment"
+            : notification.category === "inspections"
+              ? "inspection"
+              : ["accepted", "declined", "sent"].includes(notification.category)
+                ? "contract"
+                : "order",
         },
       },
     });

@@ -35,7 +35,12 @@ const getChipClass = (stages, darkMode) => {
   return darkMode ? "bg-sky-900/60 text-sky-200" : "bg-sky-100 text-sky-800";
 };
 
-function StageList({ stages, darkMode, onPhotoOpen }) {
+const normalizeStageKey = (value) => String(value || "")
+  .replace(/^batch_\d+_/, "")
+  .toLowerCase()
+  .replace(/[\s-]+/g, "_");
+
+function StageList({ stages, darkMode, onPhotoOpen, itemIndex, notificationTarget }) {
   const nextUpIndex = stages.findIndex((stage) => getTimelineStageStatus(stage) === "pending");
   const hasCurrentStage = stages.some((stage) => getTimelineStageStatus(stage) === "current");
   const isSingleItem = !hasCurrentStage && nextUpIndex !== -1;
@@ -48,6 +53,12 @@ function StageList({ stages, darkMode, onPhotoOpen }) {
           stage={stage}
           isLast={index === stages.length - 1}
           isNextUp={isSingleItem && index === nextUpIndex}
+          isNotificationTarget={Boolean(notificationTarget &&
+            (notificationTarget.itemIndex === null || notificationTarget.itemIndex === undefined || notificationTarget.itemIndex === itemIndex) &&
+            ((notificationTarget.stageKey && normalizeStageKey(stage.key) === normalizeStageKey(notificationTarget.stageKey)) ||
+              (notificationTarget.stageName && String(stage.label || stage.name || "").toLowerCase() === String(notificationTarget.stageName).toLowerCase())))}
+          notificationStageKey={stage.key || stage.label || stage.name}
+          notificationItemIndex={itemIndex}
           darkMode={darkMode}
           onPhotoOpen={onPhotoOpen}
         />
@@ -67,6 +78,7 @@ export default function ItemCard({
   expandedKeys,
   onToggleKey,
   onPhotoOpen,
+  notificationTarget,
 }) {
   if (row.groupItems) {
     const members = row.groupItems;
@@ -112,6 +124,7 @@ export default function ItemCard({
                   expandedKeys={expandedKeys}
                   onToggleKey={onToggleKey}
                   onPhotoOpen={onPhotoOpen}
+                  notificationTarget={notificationTarget}
                 />
               ))}
             </div>
@@ -151,7 +164,7 @@ export default function ItemCard({
         <div className={`mt-2 h-1.5 overflow-hidden rounded-full ${darkMode ? "bg-slate-700" : "bg-slate-100"}`} role="progressbar" aria-label={`${name} stage progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
           <div className="h-full rounded-full bg-emerald-600 transition-[width] duration-200" style={{ width: `${progress}%` }} />
         </div>
-        <StageList stages={stages} darkMode={darkMode} onPhotoOpen={onPhotoOpen} />
+        <StageList stages={stages} darkMode={darkMode} onPhotoOpen={onPhotoOpen} itemIndex={index} notificationTarget={notificationTarget} />
       </article>
     );
   }
@@ -194,7 +207,7 @@ export default function ItemCard({
       <div aria-hidden={!isExpanded} inert={!isExpanded} className={`grid transition-[grid-template-rows,opacity] duration-200 motion-reduce:transition-none ${isExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
         <div className="overflow-hidden">
           <div className={`border-t px-4 pb-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
-            <StageList stages={stages} darkMode={darkMode} onPhotoOpen={onPhotoOpen} />
+            <StageList stages={stages} darkMode={darkMode} onPhotoOpen={onPhotoOpen} itemIndex={index} notificationTarget={notificationTarget} />
           </div>
         </div>
       </div>

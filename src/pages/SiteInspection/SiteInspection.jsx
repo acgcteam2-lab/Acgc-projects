@@ -31,6 +31,7 @@ import ContractModal from "../../components/ContractModal";
 import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { getInstallationDateError, getMinimumInstallationDate } from "@/lib/installationSchedule";
 import { calculateRequiredDownpayment, getFinalProjectCost } from "@/lib/orderPricing";
+import { getPhilippinePhoneError, isValidPhilippinePhone, normalizePhoneInput } from "@/lib/phoneValidation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import { recordActivity } from "@/lib/activityLog";
@@ -91,8 +92,6 @@ const CONTRACT_STAGE_STATUSES = new Set([
 
 const normalizeWorkflowValue = (value) =>
   (value || "").toString().trim().toLowerCase();
-
-const normalizePhoneInput = (value) => String(value ?? "").replace(/\D/g, "");
 
 export const normalizeWarrantyPeriodValue = (value, fallback = 90) => {
   if (value === "Custom" || value === "No Warranty") return value;
@@ -191,6 +190,23 @@ export const calculateMeasurementArea = (width, height, quantity = 1, unit = "in
   return Math.round(area * 100) / 100;
 };
 
+export const getInspectionItemPricingMethod = (item = {}) => {
+  const method = String(item.pricing_method || "").toLowerCase();
+  if (method) return method;
+  const unit = String(item.unit || "").toLowerCase();
+  if (unit === "per_blade") return "blade";
+  if (unit === "per_sqft") return "sqft";
+  return unit;
+};
+
+export const isInspectionBladeItem = (item = {}) => {
+  const method = getInspectionItemPricingMethod(item);
+  return method === "blade" || method === "per_blade";
+};
+
+export const requiresInspectionItemDimensions = (item = {}) =>
+  !isInspectionBladeItem(item) || (item.sale_mode === "frame" && Boolean(item.custom_frame_size));
+
 export const calculateMeasurementSubtotal = (item, product = null) => {
   const quantity = Number(item.quantity ?? item.qty ?? 1) || 1;
   const measurementUnit = item.measurement_unit || item.measurementUnit || item.dimensions?.unit || "in";
@@ -250,6 +266,7 @@ export const validateInspectionPayload = (payload = {}) => {
 
   if (!payload.customerName?.trim()) nextErrors.customerName = "Client name is required.";
   if (!payload.phone?.trim()) nextErrors.phone = "Phone number is required.";
+  else if (!isValidPhilippinePhone(payload.phone)) nextErrors.phone = getPhilippinePhoneError(payload.phone);
   if (!payload.siteAddress?.trim()) nextErrors.siteAddress = "Site address is required.";
   if (!payload.inspection_date) nextErrors.inspection_date = "Inspection date is required.";
   const installationDateError = getInstallationDateError(payload.inspection_date, payload.estimated_installation_date);
@@ -268,8 +285,9 @@ export const validateInspectionPayload = (payload = {}) => {
     const normalizedProductId = normalizeProductId(item.product_id);
     if (!normalizedProductId) rowErrors.product_id = "Select a product.";
     if (!item.name?.trim()) rowErrors.name = "Description is required.";
-    if (Number(item.width) <= 0) rowErrors.width = "Width must be greater than zero.";
-    if (Number(item.height) <= 0) rowErrors.height = "Height must be greater than zero.";
+    const needsDimensions = requiresInspectionItemDimensions(item);
+    if (needsDimensions && Number(item.width) <= 0) rowErrors.width = "Width must be greater than zero.";
+    if (needsDimensions && Number(item.height) <= 0) rowErrors.height = "Height must be greater than zero.";
     if (Number(item.qty) <= 0) rowErrors.qty = "Quantity must be at least 1.";
     if (String(item.pricing_method || "").toLowerCase() === "blade") {
       if (!String(item.blade_glass_type || "").trim()) rowErrors.blade_glass_type = "Select a glass type.";
@@ -938,9 +956,13 @@ function SiteInspection() {
     return getProductSizeLimitWarnings(product || item, item);
   };
 
-  const renderBladeMeasurementOptions = (item, onFieldChange, rowIndex) => {
+  const getInspectionProductForItem = (item) => {
     const productId = normalizeProductId(item.product_id);
-    const product = products.find((candidate) => String(candidate._id || candidate.id) === productId) || item;
+    return products.find((candidate) => String(candidate._id || candidate.id) === productId) || null;
+  };
+
+  const getBladeMeasurementDetails = (item) => {
+    const product = getInspectionProductForItem(item) || item;
     if (String(product?.pricing_method || item.pricing_method).toLowerCase() !== "blade") return null;
 
     const glassTypes = Array.isArray(product?.blade_glass_types) && product.blade_glass_types.length
@@ -957,6 +979,78 @@ function SiteInspection() {
     const maximumBlades = Number(product?.maximum_blades ?? item.maximum_blades) || 0;
     const saleMode = item.sale_mode || product?.default_sale_mode || (sellBladesOnly ? "blades_only" : "frame");
     const selectedFrame = frameTypes.find((frame) => frame.name === (item.frame_type || product?.default_frame_type)) || frameTypes[0];
+    const selectedGlass = glassTypes.find((glass) => glass.name === (item.blade_glass_type || product?.default_blade_glass_type)) || glassTypes[0];
+    const bladeCount = Number(item.blade_count) || Number(selectedFrame?.blade_count) || minimumBlades;
+    const bladeRate = Number(selectedGlass?.price_per_blade ?? product?.price_per_blade ?? item.price_per_blade) || 0;
+    const framePrice = saleMode === "frame"
+      ? Number(item.custom_frame_size ? product?.custom_frame_price : item.frame_price || selectedFrame?.price) || 0
+      : 0;
+    const quantity = Number(item.qty ?? item.quantity ?? 1) || 1;
+    const configuredCharges = Array.isArray(product?.extra_charges) && product.extra_charges.length
+      ? product.extra_charges
+      : Array.isArray(item.extra_charges)
+        ? item.extra_charges
+        : [];
+    const itemCharges = Array.isArray(item.extra_charges) ? item.extra_charges : [];
+    const extraCharges = configuredCharges.map((charge, chargeIndex) => ({
+      ...charge,
+      ...(itemCharges[chargeIndex] || {}),
+      is_optional: charge?.is_optional,
+      is_active: charge?.is_active,
+      type: itemCharges[chargeIndex]?.type || charge?.type || "fixed",
+      label: itemCharges[chargeIndex]?.label || charge?.label || charge?.name || `Extra charge ${chargeIndex + 1}`,
+      name: itemCharges[chargeIndex]?.name || charge?.name || charge?.label || `Extra charge ${chargeIndex + 1}`,
+      amount: itemCharges[chargeIndex]?.amount ?? charge?.amount ?? 0,
+      is_selected: typeof itemCharges[chargeIndex]?.is_selected === "boolean"
+        ? itemCharges[chargeIndex].is_selected
+        : charge?.is_optional === true
+          ? charge?.is_default_selected !== false
+          : true,
+    })).filter((charge) => charge?.is_active !== false);
+
+    return {
+      product,
+      glassTypes,
+      frameTypes,
+      sellBladesOnly,
+      sellWithFrame,
+      minimumBlades,
+      maximumBlades,
+      saleMode,
+      selectedFrame,
+      selectedGlass,
+      bladeCount,
+      bladeRate,
+      framePrice,
+      quantity,
+      extraCharges,
+    };
+  };
+
+  const getBladeExtraChargeTotal = (charge, details) => {
+    if (!charge || charge.is_selected === false) return 0;
+    const amount = Number(charge.amount) || 0;
+    if (charge.type === "percentage") {
+      return ((details.bladeRate * details.bladeCount + details.framePrice) * details.quantity * amount) / 100;
+    }
+    if (charge.type === "per_blade") return details.bladeCount * amount * details.quantity;
+    return amount * details.quantity;
+  };
+
+  const renderBladeMeasurementOptions = (item, onFieldChange, rowIndex) => {
+    const details = getBladeMeasurementDetails(item);
+    if (!details) return null;
+    const {
+      product,
+      glassTypes,
+      frameTypes,
+      sellBladesOnly,
+      sellWithFrame,
+      minimumBlades,
+      maximumBlades,
+      saleMode,
+      selectedFrame,
+    } = details;
     const fieldClass = darkMode
       ? "min-w-0 w-full rounded-lg border border-slate-600 bg-[#122d42] px-2.5 py-2 text-xs text-slate-100 outline-none focus:border-red-500"
       : "min-w-0 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-900 outline-none focus:border-red-500";
@@ -1023,6 +1117,164 @@ function SiteInspection() {
           <p className={`text-[10px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{selectedFrame.blade_count} blades included in this frame</p>
         ) : null}
       </div>
+    );
+  };
+
+  const renderBladeMeasurementRow = (item, index, onFieldChange, onProductChange, onRemove, totals, mode = "new") => {
+    const details = getBladeMeasurementDetails(item);
+    if (!details) return null;
+    const {
+      glassTypes,
+      frameTypes,
+      minimumBlades,
+      maximumBlades,
+      saleMode,
+      selectedFrame,
+      bladeCount,
+      bladeRate,
+      framePrice,
+      quantity,
+      extraCharges,
+    } = details;
+    const inputClasses = darkMode
+      ? "min-w-0 w-full rounded-lg border border-slate-600 bg-[#122d42] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-red-500"
+      : "min-w-0 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-red-500";
+    const labelClasses = `mb-1.5 block text-[10px] font-bold ${darkMode ? "text-slate-400" : "text-slate-600"}`;
+    const mutedClass = darkMode ? "text-slate-400" : "text-slate-500";
+    const rowTotal = calculateRowSubtotal(item);
+    const productSelectId = `${mode}-blade-product-${index}`;
+    const glassSelectId = `${mode}-blade-glass-${index}`;
+    const frameSelectId = `${mode}-blade-frame-${index}`;
+    const quantityId = `${mode}-blade-qty-${index}`;
+    const bladeCountId = `${mode}-blade-count-${index}`;
+    const framePriceId = `${mode}-blade-frame-price-${index}`;
+
+    const updateExtraCharge = (chargeIndex, patch) => {
+      const nextCharges = extraCharges.map((charge, currentIndex) => (
+        currentIndex === chargeIndex ? { ...charge, ...patch } : charge
+      ));
+      onFieldChange(item.id, "extra_charges", nextCharges);
+    };
+
+    return (
+      <article key={item.id || `${mode}-blade-${index}`} className={`mt-4 rounded-xl border p-3 sm:p-4 ${darkMode ? "border-slate-700 bg-[#0d2033]" : "border-slate-200 bg-white"}`}>
+        <div className={`grid gap-3 text-[11px] font-bold ${darkMode ? "text-slate-300" : "text-slate-600"} md:grid-cols-[minmax(220px,1.6fr)_0.7fr_0.8fr_0.9fr_40px]`}>
+          <div>Product / Description</div>
+          <div className="hidden md:block">Qty</div>
+          <div className="hidden md:block">Price/blade (PHP)</div>
+          <div className="hidden md:block">Est. Total</div>
+          <div className="hidden md:block" />
+        </div>
+
+        <div className="mt-2 grid gap-3 md:grid-cols-[minmax(220px,1.6fr)_0.7fr_0.8fr_0.9fr_40px] md:items-start">
+          <label className="min-w-0">
+            <span className={`${labelClasses} md:hidden`}>Product / Description</span>
+            <select id={productSelectId} value={item.product_id || ""} onChange={(event) => onProductChange(item.id, event.target.value)} className={inputClasses}>
+              <option value="">-- Select Active Product --</option>
+              {products.map((product) => (
+                <option key={String(product._id || product.id)} value={String(product._id || product.id)}>{product.name}</option>
+              ))}
+            </select>
+            {getMeasurementLimitWarnings(item).map((warning) => <p key={warning} role="status" className={`mt-1 text-xs ${darkMode ? "text-amber-300" : "text-amber-800"}`}>{warning}</p>)}
+          </label>
+
+          <label className="min-w-0">
+            <span className={`${labelClasses} md:hidden`}>Qty</span>
+            <input id={quantityId} type="number" min="1" step="1" inputMode="numeric" value={quantity} onChange={(event) => onFieldChange(item.id, "qty", event.target.value)} className={`${inputClasses} text-right`} />
+          </label>
+
+          <div className={`flex min-h-[42px] items-center rounded-lg px-3 text-sm font-semibold ${darkMode ? "bg-[#122d42] text-slate-100" : "bg-white text-slate-900"}`}>
+            {formatCurrency(bladeRate)} /blade
+          </div>
+
+          <div className={`flex min-h-[42px] items-center justify-start rounded-lg px-3 text-sm font-black md:justify-end ${darkMode ? "text-white" : "text-slate-900"}`}>
+            {formatCurrency(rowTotal)}
+          </div>
+
+          <button type="button" onClick={() => onRemove(item.id)} className={`inline-flex size-9 items-center justify-center rounded-lg border transition ${darkMode ? "border-slate-600 text-slate-300 hover:bg-slate-700" : "border-slate-200 text-slate-500 hover:bg-slate-100"}`} aria-label={`Remove measurement ${index + 1}`} title="Remove measurement">
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_1fr]">
+          <label className="min-w-0">
+            <span className={labelClasses}>Glass type</span>
+            <select id={glassSelectId} aria-label={`Glass type for measurement ${index + 1}`} value={item.blade_glass_type || glassTypes[0]?.name || ""} onChange={(event) => onFieldChange(item.id, "blade_glass_type", event.target.value)} className={inputClasses}>
+              <option value="">Select glass</option>
+              {glassTypes.map((glass) => <option key={glass.name} value={glass.name}>{glass.name} - {formatCurrency(Number(glass.price_per_blade || 0))}/blade</option>)}
+            </select>
+          </label>
+
+          <label className="min-w-0">
+            <span className={labelClasses}>Frame</span>
+            <select id={frameSelectId} aria-label={`Frame type for measurement ${index + 1}`} value={item.frame_type || selectedFrame?.name || ""} onChange={(event) => {
+              const frame = frameTypes.find((candidate) => candidate.name === event.target.value);
+              onFieldChange(item.id, "sale_mode", "frame");
+              onFieldChange(item.id, "frame_type", event.target.value);
+              onFieldChange(item.id, "blade_count", Number(frame?.blade_count) || minimumBlades);
+              onFieldChange(item.id, "frame_price", Number(frame?.price) || 0);
+            }} className={inputClasses}>
+              {frameTypes.length === 0 && <option value="">No frame configured</option>}
+              {frameTypes.map((frame) => <option key={frame.name} value={frame.name}>{frame.name} - {Number(frame.blade_count) || 0} blades - {formatCurrency(Number(frame.price || 0))}</option>)}
+            </select>
+          </label>
+
+          <label className="min-w-0">
+            <span className={labelClasses}>Number of blades</span>
+            <input id={bladeCountId} type="number" min={minimumBlades} max={maximumBlades || undefined} step="1" inputMode="numeric" value={bladeCount} onChange={(event) => onFieldChange(item.id, "blade_count", event.target.value)} className={`${inputClasses} text-right`} />
+            <span className={`mt-1 block text-[11px] ${mutedClass}`}>
+              {maximumBlades > 0 ? `Minimum: ${minimumBlades}, maximum: ${maximumBlades}` : `Minimum: ${minimumBlades}`}
+            </span>
+          </label>
+        </div>
+
+        {saleMode === "frame" && (
+          <div className="mt-3 max-w-[210px]">
+            <label className="block">
+              <span className={labelClasses}>Frame price (PHP)</span>
+              <input id={framePriceId} type="number" min="0" step="0.01" inputMode="decimal" value={framePrice} onChange={(event) => onFieldChange(item.id, "frame_price", event.target.value)} className={`${inputClasses} text-right`} />
+            </label>
+            {selectedFrame?.price !== undefined && <span className={`mt-1 block text-[11px] ${mutedClass}`}>Standard: {formatCurrency(Number(selectedFrame.price) || 0)}</span>}
+          </div>
+        )}
+
+        {extraCharges.length > 0 && (
+          <div className={`mt-4 border-t border-dashed pt-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+            <p className={`text-[11px] font-bold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+              Extra charges <span className={`font-medium ${mutedClass}`}>(this order only - set an amount to 0 to remove)</span>
+            </p>
+            <div className="mt-2 space-y-2">
+              {extraCharges.map((charge, chargeIndex) => {
+                const chargeTotal = getBladeExtraChargeTotal(charge, details);
+                return (
+                  <div key={`${charge.name || charge.label}-${chargeIndex}`} className="grid gap-2 md:grid-cols-[minmax(180px,1fr)_80px_120px_120px] md:items-center">
+                    <label className={`flex min-w-0 items-center gap-3 text-sm ${darkMode ? "text-slate-200" : "text-slate-800"}`}>
+                      <input
+                        type="checkbox"
+                        checked={charge.is_selected !== false}
+                        onChange={(event) => updateExtraCharge(chargeIndex, { is_selected: event.target.checked })}
+                        className="accent-red-700"
+                      />
+                      <span className="min-w-0 truncate">{charge.label || charge.name}</span>
+                      {charge.is_optional === true && <span className={`rounded-full px-2 py-0.5 text-[10px] ${darkMode ? "bg-slate-700 text-slate-300" : "bg-slate-100 text-slate-500"}`}>optional</span>}
+                    </label>
+                    <span className={`text-xs ${mutedClass}`}>
+                      {charge.type === "percentage" ? "% rate" : charge.type === "per_blade" ? "per blade" : "PHP fixed"}
+                    </span>
+                    <input type="number" min="0" step="0.01" inputMode="decimal" value={charge.amount ?? 0} onChange={(event) => updateExtraCharge(chargeIndex, { amount: event.target.value })} className={`${inputClasses} py-2 text-right`} aria-label={`${charge.label || charge.name} amount`} />
+                    <div className={`text-right text-sm font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{formatCurrency(chargeTotal)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className={`mt-4 flex items-center justify-end gap-3 border-t pt-3 text-sm ${darkMode ? "border-slate-700 text-slate-300" : "border-slate-200 text-slate-600"}`}>
+          <span>Total:</span>
+          <span className={`text-lg font-black ${darkMode ? "text-white" : "text-slate-900"}`}>{formatCurrency(totals.totalEstimate)}</span>
+        </div>
+      </article>
     );
   };
 
@@ -1120,7 +1372,7 @@ function SiteInspection() {
           measurement_unit: item.measurement_unit || item.measurementUnit || item.dimensions?.unit || "in",
           width: Number(item.width) || 0,
           height: Number(item.height) || 0,
-          area: Number(item.area) || 0,
+          area: requiresInspectionItemDimensions(item) ? Number(item.area) || 0 : 0,
           estimation_mode: item.estimation_mode || 'auto',
           is_estimate: true,
           estimated_price: getInspectionItemTotal(item),
@@ -1204,9 +1456,19 @@ function SiteInspection() {
       items: prev.items.map((item) => {
         if (item.id !== id) return item;
         const updated = { ...item, [field]: value };
+        if (field === "sale_mode" && value === "blades_only") {
+          updated.custom_frame_size = false;
+          updated.frame_price = 0;
+        }
+        if (field === "custom_frame_size" && !value) {
+          updated.width = isInspectionBladeItem(updated) ? 0 : updated.width;
+          updated.height = isInspectionBladeItem(updated) ? 0 : updated.height;
+        }
         return {
           ...updated,
-          area: calculateMeasurementArea(updated.width, updated.height, updated.qty, updated.measurement_unit || updated.measurementUnit || "in"),
+          area: requiresInspectionItemDimensions(updated)
+            ? calculateMeasurementArea(updated.width, updated.height, updated.qty, updated.measurement_unit || updated.measurementUnit || "in")
+            : 0,
         };
       }),
     }));
@@ -1258,13 +1520,15 @@ function SiteInspection() {
           extra_charges: productSnapshot.extra_charges,
           size_limits: productSnapshot.size_limits,
           measurement_unit: item.measurement_unit || item.measurementUnit || selectedProduct?.measurement_unit || "in",
-          width: productSnapshot.width || item.width || 1,
-          height: productSnapshot.height || item.height || 1,
+          width: requiresInspectionItemDimensions(productSnapshot) ? productSnapshot.width || item.width || 1 : 0,
+          height: requiresInspectionItemDimensions(productSnapshot) ? productSnapshot.height || item.height || 1 : 0,
           unit: selectedProduct?.unit || item.unit || "sqft",
         };
         return {
           ...updated,
-          area: calculateMeasurementArea(updated.width, updated.height, updated.qty, updated.measurement_unit),
+          area: requiresInspectionItemDimensions(updated)
+            ? calculateMeasurementArea(updated.width, updated.height, updated.qty, updated.measurement_unit)
+            : 0,
           estimation_mode: item.estimation_mode || "auto",
         };
       }),
@@ -1277,9 +1541,19 @@ function SiteInspection() {
       items: (prev.items || []).map((item) => {
         if (item.id !== id) return item;
         const updated = { ...item, [field]: value };
+        if (field === "sale_mode" && value === "blades_only") {
+          updated.custom_frame_size = false;
+          updated.frame_price = 0;
+        }
+        if (field === "custom_frame_size" && !value) {
+          updated.width = isInspectionBladeItem(updated) ? 0 : updated.width;
+          updated.height = isInspectionBladeItem(updated) ? 0 : updated.height;
+        }
         return {
           ...updated,
-          area: calculateMeasurementArea(updated.width, updated.height, updated.qty ?? updated.quantity, updated.measurement_unit || updated.measurementUnit || updated.dimensions?.unit || "in"),
+          area: requiresInspectionItemDimensions(updated)
+            ? calculateMeasurementArea(updated.width, updated.height, updated.qty ?? updated.quantity, updated.measurement_unit || updated.measurementUnit || updated.dimensions?.unit || "in")
+            : 0,
         };
       }),
     }));
@@ -1325,13 +1599,15 @@ function SiteInspection() {
           extra_charges: productSnapshot.extra_charges,
           size_limits: productSnapshot.size_limits,
           measurement_unit: item.measurement_unit || item.measurementUnit || item.dimensions?.unit || selectedProduct?.measurement_unit || "in",
-          width: productSnapshot.width || item.width || 1,
-          height: productSnapshot.height || item.height || 1,
+          width: requiresInspectionItemDimensions(productSnapshot) ? productSnapshot.width || item.width || 1 : 0,
+          height: requiresInspectionItemDimensions(productSnapshot) ? productSnapshot.height || item.height || 1 : 0,
           unit: selectedProduct?.unit || item.unit || "sqft",
         };
         return {
           ...updated,
-          area: calculateMeasurementArea(updated.width, updated.height, updated.qty ?? updated.quantity, updated.measurement_unit),
+          area: requiresInspectionItemDimensions(updated)
+            ? calculateMeasurementArea(updated.width, updated.height, updated.qty ?? updated.quantity, updated.measurement_unit)
+            : 0,
           estimation_mode: item.estimation_mode || "auto",
         };
       }),
@@ -2347,7 +2623,7 @@ function SiteInspection() {
             measurement_unit: item.measurement_unit || item.measurementUnit || item.dimensions?.unit || "in",
             width: Number(item.width) || 0,
             height: Number(item.height) || 0,
-            area: Number(item.area) || 0,
+            area: requiresInspectionItemDimensions(item) ? Number(item.area) || 0 : 0,
             estimated_price: item.estimation_mode === "manual"
               ? Number(item.manual_estimated_total) || calculateRowSubtotal(item)
               : calculateRowSubtotal(item),
@@ -2733,7 +3009,7 @@ function SiteInspection() {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => handleSearchChange(e.target.value)}
-                  placeholder="Search inspections..."
+                          placeholder="+639171234567 or 09171234567"
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-12 pr-4 text-sm text-slate-700 outline-none transition focus:border-red-400 focus:bg-white"
                 />
               </div>
@@ -2836,9 +3112,8 @@ function SiteInspection() {
                           <tr
                             key={inspection._id || inspection.id || index}
                             data-notification-record-id={String(inspection._id || inspection.id || "")}
-                            className={highlightedNotificationRecordId === String(inspection._id || inspection.id || "")
-                              ? "border-t border-amber-400 bg-amber-100 ring-2 ring-inset ring-amber-500"
-                              : darkMode ? "border-t border-slate-700 bg-slate-900/20 hover:bg-slate-800/50" : "border-t border-slate-200 bg-white hover:bg-slate-50"}
+                            data-notification-target="inspection"
+                            className={`border-t ${highlightedNotificationRecordId === String(inspection._id || inspection.id || "") ? "notification-target-highlight" : ""} ${darkMode ? "border-slate-700 bg-slate-900/20 hover:bg-slate-800/50" : "border-slate-200 bg-white hover:bg-slate-50"}`}
                           >
                             <td className="px-2 py-3"><div className="min-w-0"><div className="truncate text-[12px] font-bold text-slate-800 dark:text-slate-100">{clientName}</div><div className="mt-1 text-[10px] text-slate-500">{phone}</div></div></td>
                             <td className="px-2 py-3 text-[12px] text-slate-700">{trackingId}</td>
@@ -2876,7 +3151,8 @@ function SiteInspection() {
                   <div
                     key={inspection._id || inspection.id || index}
                     data-notification-record-id={String(inspection._id || inspection.id || "")}
-                    className={`rounded-2xl border p-3 transition-colors ${highlightedNotificationRecordId === String(inspection._id || inspection.id || "") ? "border-amber-500 bg-amber-100 ring-2 ring-amber-400" : "border-gray-200 bg-gray-50"}`}
+                    data-notification-target="inspection"
+                    className={`rounded-2xl border p-3 transition-colors ${highlightedNotificationRecordId === String(inspection._id || inspection.id || "") ? "notification-target-highlight" : "border-gray-200 bg-gray-50"}`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -3015,9 +3291,9 @@ function SiteInspection() {
                         <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Client Number <span className="text-red-400">*</span></label>
                         <input
                           type="tel"
-                          inputMode="numeric"
-                          pattern="[0-9]*"
-                          placeholder="e.g. 09171234567"
+                          inputMode="tel"
+                          maxLength={13}
+                          placeholder="+639171234567 or 09171234567"
                           className={selectedCustomer ? lockedFieldClass : fieldClass}
                           value={normalizePhoneInput(newInspection.phone)}
                           onChange={(e) => handleInspectionFieldChange("phone", e.target.value)}
@@ -3237,18 +3513,22 @@ function SiteInspection() {
                     <p className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Add or edit measurement rows. Totals update in real time.</p>
 
                     <div className={`mt-4 hidden overflow-x-auto rounded-xl border md:block ${darkMode ? "border-slate-700 bg-[#122d42]" : "border-slate-200 bg-white"}`}>
-                      <div className={`grid min-w-[760px] grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 px-3 py-3 text-[10px] font-bold uppercase tracking-[0.1em] ${darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-600"}`}>
-                        <div>Product / Description</div>
-                        <div>Width</div>
-                        <div>Height</div>
-                        <div>Unit</div>
-                        <div>Qty</div>
-                        <div>Rate / Unit</div>
-                        <div>Total</div>
-                      </div>
+                      {!(newInspection.items || []).some((item) => getBladeMeasurementDetails(item)) && (
+                        <div className={`grid min-w-[760px] grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 px-3 py-3 text-[10px] font-bold uppercase tracking-[0.1em] ${darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-600"}`}>
+                          <div>Product / Description</div>
+                          <div>Width</div>
+                          <div>Height</div>
+                          <div>Unit</div>
+                          <div>Qty</div>
+                          <div>Rate / Unit</div>
+                          <div>Total</div>
+                        </div>
+                      )}
 
                       {(newInspection.items || []).map((item, index) => {
                         const rowSubtotal = calculateRowSubtotal(item);
+                        const bladeRow = renderBladeMeasurementRow(item, index, handleItemFieldChange, handleItemProductChange, removeItemRow, computeTotals(), "new");
+                        if (bladeRow) return bladeRow;
                         return (
                           <div key={item.id} className={`grid min-w-[760px] grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 border-t p-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                             <div className="flex flex-col items-start gap-2">
@@ -3351,6 +3631,8 @@ function SiteInspection() {
                     <div className="mt-4 space-y-3 md:hidden">
                       {(newInspection.items || []).map((item, index) => {
                         const rowSubtotal = calculateRowSubtotal(item);
+                        const bladeRow = renderBladeMeasurementRow(item, index, handleItemFieldChange, handleItemProductChange, removeItemRow, computeTotals(), "new-mobile");
+                        if (bladeRow) return bladeRow;
                         const inputClasses = darkMode
                           ? "min-w-0 w-full rounded-lg border border-slate-600 bg-[#122d42] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-red-500"
                           : "min-w-0 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-red-500";
@@ -3720,7 +4002,10 @@ function SiteInspection() {
               <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/45 px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:items-center sm:p-5">
                 <div
                   data-notification-record-id={String(orderId || "")}
-                  className={`mobile-fullscreen-dialog flex max-h-[calc(100dvh-1.5rem)] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-[18px] border transition-shadow ${modalShellClass} ${highlightedNotificationRecordId === String(orderId || "") ? "ring-4 ring-amber-400" : ""}`}
+                  data-notification-target="contract"
+                  role="dialog"
+                  aria-modal="true"
+                  className={`mobile-fullscreen-dialog flex max-h-[calc(100dvh-1.5rem)] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-[18px] border transition-shadow ${modalShellClass} ${highlightedNotificationRecordId === String(orderId || "") ? "notification-target-highlight" : ""}`}
                 >
                   <div className={`flex shrink-0 flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-4 ${darkMode ? "border-b border-slate-700 bg-[#0b2338]" : "border-b border-slate-200 bg-white"}`}>
                     <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-4">
@@ -4029,8 +4314,8 @@ function SiteInspection() {
                         <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Client Number</label>
                         <input
                           type="tel"
-                          inputMode="numeric"
-                          pattern="[0-9]*"
+                          inputMode="tel"
+                          maxLength={13}
                           className={editInspection.isOnlineCustomer ? lockedFieldClass : fieldClass}
                           value={normalizePhoneInput(editInspection.phone)}
                           onChange={(e) => handleEditChange("phone", e.target.value)}
@@ -4238,18 +4523,22 @@ function SiteInspection() {
                     </h3>
 
                     <div className={`mt-4 hidden overflow-hidden rounded-xl border md:block ${darkMode ? "border-slate-700 bg-[#122d42]" : "border-slate-200 bg-white"}`}>
-                      <div className={`grid grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 px-3 py-3 text-[11px] font-black uppercase tracking-[0.12em] ${darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-600"}`}>
-                        <div>Product / Description</div>
-                        <div>Width</div>
-                        <div>Height</div>
-                        <div>Unit</div>
-                        <div>Qty</div>
-                        <div>Rate / Unit</div>
-                        <div>Total</div>
-                      </div>
+                      {!(editInspection.items || []).some((item) => getBladeMeasurementDetails(item)) && (
+                        <div className={`grid grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 px-3 py-3 text-[11px] font-black uppercase tracking-[0.12em] ${darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-600"}`}>
+                          <div>Product / Description</div>
+                          <div>Width</div>
+                          <div>Height</div>
+                          <div>Unit</div>
+                          <div>Qty</div>
+                          <div>Rate / Unit</div>
+                          <div>Total</div>
+                        </div>
+                      )}
 
                       {(editInspection.items || []).map((item, index) => {
                         const rowSubtotal = calculateRowSubtotal(item);
+                        const bladeRow = renderBladeMeasurementRow(item, index, handleEditItemFieldChange, handleEditItemProductChange, removeEditItemRow, computeEditTotals(), "edit");
+                        if (bladeRow) return bladeRow;
                         return (
                           <div key={item.id || `${item.product_id || "row"}-${Math.random()}`} className={`grid grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 border-t p-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                             <div className="flex flex-col items-start gap-2">
@@ -4353,6 +4642,8 @@ function SiteInspection() {
                     <div className="mt-4 space-y-3 md:hidden">
                       {(editInspection.items || []).map((item, index) => {
                         const rowSubtotal = calculateRowSubtotal(item);
+                        const bladeRow = renderBladeMeasurementRow(item, index, handleEditItemFieldChange, handleEditItemProductChange, removeEditItemRow, computeEditTotals(), "edit-mobile");
+                        if (bladeRow) return bladeRow;
                         const inputClasses = darkMode
                           ? "min-w-0 w-full rounded-lg border border-slate-600 bg-[#122d42] px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-red-500"
                           : "min-w-0 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-red-500";

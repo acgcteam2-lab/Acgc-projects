@@ -4,7 +4,7 @@ import approvedStamp from "@/assets/approved.png";
 import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { getFinalProjectCost, getRequiredDownpayment } from "@/lib/orderPricing";
 
-function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, onRegenerate, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false }) {
+function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, onRegenerate, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false, notificationRecordId = null }) {
   const darkMode = false;
   if (!isOpen || !inspection || !contractData) return null;
 
@@ -101,7 +101,14 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
 
   return (
     <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-1.5">
-      <div className={shellClass}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Service Contract"
+        data-notification-record-id={notificationRecordId || undefined}
+        data-notification-target={notificationRecordId ? "contract" : undefined}
+        className={`${shellClass} ${notificationRecordId ? "notification-target-highlight" : ""}`}
+      >
         <div className={headerClass}>
           <div>
             <h2 className={titleClass}>Service Contract</h2>

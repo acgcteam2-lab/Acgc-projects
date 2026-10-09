@@ -65,6 +65,7 @@ import {
 } from "@/api/orders";
 import { uploadFiles } from "@/api/uploads";
 import ContractModal from "../../components/ContractModal";
+import ProductPriceEstimator from "@/components/ProductPriceEstimator";
 import { formatOrderItemMeasurements } from "@/components/OrderProgressTimeline";
 import OrderTimelineModal from "@/components/OrderTimelineModal";
 import { calculateEstimate } from "@/lib/estimator";
@@ -87,6 +88,7 @@ import {
 import { getPaymentSummary, isPaymentProofConfirmed } from "@/pages/Transactions/paymentProofUtils";
 import { buildProductPriceSnapshot, getDefaultExtraChargeSelections, getProductLineTotal } from "@/lib/productPricing";
 import { getFinalProjectCost } from "@/lib/orderPricing";
+import { getPhilippinePhoneError, isValidPhilippinePhone, normalizePhoneInput } from "@/lib/phoneValidation";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
 
 const PRODUCT_IMAGE_PLACEHOLDER =
@@ -339,6 +341,7 @@ function CustomerDashboard() {
 
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutMessage, setCheckoutMessage] = useState("");
+  const [checkoutMessageFading, setCheckoutMessageFading] = useState(false);
   const [checkoutError, setCheckoutError] = useState("");
   const [orderRequestMessage, setOrderRequestMessage] = useState("");
   const [orderRequestLoading, setOrderRequestLoading] = useState(false);
@@ -348,6 +351,7 @@ function CustomerDashboard() {
   const [contractActionOrderId, setContractActionOrderId] = useState(null);
   const [showContractModal, setShowContractModal] = useState(false);
   const [contractPreviewOrder, setContractPreviewOrder] = useState(null);
+  const [contractNotificationRecordId, setContractNotificationRecordId] = useState(null);
   const autoOpenedContractRef = useRef("");
   const [contractConfirmModal, setContractConfirmModal] = useState({
     open: false,
@@ -408,6 +412,7 @@ function CustomerDashboard() {
   const [orderPage, setOrderPage] = useState(1);
   const [orderViewMode, setOrderViewMode] = useState("view2");
   const [selectedOrderForModal, setSelectedOrderForModal] = useState(null);
+  const [timelineNotificationTarget, setTimelineNotificationTarget] = useState(null);
   const [contractSummaryExpanded, setContractSummaryExpanded] = useState(true);
   const [contractHistoryTab, setContractHistoryTab] = useState("accepted");
   const [contractPage, setContractPage] = useState(1);
@@ -543,6 +548,17 @@ function CustomerDashboard() {
   const [permissionNotice, setPermissionNotice] = useState(null);
   const [maintenanceCountdown, setMaintenanceCountdown] = useState(10);
   const permissionNoticeTimer = useRef(null);
+
+  useEffect(() => {
+    if (!checkoutMessage) return undefined;
+    const fadeTimer = window.setTimeout(() => setCheckoutMessageFading(true), 5000);
+    const dismissTimer = window.setTimeout(() => setCheckoutMessage(""), 5500);
+
+    return () => {
+      window.clearTimeout(fadeTimer);
+      window.clearTimeout(dismissTimer);
+    };
+  }, [checkoutMessage]);
   const customerNotificationItems = orders.flatMap((order) => {
     const orderId = order._id || order.id || order.tracking;
     const status = normalizeOrderStatusKey(order?.status);
@@ -1490,7 +1506,9 @@ function CustomerDashboard() {
     const pricingMethod = String(item?.pricing_method || item?.unit || "").toLowerCase();
     const isBladeProduct = pricingMethod === "blade" || pricingMethod === "per_blade";
     const needsCustomFrameDimensions = isBladeProduct && item?.sale_mode === "frame" && Boolean(item?.custom_frame_size);
-    return isBladeProduct && !needsCustomFrameDimensions || areOrderItemDimensionsValid(item?.dimensions);
+    if (!isBladeProduct) return areOrderItemDimensionsValid(item?.dimensions);
+    if (needsCustomFrameDimensions && !areOrderItemDimensionsValid(item?.dimensions)) return false;
+    return Number(item?.dimensions?.quantity) > 0 && Number(item?.blade_count) > 0;
   };
 
   const getOrderItemDimensionText = (itemOrDimensions) => {
@@ -1527,13 +1545,13 @@ function CustomerDashboard() {
       customized: dimensions.customized,
       area: Number(options.area) || 0,
       notes: options.notes || "",
-      blade_glass_type: options.blade_glass_type || product?.default_blade_glass_type || "",
-      sale_mode: options.sale_mode || product?.default_sale_mode || "blades_only",
-      frame_type: options.frame_type || product?.default_frame_type || "",
-      custom_frame_size: Boolean(options.custom_frame_size),
-      frame_price: options.frame_price == null ? undefined : Number(options.frame_price) || 0,
+      blade_glass_type: options.blade_glass_type || product?.blade_glass_type || product?.default_blade_glass_type || "",
+      sale_mode: options.sale_mode || product?.sale_mode || product?.default_sale_mode || "blades_only",
+      frame_type: options.frame_type || product?.frame_type || product?.default_frame_type || "",
+      custom_frame_size: Boolean(options.custom_frame_size ?? product?.custom_frame_size),
+      frame_price: options.frame_price == null ? product?.frame_price : Number(options.frame_price) || 0,
       blade_count: Number(options.blade_count) || Number(product?.blade_count) || Number(product?.minimum_blades) || 1,
-      extra_charges: options.extra_charges || getDefaultExtraChargeSelections(product),
+      extra_charges: options.extra_charges || product?.extra_charges || getDefaultExtraChargeSelections(product),
       estimated_price: Number(options.estimated_price) || 0,
       is_estimate: Boolean(options.is_estimate || dimensions.customized),
     };
@@ -1557,7 +1575,7 @@ function CustomerDashboard() {
       sale_mode: defaultSaleMode === "frame" && !product?.sell_with_frame ? "blades_only" : defaultSaleMode,
       frame_type: defaultFrame?.name || "",
       custom_frame_size: defaultSaleMode === "frame" && frameTypes.length === 0 && Boolean(product?.allow_custom_frame_size),
-      blade_count: defaultBladeCount,
+      blade_count: product?.customer_can_choose_blade_count ? "" : defaultBladeCount,
       extra_charges: getDefaultExtraChargeSelections(product),
     };
   };
@@ -1854,6 +1872,10 @@ function CustomerDashboard() {
   const validateDeliveryConfirmForm = () => {
     if (!deliveryConfirmForm.street_address.trim() || !deliveryConfirmForm.phone.trim()) {
       setDeliveryConfirmError("Please complete your delivery information before proceeding.");
+      return false;
+    }
+    if (!isValidPhilippinePhone(deliveryConfirmForm.phone)) {
+      setDeliveryConfirmError(getPhilippinePhoneError(deliveryConfirmForm.phone));
       return false;
     }
     setDeliveryConfirmError("");
@@ -2297,7 +2319,7 @@ function CustomerDashboard() {
     const { name, value } = e.target;
     setDeliveryConfirmForm((prev) => ({
       ...prev,
-      [name]: value,
+      [name]: name === "phone" ? normalizePhoneInput(value) : value,
     }));
   };
 
@@ -2338,7 +2360,7 @@ function CustomerDashboard() {
 
   const handleProfileChange = (e) => {
     const { name, value } = e.target;
-    setProfileForm((prev) => ({ ...prev, [name]: value }));
+    setProfileForm((prev) => ({ ...prev, [name]: name === "phone" ? normalizePhoneInput(value) : value }));
   };
 
   const profileHasChanges = () => {
@@ -2362,6 +2384,11 @@ function CustomerDashboard() {
   };
 
   const performProfileSave = async () => {
+    if (profileForm.phone.trim() && !isValidPhilippinePhone(profileForm.phone)) {
+      setProfileError(getPhilippinePhoneError(profileForm.phone));
+      return false;
+    }
+
     if (!profileForm.current_password) {
       setProfileError("Please enter your current password to save profile changes.");
       return false;
@@ -2674,6 +2701,10 @@ function CustomerDashboard() {
 
   const handleConfirmBatchOrder = async () => {
     if (!batchOrderAgreed) return;
+    if (!isValidPhilippinePhone(batchOrderForm.phone)) {
+      setCheckoutError(getPhilippinePhoneError(batchOrderForm.phone));
+      return;
+    }
     setCheckoutLoading(true);
     try {
       await cartSaveQueueRef.current;
@@ -2693,6 +2724,13 @@ function CustomerDashboard() {
           estimated_price: item.estimated_price,
           notes: batchOrderForm.notes.trim() || item.notes,
           is_estimate: item.is_estimate,
+          blade_glass_type: item.blade_glass_type,
+          sale_mode: item.sale_mode,
+          frame_type: item.frame_type,
+          custom_frame_size: item.custom_frame_size,
+          frame_price: item.frame_price,
+          blade_count: item.blade_count,
+          extra_charges: item.extra_charges,
         })
       );
 
@@ -2730,6 +2768,7 @@ function CustomerDashboard() {
         console.warn("Unable to refresh the cart after checkout; keeping the server-confirmed removal locally.", refreshError);
       }
 
+      setCheckoutMessageFading(false);
       setCheckoutMessage(getOrderSubmissionMessage(response, "Order placed"));
       addCreatedOrderToMyOrders(response.order);
       setShowBatchSuccessModal(true);
@@ -2999,6 +3038,27 @@ function CustomerDashboard() {
     return formatOrderItemMeasurements(item);
   };
 
+  const isBladePricingProduct = (product) =>
+    ["blade", "per_blade"].includes(String(product?.pricing_method || product?.unit || "").toLowerCase());
+
+  const getBladeOrderSummaryText = (product, selections = {}, quantity = 1) => {
+    if (!isBladePricingProduct(product)) return "";
+
+    return formatOrderItemMeasurements({
+      ...product,
+      pricing_method: product?.pricing_method || "blade",
+      unit: product?.unit || "per_blade",
+      quantity: Math.max(1, Number(quantity) || 1),
+      blade_glass_type: selections.blade_glass_type || product?.default_blade_glass_type || "",
+      sale_mode: selections.sale_mode || product?.default_sale_mode || "blades_only",
+      frame_type: selections.frame_type || product?.default_frame_type || "",
+      custom_frame_size: Boolean(selections.custom_frame_size),
+      blade_count: Number(selections.blade_count) || Number(product?.blade_count) || Number(product?.minimum_blades) || 1,
+      blade_frame_types: product?.blade_frame_types || [],
+      minimum_blades: product?.minimum_blades,
+    });
+  };
+
   const getOrderMeasurementRows = (order) => {
     if (!order || !Array.isArray(order.items)) return [];
 
@@ -3082,15 +3142,17 @@ function CustomerDashboard() {
     };
   };
 
-  const openContractModal = (order) => {
+  const openContractModal = (order, notificationRecordId = null) => {
     if (!order || !canShowContractForOrder(order)) return;
     setContractPreviewOrder(order);
+    setContractNotificationRecordId(notificationRecordId);
     setShowContractModal(true);
   };
 
   const closeContractModal = () => {
     setShowContractModal(false);
     setContractPreviewOrder(null);
+    setContractNotificationRecordId(null);
   };
 
   const contractPreviewData = contractPreviewOrder
@@ -3238,10 +3300,30 @@ function CustomerDashboard() {
   const pageStart = (safeOrderPage - 1) * ORDER_PAGE_SIZE;
   const pagedFilteredOrders = filteredOrders.slice(pageStart, pageStart + ORDER_PAGE_SIZE);
   const displayedOrders = isMobile ? filteredOrders : pagedFilteredOrders;
+  const getOrderSortTimestamp = (order) => {
+    const timestamp = new Date(order?.updatedAt || order?.createdAt || 0).getTime();
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  };
+  const recentOrders = [...orders]
+    .sort((firstOrder, secondOrder) => getOrderSortTimestamp(secondOrder) - getOrderSortTimestamp(firstOrder))
+    .slice(0, 3);
 
-  const openOrderDetailsFromNotification = (order, notificationId = null) => {
+  const openOrderDetailsFromNotification = (order, notificationOrId = null) => {
     const orderIdentifier = getOrderIdentifier(order);
+    const notification = notificationOrId && typeof notificationOrId === "object" ? notificationOrId : null;
+    const notificationId = notification?.notificationId || notificationOrId;
     markCustomerNotificationRead(notificationId);
+
+    if (notification?.notificationType === "contract") {
+      setContractHistoryTab("accepted");
+      setWarrantyHistoryTab(null);
+      setTimelineNotificationTarget(null);
+      setSelectedOrderForModal(null);
+      setActiveTab("contracts");
+      openContractModal(order, orderIdentifier);
+      return;
+    }
+
     const myOrders = orders.filter((entry) =>
       !["installation", "completed", "cancelled"].includes(normalizeOrderStatus(entry?.status)),
     );
@@ -3255,7 +3337,13 @@ function CustomerDashboard() {
     setTrackingNumber("");
     setOrderFilter(targetOrders === myOrders ? "order" : "all");
     setOrderPage(orderIndex >= 0 ? Math.floor(orderIndex / ORDER_PAGE_SIZE) + 1 : 1);
-    setSelectedOrderForModal(null);
+    const isDelayNotification = notification?.notificationType === "delay";
+    setTimelineNotificationTarget(isDelayNotification ? {
+      stageKey: notification.delayStageKey,
+      stageName: notification.delayStageName,
+      itemIndex: notification.delayItemIndex,
+    } : null);
+    setSelectedOrderForModal(isDelayNotification ? order : null);
     setExpandedOrderId(orderIdentifier);
     setHighlightedOrderId(orderIdentifier);
     setActiveTab("orders");
@@ -3270,17 +3358,18 @@ function CustomerDashboard() {
 
     let attempts = 0;
     const scrollInterval = window.setInterval(() => {
-      const target = Array.from(document.querySelectorAll("[data-notification-record-id]"))
-        .find((element) => element.dataset.notificationRecordId === highlightedOrderId);
+      const candidates = Array.from(document.querySelectorAll("[data-notification-record-id]"))
+        .filter((element) => element.dataset.notificationRecordId === highlightedOrderId);
+      const target = candidates.find((element) => element.closest('[role="dialog"]')) || candidates[0];
       if (target) {
-        target.scrollIntoView({ behavior: "smooth", block: "center" });
+        target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
         window.clearInterval(scrollInterval);
       } else if (attempts >= 20) {
         window.clearInterval(scrollInterval);
       }
       attempts += 1;
     }, 100);
-    const timeoutId = window.setTimeout(() => setHighlightedOrderId(null), 5000);
+    const timeoutId = window.setTimeout(() => setHighlightedOrderId(null), 3500);
 
     return () => {
       window.clearInterval(scrollInterval);
@@ -3413,12 +3502,15 @@ function CustomerDashboard() {
   const orderReviewMeasurementText = reviewOrderMode === "orderNow"
     ? (() => {
         if (!orderNowProduct) return `Qty: ${Math.max(1, Number(orderNowQuantity) || 1)}`;
+        const quantity = Math.max(1, Number(orderNowQuantity) || 1);
+        if (isBladePricingProduct(orderNowProduct)) {
+          return getBladeOrderSummaryText(orderNowProduct, getDefaultBladeSelections(orderNowProduct), quantity) || `Qty: ${quantity}`;
+        }
         const defaultDims = getProductDefaultDimensions(orderNowProduct, Math.max(1, Number(orderNowQuantity) || 1));
         if (!defaultDims || Number(defaultDims.width) <= 0 || Number(defaultDims.height) <= 0) {
           return `Qty: ${Math.max(1, Number(orderNowQuantity) || 1)}`;
         }
 
-        const quantity = Math.max(1, Number(orderNowQuantity) || 1);
         const unit = defaultDims.unit || "in";
         const area = Number(defaultDims.area) > 0
           ? Number(defaultDims.area)
@@ -3440,13 +3532,15 @@ function CustomerDashboard() {
           area,
         });
       })()
-    : getConfirmationItemDimensionText({
-        width: estimateWidth,
-        height: estimateHeight,
-        quantity: estimateQuantity,
-        measurementUnit: estimateForm.unit,
-        area: estimateArea,
-      });
+    : isBladePricingProduct(cartDecisionProduct)
+      ? getBladeOrderSummaryText(cartDecisionProduct, estimateForm, estimateQuantity) || `Qty: ${estimateQuantity}`
+      : getConfirmationItemDimensionText({
+          width: estimateWidth,
+          height: estimateHeight,
+          quantity: estimateQuantity,
+          measurementUnit: estimateForm.unit,
+          area: estimateArea,
+        });
   const estimateCustomizationFee = cartDecisionProduct?.customization ? Number(cartDecisionProduct.customization_fee || 0) : 0;
   const estimateInstallationFee = Number(cartDecisionProduct?.installation_fee || 0);
   const estimateSubtotal = Math.max(0, estimateTotalCost - estimateCustomizationFee);
@@ -3606,7 +3700,7 @@ function CustomerDashboard() {
             className="flex min-w-0 items-center gap-2 px-1 py-0.5 text-left transition duration-200 sm:gap-3 sm:px-1.5"
             aria-label="Go to ACGC Services home"
           >
-            <img src={logo} alt="ACGC Aluminum Services" className="h-8 w-8 shrink-0 object-contain sm:h-12 sm:w-12 lg:h-14 lg:w-14" />
+            <img src={logo} alt="ACGC Aluminum Services" className={`h-8 w-8 shrink-0 object-contain sm:h-12 sm:w-12 lg:h-14 lg:w-14 ${darkMode ? "drop-shadow-[0_0_4px_rgba(255,255,255,0.7)]" : ""}`} />
             <div className="min-w-0">
               <h1 className={`whitespace-nowrap text-[15px] font-semibold ${darkMode ? "text-red-400" : "text-red-500"} sm:text-lg lg:text-xl`}>
                 ACGC Services
@@ -3837,7 +3931,7 @@ function CustomerDashboard() {
                               <button
                                 key={order.notificationId}
                                 onClick={() => {
-                                  openOrderDetailsFromNotification(order, order.notificationId);
+                                  openOrderDetailsFromNotification(order, order);
                                   setNotificationsOpen(false);
                                 }}
                                 className={`group w-full border-l-2 px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500 sm:px-4 sm:py-3 ${
@@ -4605,7 +4699,16 @@ function CustomerDashboard() {
                           <p className={`mt-1 text-[11px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Price may vary based on specifications</p>
                         </div>}
 
-                        {canEstimatePricing && <section className={`overflow-hidden rounded-xl border border-t-2 p-3.5 ${darkMode ? "border-slate-700 border-t-red-500 bg-slate-900" : "border-slate-200 border-t-red-600 bg-white"}`} aria-labelledby="product-estimator-title">
+                        {canEstimatePricing && (
+                          <ProductPriceEstimator
+                            product={selectedProduct}
+                            form={productEstimatorForm}
+                            onFormChange={setProductEstimatorForm}
+                            darkMode={darkMode}
+                            formatCurrency={formatCurrency}
+                          />
+                        )}
+                        {false && <section className={`overflow-hidden rounded-xl border border-t-2 p-3.5 ${darkMode ? "border-slate-700 border-t-red-500 bg-slate-900" : "border-slate-200 border-t-red-600 bg-white"}`} aria-labelledby="product-estimator-title">
                           <div className="flex items-center gap-2">
                             <Ruler size={16} className="text-red-600" aria-hidden="true" />
                             <h4 id="product-estimator-title" className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Price Estimator</h4>
@@ -5262,9 +5365,12 @@ function CustomerDashboard() {
                               <label className={`text-xs font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-slate-400" : "text-gray-500"}`}>Contact Number <span className="text-red-600">*</span></label>
                               <input
                                 name="phone"
-                                type="text"
+                                type="tel"
+                                inputMode="tel"
+                                maxLength={13}
                                 value={deliveryConfirmForm.phone}
                                 onChange={handleDeliveryConfirmChange}
+                                placeholder="+639171234567 or 09171234567"
                                 className={`mt-2 w-full rounded-2xl border px-4 py-3 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100 ${darkMode ? "border-slate-700 bg-slate-900 text-white" : "border-gray-300 bg-white text-gray-900"}`}
                               />
                             </div>
@@ -5664,10 +5770,11 @@ function CustomerDashboard() {
                               <input
                                 name="phone"
                                 type="tel"
-                                inputMode="numeric"
-                                pattern="[0-9]*"
+                                inputMode="tel"
+                                maxLength={13}
                                 value={batchOrderForm.phone}
-                                onChange={(event) => setBatchOrderForm((current) => ({ ...current, phone: event.target.value.replace(/\D/g, "") }))}
+                                onChange={(event) => setBatchOrderForm((current) => ({ ...current, phone: normalizePhoneInput(event.target.value) }))}
+                                placeholder="+639171234567 or 09171234567"
                                 className={`w-full rounded-xl border px-3 py-3 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100 ${darkMode ? "border-slate-700 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-800"}`}
                               />
                             </div>
@@ -6240,7 +6347,7 @@ function CustomerDashboard() {
                     <div
                       key={orderId}
                       data-notification-record-id={orderId}
-                      className={`overflow-hidden rounded-xl border shadow-sm transition hover:shadow-md ${highlightedOrderId === orderId ? "border-amber-500 bg-amber-50 ring-4 ring-amber-300" : darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}
+                      className={`overflow-hidden rounded-xl border shadow-sm transition hover:shadow-md ${highlightedOrderId === orderId ? "notification-target-highlight" : darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}
                     >
                       <div className="grid gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-4">
                         <div className="flex min-w-0 items-center gap-3">
@@ -6721,10 +6828,14 @@ function CustomerDashboard() {
             key={selectedOrderForModal._id || selectedOrderForModal.id}
             order={selectedOrderForModal}
             darkMode={darkMode}
-            onClose={() => setSelectedOrderForModal(null)}
+            onClose={() => {
+              setSelectedOrderForModal(null);
+              setTimelineNotificationTarget(null);
+            }}
             getItemImage={getOrderItemImage}
             getItemDimension={getConfirmationItemDimensionText}
             fallbackImage={PRODUCT_IMAGE_PLACEHOLDER}
+            notificationTarget={timelineNotificationTarget}
           />
         )}
 
@@ -7351,7 +7462,7 @@ function CustomerDashboard() {
               </div>
 
               {checkoutError && <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">{checkoutError}</div>}
-              {checkoutMessage && <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-700">{checkoutMessage}</div>}
+              {checkoutMessage && <div role="status" aria-live="polite" className={`mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-700 transition-opacity duration-500 ease-out motion-reduce:transition-none ${checkoutMessageFading ? "opacity-0" : "opacity-100"}`}>{checkoutMessage}</div>}
             </>) }
           </div>
         )}
@@ -7556,7 +7667,7 @@ function CustomerDashboard() {
                                 {formatTimeAgo(order.notificationDate)}
                               </span>
                               <button
-                                onClick={() => openOrderDetailsFromNotification(order, order.notificationId)}
+                                onClick={() => openOrderDetailsFromNotification(order, order)}
                                 className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${darkMode ? "text-red-300 hover:bg-red-950/40" : "text-red-700 hover:bg-red-50"}`}
                               >
                                 {isContractNotification ? "View Contract" : "View Order"}
@@ -7611,20 +7722,42 @@ function CustomerDashboard() {
             <button
               type="button"
               onClick={() => {
+                setTrackingNumber("");
+                setOrderFilter("all");
+                setOrderPage(1);
+                setActiveTab("orders");
+              }}
+              className={`group flex w-full min-w-0 items-center gap-4 rounded-2xl border px-5 py-4.5 text-left transition-all motion-reduce:transition-none hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50 ${darkMode ? "border-sky-500/25 bg-slate-800 text-slate-100 hover:border-sky-400/50" : "border-sky-100 bg-white text-slate-900 hover:border-sky-300"}`}
+            >
+              <span className={`flex size-12 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-sky-500/15 text-sky-300" : "bg-sky-50 text-sky-700"}`}>
+                <ClipboardList size={23} strokeWidth={2.2} aria-hidden="true" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[17px] font-medium">My Orders</span>
+                <span className={`mt-0.5 block text-sm ${darkMode ? "text-sky-200/80" : "text-slate-500"}`}>{activeOrdersCount} active</span>
+              </span>
+              <span className={`flex size-[34px] shrink-0 items-center justify-center rounded-full border transition-colors motion-reduce:transition-none group-hover:bg-sky-600 group-hover:text-white ${darkMode ? "border-sky-500/30 text-sky-300 group-hover:border-sky-600" : "border-sky-200 text-sky-700 group-hover:border-sky-600"}`}>
+                <ArrowRight size={16} aria-hidden="true" />
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
                 setContractHistoryTab("accepted");
                 setWarrantyHistoryTab(null);
                 setActiveTab("contracts");
               }}
-              className={`group flex w-full min-w-0 items-center gap-4 rounded-2xl border px-5 py-4.5 text-left transition-all motion-reduce:transition-none hover:-translate-y-0.5 hover:border-brand/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+              className={`group flex w-full min-w-0 items-center gap-4 rounded-2xl border px-5 py-4.5 text-left transition-all motion-reduce:transition-none hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 ${darkMode ? "border-emerald-500/25 bg-slate-800 text-slate-100 hover:border-emerald-400/50" : "border-emerald-100 bg-white text-slate-900 hover:border-emerald-300"}`}
             >
-              <span className={`flex size-12 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-brand-dark-fill/15 text-brand-dark-text" : "bg-brand/[0.08] text-brand"}`}>
-                <FileText size={22} aria-hidden="true" />
+              <span className={`flex size-12 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-emerald-500/15 text-emerald-300" : "bg-emerald-50 text-emerald-700"}`}>
+                <FileText size={23} strokeWidth={2.2} aria-hidden="true" />
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-[17px] font-medium">Contracts</span>
-                <span className={`mt-0.5 block text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{customerContracts.length} active</span>
+                <span className={`mt-0.5 block text-sm ${darkMode ? "text-emerald-200/80" : "text-slate-500"}`}>{customerContracts.length} active</span>
               </span>
-              <span className={`flex size-[34px] shrink-0 items-center justify-center rounded-full border transition-colors motion-reduce:transition-none group-hover:border-brand group-hover:bg-brand group-hover:text-white ${darkMode ? "border-slate-600 text-slate-400" : "border-slate-200 text-slate-500"}`}>
+              <span className={`flex size-[34px] shrink-0 items-center justify-center rounded-full border transition-colors motion-reduce:transition-none group-hover:bg-emerald-600 group-hover:text-white ${darkMode ? "border-emerald-500/30 text-emerald-300 group-hover:border-emerald-600" : "border-emerald-200 text-emerald-700 group-hover:border-emerald-600"}`}>
                 <ArrowRight size={16} aria-hidden="true" />
               </span>
             </button>
@@ -7632,7 +7765,7 @@ function CustomerDashboard() {
             <button
               type="button"
               onClick={() => setActiveTab("about")}
-              className={`group flex w-full min-w-0 items-center gap-4 rounded-2xl border px-5 py-4.5 text-left transition-all motion-reduce:transition-none hover:-translate-y-0.5 hover:border-brand/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+              className={`group flex w-full min-w-0 items-center gap-4 rounded-2xl border px-5 py-4.5 text-left transition-all motion-reduce:transition-none hover:-translate-y-0.5 hover:border-brand/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 lg:hidden ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
             >
               <span className={`flex size-12 shrink-0 items-center justify-center rounded-xl ${darkMode ? "bg-brand-dark-fill/15 text-brand-dark-text" : "bg-brand/[0.08] text-brand"}`}>
                 <Info size={22} aria-hidden="true" />
@@ -7646,6 +7779,111 @@ function CustomerDashboard() {
               </span>
             </button>
             </div>
+
+            <section className={`mt-6 overflow-hidden rounded-2xl border ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`} aria-labelledby="customer-recent-orders-title">
+              <div className={`flex flex-wrap items-center justify-between gap-3 border-b px-4 py-4 sm:px-5 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                <div>
+                  <h2 id="customer-recent-orders-title" className={`text-lg font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Recent Orders</h2>
+                  <p className={`mt-0.5 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Your latest order activity</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTrackingNumber("");
+                    setOrderFilter("all");
+                    setOrderPage(1);
+                    setActiveTab("orders");
+                  }}
+                  className={`inline-flex items-center gap-1 text-sm font-semibold transition-colors ${darkMode ? "text-red-300 hover:text-white" : "text-brand hover:text-red-900"}`}
+                >
+                  View all <ArrowRight size={15} aria-hidden="true" />
+                </button>
+              </div>
+
+              <div className="space-y-3 p-3 sm:p-4">
+                {ordersLoading ? (
+                  [...Array(3)].map((_, index) => (
+                    <div key={index} className={`h-[72px] animate-pulse rounded-xl border ${darkMode ? "border-slate-700 bg-slate-700/50" : "border-slate-200 bg-slate-100"}`} />
+                  ))
+                ) : recentOrders.length === 0 ? (
+                  <div className={`rounded-xl border border-dashed px-5 py-8 text-center ${darkMode ? "border-slate-700 bg-slate-900/40" : "border-slate-300 bg-slate-50"}`}>
+                    <p className={`font-semibold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>No orders yet</p>
+                    <p className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Your recent orders will appear here.</p>
+                  </div>
+                ) : (
+                  recentOrders.map((order, index) => {
+                    const orderId = getOrderIdentifier(order, `recent-order-${index}`);
+                    const orderItems = Array.isArray(order.items) ? order.items : [];
+                    const product = orderItems[0] || {};
+                    const isBatchOrder = orderItems.length > 1;
+                    const orderDisplayName = isBatchOrder ? "Batch Order" : product.name || product.product_name || "Project item";
+                    const orderDisplayQuantity = isBatchOrder ? `${orderItems.length} items` : product.quantity ? `Qty ${product.quantity}` : "Qty 1";
+                    const orderPreviewItem = isBatchOrder
+                      ? orderItems.find((item) => getOrderItemImage(item) !== PRODUCT_IMAGE_PLACEHOLDER) || product
+                      : product;
+                    const orderDate = formatDateToMMMDDYYYY(order.updatedAt || order.createdAt) || "—";
+
+                    return (
+                      <div
+                        key={orderId}
+                        data-notification-record-id={orderId}
+                        className={`overflow-hidden rounded-xl border shadow-sm transition hover:shadow-md ${highlightedOrderId === orderId ? "notification-target-highlight" : darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}
+                      >
+                        <div className="grid gap-3 p-3.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-4">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className={`h-11 w-11 shrink-0 overflow-hidden rounded-[12px] border shadow-sm sm:h-12 sm:w-12 ${darkMode ? "border-slate-600 bg-slate-700" : "border-red-100 bg-red-50"}`}>
+                              <img
+                                src={getOrderItemImage(orderPreviewItem)}
+                                alt={orderPreviewItem.name || orderPreviewItem.product_name || "Product image"}
+                                className="h-full w-full object-cover"
+                                onError={(event) => {
+                                  event.currentTarget.onerror = null;
+                                  event.currentTarget.src = PRODUCT_IMAGE_PLACEHOLDER;
+                                }}
+                              />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{orderDisplayName}</span>
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${getOrderStatusClasses(order.status)}`}>
+                                  {getOrderStatusLabel(order.status)}
+                                </span>
+                              </div>
+                              <div className={`mt-1 flex flex-wrap items-center gap-x-2 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                                <span>{order.tracking || order._id || "—"}</span>
+                                <span aria-hidden="true">·</span>
+                                <span>{orderDisplayQuantity}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1 sm:flex sm:justify-end sm:gap-5">
+                            <div className="text-right sm:min-w-[100px]">
+                              <p className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Total</p>
+                              <p className="mt-0.5 text-sm font-bold text-red-600">{formatCurrency(getOrderTotalValue(order))}</p>
+                            </div>
+                            <div className="text-right sm:min-w-[90px]">
+                              <p className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Updated</p>
+                              <p className={`mt-0.5 text-xs font-medium ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{orderDate}</p>
+                            </div>
+                            <div className="col-span-2 flex justify-end sm:col-span-1">
+                              <button
+                                type="button"
+                                onClick={() => openOrderDetailsFromNotification(order)}
+                                aria-label={`View details for ${orderDisplayName}`}
+                                className={`inline-flex w-[7.25rem] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition ${darkMode ? "bg-red-600 text-white hover:bg-red-500" : "bg-red-700 text-white hover:bg-red-800"}`}
+                              >
+                                View details <ChevronDown size={14} aria-hidden="true" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </section>
           </div>
 
           {profileEditing && (
@@ -7787,11 +8025,13 @@ function CustomerDashboard() {
                         <div className="relative mt-1.5">
                           <Phone size={16} className="absolute left-3.5 top-3.5 text-gray-400" />
                           <input
-                            type="text"
+                            type="tel"
+                            inputMode="tel"
+                            maxLength={13}
                             name="phone"
                             value={profileForm.phone}
                             onChange={handleProfileChange}
-                            placeholder="Phone Number"
+                            placeholder="+639171234567 or 09171234567"
                             className={`w-full pl-10 pr-3 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                           />
                         </div>
@@ -7862,38 +8102,38 @@ function CustomerDashboard() {
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="md:col-span-3">
-                        <label className="text-sm font-medium text-gray-600">Current Password</label>
+                        <label className={`text-sm font-medium ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Current Password</label>
                         <input
                           type="password"
                           name="current_password"
                           value={profileForm.current_password}
                           onChange={handleProfileChange}
                           placeholder="Enter current password"
-                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
+                          className={`mt-2 w-full rounded-2xl border px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-600 bg-slate-900 text-slate-100 placeholder:text-slate-400" : "border-slate-200 bg-white"}`}
                         />
                       </div>
 
                       <div>
-                        <label className="text-sm font-medium text-gray-600">New Password</label>
+                        <label className={`text-sm font-medium ${darkMode ? "text-slate-300" : "text-gray-600"}`}>New Password</label>
                         <input
                           type="password"
                           name="new_password"
                           value={profileForm.new_password}
                           onChange={handleProfileChange}
                           placeholder="Enter new password"
-                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
+                          className={`mt-2 w-full rounded-2xl border px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-600 bg-slate-900 text-slate-100 placeholder:text-slate-400" : "border-slate-200 bg-white"}`}
                         />
                       </div>
 
                       <div>
-                        <label className="text-sm font-medium text-gray-600">Confirm Password</label>
+                        <label className={`text-sm font-medium ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Confirm Password</label>
                         <input
                           type="password"
                           name="confirm_password"
                           value={profileForm.confirm_password}
                           onChange={handleProfileChange}
                           placeholder="Confirm new password"
-                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
+                          className={`mt-2 w-full rounded-2xl border px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-600 bg-slate-900 text-slate-100 placeholder:text-slate-400" : "border-slate-200 bg-white"}`}
                         />
                       </div>
                     </div>
@@ -8271,6 +8511,7 @@ function CustomerDashboard() {
           onDecline={() => contractPreviewOrder && openContractConfirmModal("decline", contractPreviewOrder._id || contractPreviewOrder.id)}
           isLoading={contractActionLoading}
           actionError={contractActionError}
+          notificationRecordId={contractNotificationRecordId}
         />
 
         {/* CONTRACT CONFIRMATION MODAL */}

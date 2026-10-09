@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { getPhilippinePhoneError, isValidPhilippinePhone, normalizePhoneInput } from "@/lib/phoneValidation";
 import logo from "../../assets/images/ACGCLOGO1.png";
 import {
   AtSign,
@@ -15,7 +16,62 @@ import {
   MapPin,
   Phone,
   UserRound,
+  X,
 } from "lucide-react";
+
+const policySections = [
+  {
+    title: "Terms and Conditions",
+    sections: [
+      { title: "1. Acceptance of Terms", text: "By creating an account and using this platform, you agree to comply with these Terms and Conditions and all applicable laws and regulations." },
+      { title: "2. Eligibility", text: "Users must be at least 18 years old or meet the minimum legal age required in their jurisdiction to register an account." },
+      { title: "3. Account Registration", text: "You agree to provide accurate, complete, and up-to-date information during registration. Providing false information may result in account suspension or termination." },
+      { title: "4. Account Responsibility", text: "You are responsible for maintaining the confidentiality of your login credentials and for all activities conducted under your account." },
+      {
+        title: "5. Acceptable Use",
+        items: [
+          "Use the platform for unlawful purposes",
+          "Impersonate another person or entity",
+          "Upload harmful, abusive, or malicious content",
+          "Attempt unauthorized access to accounts or systems",
+          "Interfere with platform operations or security",
+        ],
+      },
+      { title: "6. Intellectual Property", text: "All content, logos, trademarks, and materials available on the platform are the property of the company or respective owners and are protected by applicable intellectual property laws." },
+      { title: "7. Suspension or Termination", text: "The platform reserves the right to suspend or terminate accounts that violate these Terms and Conditions without prior notice." },
+      { title: "8. Limitation of Liability", text: "The platform is provided \u201cas is\u201d without warranties of any kind. The company shall not be liable for any damages arising from the use or inability to use the platform." },
+      { title: "9. Changes to Terms", text: "The company may update these Terms and Conditions at any time. Continued use of the platform after changes are posted constitutes acceptance of the revised terms." },
+      { title: "10. Governing Law", text: "These Terms and Conditions shall be governed by the laws applicable in the jurisdiction where the company operates." },
+    ],
+  },
+  {
+    title: "Privacy Policy",
+    sections: [
+      {
+        title: "1. Information Collection",
+        text: "We may collect the following information when you create an account or use the platform:",
+        items: ["Full name", "Email address", "Contact number", "Username and password", "Device and usage information"],
+      },
+      {
+        title: "2. Use of Information",
+        text: "Collected information may be used to:",
+        items: ["Create and manage your account", "Provide platform services", "Improve user experience", "Send important notifications or updates", "Maintain security and prevent fraud"],
+      },
+      { title: "3. Data Protection", text: "We implement reasonable security measures to protect your personal information from unauthorized access, disclosure, or misuse." },
+      {
+        title: "4. Information Sharing",
+        text: "Your personal information will not be sold or rented to third parties. Information may only be shared when:",
+        items: ["Required by law", "Necessary to provide services", "Needed to protect platform security and users"],
+      },
+      { title: "5. Cookies and Tracking", text: "The platform may use cookies and similar technologies to improve functionality and analyze usage patterns." },
+      { title: "6. User Rights", text: "Users may request access, correction, or deletion of their personal information subject to applicable laws and regulations." },
+      { title: "7. Data Retention", text: "Personal information will only be retained for as long as necessary to fulfill the purposes stated in this Privacy Policy or as required by law." },
+      { title: "8. Third-Party Services", text: "The platform may contain links or integrations with third-party services. We are not responsible for the privacy practices of third-party providers." },
+      { title: "9. Changes to Privacy Policy", text: "We reserve the right to update this Privacy Policy at any time. Changes become effective upon posting on the platform." },
+      { title: "10. Contact Information", text: "For questions or concerns regarding these Terms and Conditions or Privacy Policy, users may contact the platform administrator through official communication channels." },
+    ],
+  },
+];
 
 const getPasswordStrength = (password) => {
   if (!password) return { score: 0, label: "", color: "#cbd5e1" };
@@ -63,18 +119,38 @@ function Signup() {
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [acceptedPolicies, setAcceptedPolicies] = useState(false);
+  const [showPolicies, setShowPolicies] = useState(false);
   const passwordStrength = getPasswordStrength(formData.password);
 
   useEffect(() => {
     if (!adminLoading && adminExists === false) navigate("/", { replace: true });
   }, [adminExists, adminLoading, navigate]);
 
+  useEffect(() => {
+    if (!showPolicies) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setShowPolicies(false);
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [showPolicies]);
+
   const sanitizeFieldValue = (name, value) => {
+    if (name === "phone") return normalizePhoneInput(value);
+
     if (["first_name", "last_name", "city", "province"].includes(name)) {
       return value.replace(/[^\p{L}\s'-]/gu, "");
     }
 
-    if (["zip_code", "phone"].includes(name)) {
+    if (name === "zip_code") {
       return value.replace(/\D/g, "");
     }
 
@@ -96,6 +172,16 @@ function Signup() {
     setAuthError("");
 
     if (submitting) return;
+
+    if (!acceptedPolicies) {
+      setError("Please accept the Terms and Conditions and Privacy Policy.");
+      return;
+    }
+
+    if (formData.phone && !isValidPhilippinePhone(formData.phone)) {
+      setError(getPhilippinePhoneError(formData.phone));
+      return;
+    }
 
     if (Object.values(formData).some((value) => !value)) {
       setError("Please complete all required fields.");
@@ -135,23 +221,24 @@ function Signup() {
   const inputClass = "w-full rounded-xl border border-gray-300 py-2.5 pr-4 outline-none transition focus:border-red-500 focus:ring-4 focus:ring-red-500/10";
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-950 via-[#111827] to-[#450a0a] p-4 [background-image:linear-gradient(rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(135deg,#020617,#111827_54%,#450a0a)] [background-size:42px_42px,42px_42px,100%_100%] sm:p-6">
-      <div className="grid w-full max-w-6xl overflow-hidden rounded-[20px] border border-gray-800 bg-white shadow-[0_24px_70px_rgba(2,6,23,0.6)] lg:max-h-[calc(100vh-2rem)] lg:grid-cols-5">
+    <div className="auth-light-canvas flex min-h-screen items-center justify-center p-4 sm:p-6">
+      <div className="relative z-10 grid w-full max-w-6xl overflow-hidden rounded-[20px] border border-gray-800 bg-white shadow-[0_24px_70px_rgba(2,6,23,0.6)] lg:max-h-[calc(100vh-2rem)] lg:grid-cols-5">
         <div className="relative flex flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-slate-950 via-[#111827] to-[#450a0a] px-5 py-6 text-white sm:px-7 lg:col-span-2 lg:min-h-[560px]">
           <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(148,163,184,.08),transparent_42%,rgba(127,29,29,.28))]" />
           <div className="pointer-events-none absolute -right-28 -top-20 h-80 w-80 rounded-full border border-white/10" />
           <div className="pointer-events-none absolute -right-16 -top-8 h-56 w-56 rounded-full border border-white/10" />
-          <div className="pointer-events-none absolute inset-0 [background-image:linear-gradient(rgba(148,163,184,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.05)_1px,transparent_1px)] [background-size:42px_42px]" />
           <div className="relative z-10 text-center">
             <p className="mb-5 text-xs font-black uppercase tracking-[0.3em] text-red-100">Welcome To</p>
-            <img src={logo} alt="ACGC" className="mx-auto mb-4 w-44 drop-shadow-2xl" />
+            <div className="mx-auto mb-4 inline-flex rounded-2xl border border-white/70 bg-white p-3 shadow-[0_12px_32px_rgba(0,0,0,0.32)]">
+              <img src={logo} alt="ACGC" className="w-44 drop-shadow-xl" />
+            </div>
             <p className="mx-auto max-w-sm text-xs font-medium leading-5 text-red-50">Securely manage products, site inspections, and operations from one powerful dashboard.</p>
           </div>
         </div>
 
         <div className="overflow-y-auto bg-white p-4 lg:col-span-3 lg:p-6">
           <div className="max-w-2xl">
-            <p className="text-xs font-black uppercase tracking-[0.28em] text-red-700">Customer registration</p>
+            <p className="mt-1 text-xs font-black tracking-tight text-red-500 sm:text-xs">Customer Registration</p>
             <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">Create your ACGC account</h1>
             <p className="mt-1 text-xs leading-5 text-gray-500">Verify your email to activate your profile.</p>
 
@@ -171,7 +258,7 @@ function Signup() {
                 <Field icon={Building2} label="City *" name="city" value={formData.city} onChange={handleChange} placeholder="Enter your city" inputClass={inputClass} />
                 <Field icon={Map} label="Province *" name="province" value={formData.province} onChange={handleChange} placeholder="Enter your province" inputClass={inputClass} />
                 <Field icon={Hash} label="Zip Code *" name="zip_code" inputMode="numeric" value={formData.zip_code} onChange={handleChange} placeholder="4000" inputClass={inputClass} />
-                <Field icon={Phone} label="Phone Number *" name="phone" inputMode="numeric" value={formData.phone} onChange={handleChange} placeholder="639123456789" inputClass={inputClass} />
+                <Field icon={Phone} label="Phone Number *" name="phone" type="tel" inputMode="tel" maxLength={13} value={formData.phone} onChange={handleChange} placeholder="+639171234567 or 09171234567" inputClass={inputClass} />
               </div>
               <div className="mt-2 grid gap-2 md:grid-cols-2">
                 <div>
@@ -238,14 +325,107 @@ function Signup() {
                 </div>
               </div>
 
-              <button type="submit" disabled={submitting} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-red-600 via-red-700 to-red-950 py-2.5 text-sm font-bold text-white shadow-lg shadow-red-900/20 transition hover:scale-[1.01] hover:shadow-red-900/30 disabled:cursor-not-allowed disabled:opacity-60">
+              <div className="mt-4 flex items-start gap-2.5 text-sm text-slate-700">
+                <input
+                  id="accept-policies"
+                  type="checkbox"
+                  checked={acceptedPolicies}
+                  onChange={(event) => setAcceptedPolicies(event.target.checked)}
+                  aria-label="I accept the Terms and Conditions and Privacy Policy"
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-red-700"
+                />
+                <label htmlFor="accept-policies" className="leading-5">I accept the</label>
+                <button
+                  type="button"
+                  onClick={() => setShowPolicies(true)}
+                  className="-ml-1 text-left font-semibold text-red-700 underline-offset-2 hover:text-red-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                >
+                  Terms and Conditions and Privacy Policy
+                </button>
+              </div>
+
+              <button type="submit" disabled={submitting || !acceptedPolicies} className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-brand px-4 py-2 text-base font-bold text-white shadow-sm transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60">
                 {submitting ? <><LoaderCircle size={17} className="animate-spin" aria-hidden="true" /> Sending...</> : "Verify Email"}
               </button>
-              <p className="mt-3 text-center text-xs text-gray-500">Already have an account? <Link to="/login" className="ml-2 font-bold text-red-700">Login</Link></p>
+              <div className="mt-5 flex min-h-12 w-full flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-red-100 bg-red-50 px-4 py-2 text-sm text-slate-600">
+                <span>Already have an account?</span>
+                <Link to="/login" className="font-bold text-brand transition-opacity hover:opacity-80">Login</Link>
+              </div>
             </form>
           </div>
         </div>
       </div>
+
+      {showPolicies && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-6"
+          onClick={() => setShowPolicies(false)}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="signup-policies-title"
+            className="flex h-[85dvh] max-h-[85dvh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 px-4 py-3 sm:px-5">
+              <div>
+                <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-red-700">ACGC Services</p>
+                <h2 id="signup-policies-title" className="mt-1 text-base font-bold text-slate-900">Terms and Conditions &amp; Privacy Policy</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPolicies(false)}
+                aria-label="Close Terms and Conditions and Privacy Policy"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+              >
+                <X size={20} aria-hidden="true" />
+              </button>
+            </header>
+            <div className="overflow-y-auto overscroll-contain px-4 py-4 sm:px-5" tabIndex={0}>
+              {policySections.map((policy) => (
+                <section key={policy.title} className="mb-6 last:mb-0" aria-labelledby={`policy-${policy.title.replace(/\s+/g, "-").toLowerCase()}`}>
+                  <h3 id={`policy-${policy.title.replace(/\s+/g, "-").toLowerCase()}`} className="mb-3 border-b border-slate-200 pb-2 text-lg font-bold text-slate-900">
+                    {policy.title}
+                  </h3>
+                  <div className="space-y-3">
+                    {policy.sections.map((section) => (
+                      <section key={section.title}>
+                        <h4 className="text-[13px] font-semibold text-slate-800">{section.title}</h4>
+                        {section.text && <p className="mt-1 text-[13px] leading-5 text-slate-600">{section.text}</p>}
+                        {section.items && (
+                          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-[13px] leading-5 text-slate-600">
+                            {section.items.map((item) => <li key={item}>{item}</li>)}
+                          </ul>
+                        )}
+                      </section>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+            <footer className="flex shrink-0 flex-col-reverse justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:px-5">
+              <button
+                type="button"
+                onClick={() => setShowPolicies(false)}
+                className="min-h-10 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAcceptedPolicies(true);
+                  setShowPolicies(false);
+                }}
+                className="min-h-10 rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+              >
+                Accept Terms
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

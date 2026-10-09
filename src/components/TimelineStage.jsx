@@ -39,6 +39,9 @@ export default function TimelineStage({
   stage,
   isLast = false,
   isNextUp = false,
+  isNotificationTarget = false,
+  notificationStageKey,
+  notificationItemIndex,
   darkMode = false,
   onPhotoOpen,
 }) {
@@ -87,7 +90,12 @@ export default function TimelineStage({
     : darkMode ? "text-slate-400" : "text-slate-500";
 
   return (
-    <li className="relative grid grid-cols-[24px_minmax(0,1fr)] gap-x-3 pb-5 last:pb-0">
+    <li
+      data-notification-stage-key={notificationStageKey}
+      data-notification-stage-name={stage?.label || stage?.name}
+      data-notification-item-index={notificationItemIndex}
+      className={`relative grid grid-cols-[24px_minmax(0,1fr)] gap-x-3 pb-5 last:pb-0 ${isNotificationTarget ? "notification-target-highlight" : ""}`}
+    >
       {!isLast && (
         <span
           className={`absolute left-[11px] top-6 bottom-0 w-0.5 ${connectorClass}`}

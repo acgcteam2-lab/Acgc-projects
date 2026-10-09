@@ -118,6 +118,15 @@ describe("walk-in account linking validation", () => {
   it("allows creating a walk-in inspection before the signed contract is approved", () => {
     expect(validateInspectionPayload(validWalkInPayload)).toEqual({});
   });
+
+  it("rejects a phone number that does not match a Philippine mobile format", () => {
+    const errors = validateInspectionPayload({
+      ...validWalkInPayload,
+      phone: "091712345678",
+    });
+
+    expect(errors.phone).toMatch(/11-digit PH mobile number/);
+  });
 });
 
 describe("getInspectionDisplayTotal", () => {

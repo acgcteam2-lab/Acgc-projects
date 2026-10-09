@@ -70,6 +70,10 @@ const validateProductPayload = (payload, existingProduct = null) => {
     if (maximumBlades > 0 && maximumBlades < minimumBlades) {
       return "Maximum blades cannot be lower than minimum blades.";
     }
+    const largestFrameBladeCount = Math.max(0, ...frameTypes.map((frame) => Number(frame?.blade_count) || 0));
+    if (maximumBlades > 0 && largestFrameBladeCount > maximumBlades) {
+      return "Maximum blades cannot be lower than the blade count of any frame type.";
+    }
     if (glassTypes.length && !glassTypes.some((glass) => glass.name === merged.default_blade_glass_type)) {
       return "Choose a default glass type from the configured glass types.";
     }
@@ -81,6 +85,9 @@ const validateProductPayload = (payload, existingProduct = null) => {
     }
     if (merged.default_sale_mode === "frame" && frameTypes.length && !frameTypes.some((frame) => frame.name === merged.default_frame_type)) {
       return "Choose a default frame type from the configured frame types.";
+    }
+    if (merged.default_sale_mode === "frame" && !frameTypes.length && !merged.allow_custom_frame_size) {
+      return "Choose a default frame type or enable custom frame size.";
     }
   }
 

@@ -88,18 +88,17 @@ function ForgotPassword() {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-5 [background-image:linear-gradient(rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(135deg,#020617,#111827_54%,#450a0a)] [background-size:42px_42px,42px_42px,100%_100%] sm:px-6">
+    <main className="auth-light-canvas flex min-h-screen items-center justify-center px-4 py-5 sm:px-6">
       <motion.section
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.45, ease: "easeOut" }}
-        className="grid w-full max-w-4xl overflow-hidden rounded-[20px] border border-white/10 bg-white shadow-[0_24px_80px_rgba(2,6,23,0.6)] lg:grid-cols-[0.8fr_1.2fr]"
+        className="relative z-10 grid w-full max-w-4xl overflow-hidden rounded-[20px] border border-white/10 bg-white shadow-[0_24px_80px_rgba(2,6,23,0.6)] lg:grid-cols-[0.8fr_1.2fr]"
       >
         <div className="relative flex min-h-[240px] flex-col justify-center overflow-hidden bg-gradient-to-br from-slate-950 via-[#111827] to-[#450a0a] p-5 text-white sm:p-8 lg:min-h-[520px]">
-          <div className="pointer-events-none absolute inset-0 [background-image:linear-gradient(rgba(148,163,184,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.05)_1px,transparent_1px)] [background-size:42px_42px]" />
           <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full border border-white/10" />
           <div className="relative z-10 text-center">
-            <img src={logo} alt="ACGC" className="mx-auto mb-4 w-32 drop-shadow-2xl sm:w-40" />
+            <img src={logo} alt="ACGC" className="mx-auto mb-4 w-32 drop-shadow-[0_0_4px_rgba(255,255,255,0.7)] sm:w-40" />
             <p className="mx-auto max-w-sm text-xs font-medium leading-5 text-red-50">
               Regain access securely with a verification link sent to your registered email.
             </p>
@@ -212,7 +211,7 @@ function ForgotPassword() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-red-600 via-red-700 to-red-950 py-2.5 text-sm font-bold text-white shadow-lg shadow-red-900/20 transition hover:scale-[1.01] hover:shadow-red-900/30 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-white shadow-sm transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {loading ? <LoaderCircle size={18} className="animate-spin" aria-hidden="true" /> : null}
                   {loading ? "Please wait..." : step === 1 ? "Send verification code" : step === 2 ? "Verify code" : "Reset password"}
@@ -220,7 +219,7 @@ function ForgotPassword() {
                 </button>
               </form>
             ) : (
-              <Link to="/login" className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-red-600 via-red-700 to-red-950 py-2.5 text-sm font-bold text-white">
+              <Link to="/login" className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-2.5 text-sm font-bold text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
                 Continue to login
                 <ArrowRight size={18} aria-hidden="true" />
               </Link>
@@ -234,7 +233,7 @@ function ForgotPassword() {
 
             <p className="mt-4 text-center text-xs text-slate-500">
               Remember your password?
-              <Link to="/login" className="ml-2 font-bold text-red-700 hover:text-red-900">Back to login</Link>
+              <Link to="/login" className="ml-2 font-bold text-brand transition-opacity hover:opacity-80">Back to login</Link>
             </p>
             </motion.div>
           </AnimatePresence>

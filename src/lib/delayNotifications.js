@@ -50,6 +50,8 @@ export const buildDelayNotifications = (order) => {
           notificationDate: isCurrentDelay ? order.updatedAt || reportedAt : reportedAt,
           delayReportedAt: reportedAt,
           delayStageName: stageName,
+          delayStageKey: stage.key || `stage-${stageIndex + 1}`,
+          delayItemIndex: itemIndex,
           delayReason: entry.reason || stage.delayReason || "",
           delayNotes: entry.notes || stage.delayNotes || "",
           delayExpectedResolution: entry.expectedResolution || stage.delayExpectedResolution || null,

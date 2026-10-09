@@ -22,6 +22,69 @@ body:has(.mobile-fullscreen-overlay) .customer-mobile-navigation {
   display: none !important;
 }
 
+@keyframes notification-target-highlight {
+  0%,
+  100% {
+    background-color: transparent;
+    box-shadow: inset 0 0 0 0 rgba(245, 158, 11, 0);
+  }
+  10% {
+    background-color: rgba(251, 191, 36, 0.4);
+    box-shadow: inset 0 0 0 3px rgba(245, 158, 11, 0.95), 0 0 0 2px rgba(245, 158, 11, 0.3);
+  }
+  72% {
+    background-color: rgba(251, 191, 36, 0.34);
+    box-shadow: inset 0 0 0 3px rgba(245, 158, 11, 0.85), 0 0 0 2px rgba(245, 158, 11, 0.24);
+  }
+}
+
+.notification-target-highlight {
+  animation: notification-target-highlight 3.5s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notification-target-highlight {
+    animation: none;
+    outline: 3px solid rgba(245, 158, 11, 0.9);
+    outline-offset: -2px;
+  }
+}
+
+.auth-light-canvas {
+  position: relative;
+  isolation: isolate;
+  overflow-x: clip;
+  background-color: #f8fafc;
+  background-image:
+    radial-gradient(circle at 8% 88%, rgba(185, 28, 28, 0.07), transparent 26rem),
+    radial-gradient(circle at 92% 12%, rgba(185, 28, 28, 0.045), transparent 24rem),
+    linear-gradient(135deg, #f8fafc 0%, #ffffff 54%, #fff1f2 100%);
+}
+
+.auth-light-canvas::before,
+.auth-light-canvas::after {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  content: "";
+  aspect-ratio: 1;
+  border-radius: 50%;
+}
+
+.auth-light-canvas::before {
+  top: -13rem;
+  right: -10rem;
+  width: clamp(24rem, 42vw, 38rem);
+  background: radial-gradient(circle, transparent 57%, rgba(185, 28, 28, 0.09) 57.2%, transparent 57.5%, transparent 69%, rgba(185, 28, 28, 0.065) 69.2%, transparent 69.5%, transparent 81%, rgba(100, 116, 139, 0.055) 81.2%, transparent 81.5%);
+}
+
+.auth-light-canvas::after {
+  bottom: -16rem;
+  left: -13rem;
+  width: clamp(24rem, 38vw, 34rem);
+  background: radial-gradient(circle, transparent 55%, rgba(100, 116, 139, 0.055) 55.2%, transparent 55.5%, transparent 69%, rgba(185, 28, 28, 0.07) 69.2%, transparent 69.5%, transparent 82%, rgba(185, 28, 28, 0.045) 82.2%, transparent 82.5%);
+}
+
 @media (max-width: 639px) {
   .mobile-fullscreen-overlay {
     align-items: stretch !important;

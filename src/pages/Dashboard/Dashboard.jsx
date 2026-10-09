@@ -742,7 +742,8 @@ function Dashboard() {
                                 handleOpenTransactionPage(orderId);
                               }
                             }}
-                            className={`cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500 ${isNotificationTarget ? "bg-amber-100 ring-2 ring-inset ring-amber-500" : "hover:bg-gray-50"}`}
+                            data-notification-target="order"
+                            className={`cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-red-500 ${isNotificationTarget ? "notification-target-highlight" : "hover:bg-gray-50"}`}
                           >
                             <td className="px-5 py-4"><ProfileAvatar name={customerName} email={order.customer?.email || order.customer_email || ""} compact /></td>
                             <td className="px-5 py-4 font-bold text-gray-900">{productName}</td>
@@ -808,7 +809,8 @@ function Dashboard() {
                             handleOpenTransactionPage(orderId);
                           }
                         }}
-                        className={`cursor-pointer rounded-2xl border p-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${isNotificationTarget ? "border-amber-500 bg-amber-100 ring-2 ring-amber-400" : "border-gray-200 bg-gray-50"}`}
+                        data-notification-target="order"
+                        className={`cursor-pointer rounded-2xl border p-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${isNotificationTarget ? "notification-target-highlight" : "border-gray-200 bg-gray-50"}`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
