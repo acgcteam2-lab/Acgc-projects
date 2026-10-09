@@ -231,6 +231,35 @@ describe("ProgressEditModal", () => {
     });
   });
 
+  it("blocks saving when the estimated installation date is not after site inspection", () => {
+    const onSave = vi.fn().mockResolvedValue();
+    const onClose = vi.fn();
+
+    render(
+      <ProgressEditModal
+        project={{
+          id: "order-123",
+          client: "Acme Corp",
+          inspection_date: "2026-10-10T00:00:00.000Z",
+          estimated_installation_date: "2026-10-11T00:00:00.000Z",
+          stages: [],
+        }}
+        onSave={onSave}
+        onClose={onClose}
+      />
+    );
+
+    const installationDateInput = screen.getByLabelText("Est. Installation Date");
+    expect(installationDateInput.min).toBe("2026-10-11");
+
+    fireEvent.change(installationDateInput, { target: { value: "2026-10-10" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+
+    expect(screen.getByText("Est. Installation Date must be after the Site Inspection Date.")).toBeTruthy();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("accepts a one-character delay reason", () => {
     render(
       <ProgressEditModal

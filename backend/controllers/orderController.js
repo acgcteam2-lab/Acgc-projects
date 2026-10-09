@@ -1918,10 +1918,7 @@ export const updateOrderProgress = async (req, res) => {
             key.includes("site_inspection") ||
             name.includes("site inspection") ||
             key.includes("inspection") ||
-            name.includes("inspection") ||
-            // treat installation-named stages as inspection-related for compatibility
-            key.includes("installation") ||
-            name.includes("installation")
+            name.includes("inspection")
           );
         });
 
