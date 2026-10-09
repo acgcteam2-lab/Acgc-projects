@@ -1610,6 +1610,7 @@ function Transactions() {
               contractData={contractPreviewData}
               onDownload={downloadContractPDF}
               onPrint={printContract}
+              darkMode={darkMode}
             />
           )}
 

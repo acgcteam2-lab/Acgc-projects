@@ -5,8 +5,7 @@ import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { getFinalProjectCost, getRequiredDownpayment } from "@/lib/orderPricing";
 import { getContractBladeDetails } from "@/pages/SiteInspection/contractState";
 
-function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, onRegenerate, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false, notificationRecordId = null }) {
-  const darkMode = false;
+function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, onRegenerate, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false, notificationRecordId = null, darkMode = false }) {
   if (!isOpen || !inspection || !contractData) return null;
 
   const formatCurrency = (value) => new Intl.NumberFormat("en-PH", {
@@ -24,11 +23,11 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
   const closeButtonClass = darkMode ? "rounded-lg p-2 text-slate-200 hover:bg-slate-700" : "rounded-lg p-2 text-slate-600 hover:bg-slate-100";
   const contentClass = darkMode ? "relative mx-auto my-2 w-full max-w-[890px] overflow-y-auto bg-[#10283b] px-2.5 py-3 text-[12px] text-slate-100 shadow-sm" : "relative mx-auto my-2 w-full max-w-[890px] overflow-y-auto bg-white px-2.5 py-3 text-[12px] text-slate-800 shadow-sm";
   const infoCardClass = darkMode ? "mb-4 grid grid-cols-2 gap-2 rounded-xl border border-slate-600 bg-[#132f46] p-2.5 text-[10px] text-slate-200" : "mb-4 grid grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-[10px] text-slate-700";
-  const infoLabelClass = darkMode ? "font-black uppercase tracking-[0.14em] text-[#f8b4b4]" : "font-black uppercase tracking-[0.14em] text-[#5c1118]";
+  const infoLabelClass = darkMode ? "font-black uppercase tracking-[0.14em] text-red-300" : "font-black uppercase tracking-[0.14em] text-[#5c1118]";
   const infoValueClass = darkMode ? "mt-1 font-bold text-white" : "mt-1 font-bold text-slate-900";
   const noticeClass = darkMode ? "mb-4 rounded-xl border border-amber-400/40 bg-amber-500/15 px-4 py-3 text-sm text-amber-100" : "mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800";
-  const sectionLabelClass = darkMode ? "text-[10px] font-black uppercase tracking-[0.14em] text-[#f8b4b4]" : "text-[10px] font-black uppercase tracking-[0.14em] text-[#5c1118]";
-  const tableTopClass = darkMode ? "bg-[#742a2a] text-white" : "bg-[#5c1118] text-white";
+  const sectionLabelClass = darkMode ? "text-[10px] font-black uppercase tracking-[0.14em] text-red-300" : "text-[10px] font-black uppercase tracking-[0.14em] text-[#5c1118]";
+  const tableTopClass = darkMode ? "bg-[#6b2430] text-white" : "bg-[#5c1118] text-white";
   const subtleTextClass = darkMode ? "text-slate-300" : "text-slate-500";
   const subtleTextDarkClass = darkMode ? "text-slate-200" : "text-slate-600";
   const panelClass = darkMode ? "rounded border border-slate-600 bg-[#132f46] p-4" : "rounded border border-[#e3b7b7] p-4";
@@ -113,7 +112,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
         <div className={headerClass}>
           <div>
             <h2 className={titleClass}>Service Contract</h2>
-            {actionError && <p className="mt-1 text-sm font-medium text-red-600">{actionError}</p>}
+            {actionError && <p className={`mt-1 text-sm font-medium ${darkMode ? "text-red-300" : "text-red-600"}`}>{actionError}</p>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {onDownload && (
@@ -134,7 +133,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
                 {isSendingToCustomer ? "Sending..." : isAwaitingCustomerResponse ? "Sent" : "Send Contract to Customer"}
               </button>
             )}
-            {isAccepted && <span className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700">✓ Contract Accepted &amp; Signed</span>}
+            {isAccepted && <span className={`rounded-lg px-3 py-2 text-sm font-bold ${darkMode ? "border border-emerald-400/30 bg-emerald-500/15 text-emerald-200" : "bg-emerald-50 text-emerald-700"}`}>✓ Contract Accepted &amp; Signed</span>}
             {actionsAllowed && onAccept && <button type="button" onClick={onAccept} disabled={isLoading} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60">{isLoading ? "Signing..." : "Accept & Sign Contract"}</button>}
             {actionsAllowed && onDecline && <button type="button" onClick={onDecline} disabled={isLoading} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60">{isLoading ? "Declining..." : "Decline"}</button>}
             <button type="button" onClick={onClose} aria-label="Close contract" className={closeButtonClass}><X size={22} /></button>
@@ -142,7 +141,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
         </div>
 
         {contractStatus === "declined" && inspection.contractDeclineReason && (
-          <div className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-800">
+          <div className={`border-b px-5 py-3 text-sm ${darkMode ? "border-red-400/30 bg-red-500/10 text-red-200" : "border-red-200 bg-red-50 text-red-800"}`}>
             <span className="font-bold">Contract declined:</span> {inspection.contractDeclineReason}
           </div>
         )}
@@ -181,7 +180,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
             </div>
             <div>
               <h2 className={sectionLabelClass}>Client</h2>
-              <p className="mt-2 font-bold text-slate-900">{customerName}</p>
+              <p className={`mt-2 font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{customerName}</p>
               <p className={subtleTextDarkClass}>{customerEmail} | {customerPhone}</p>
               <p className={subtleTextClass}>{siteAddress}</p>
             </div>
@@ -223,7 +222,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
                     <td className="px-2 py-2 font-medium">
                       {item.name || "Item"}
                       {bladeDetails.isBlade && (
-                        <div className="mt-1 text-[9px] font-normal text-slate-500">
+                        <div className={`mt-1 text-[9px] font-normal ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
                           <div>{bladeDetails.glassName || "Glass"} · {bladeDetails.bladeCount} blades × {formatCurrency(bladeDetails.bladeRate)}/blade</div>
                           {bladeDetails.saleMode === "frame" && (
                             <div>Frame: {bladeDetails.frameName || "Selected frame"}{bladeDetails.framePrice > 0 ? ` · ${formatCurrency(bladeDetails.framePrice)}` : ""}</div>
@@ -238,7 +237,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
                       <td className="px-2 py-2 text-center text-[9px]">
                         <div className="font-bold">{warranty.periodText}</div>
                         {warranty.hasCoverage && (
-                          <div className="mt-1 text-slate-500">
+                          <div className={`mt-1 ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
                             <div>Start: {formatDate(warranty.start, "TBD")}</div>
                             <div>End: {formatDate(warranty.expiry, "TBD")}</div>
                           </div>
@@ -299,18 +298,18 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
           <section className={`mt-6 border-t ${darkMode ? "border-slate-600" : "border-slate-300"} pt-4`}>
             <h2 className={`${sectionLabelClass} border-b ${darkMode ? "border-slate-600" : "border-slate-200"} pb-2`}>Client Acknowledgment</h2>
             {isAccepted ? (
-              <div className="mt-4 flex items-end justify-between gap-6 text-[10px]">
+              <div className={`mt-4 flex items-end justify-between gap-6 text-[10px] ${darkMode ? "text-slate-200" : "text-slate-800"}`}>
                 <div className="flex-1">
                   <p className="border-b border-slate-500 pb-5 text-center">Electronically Signed by: {contractData.acceptedBy || customerName}</p>
-                  <p className="mt-2 font-semibold text-emerald-700">✓ Electronically Signed</p>
-                  <p className="text-slate-600">Date: {contractData.acceptanceDate || formatDate(new Date())}</p>
+                  <p className={`mt-2 font-semibold ${darkMode ? "text-emerald-300" : "text-emerald-700"}`}>✓ Electronically Signed</p>
+                  <p className={darkMode ? "text-slate-300" : "text-slate-600"}>Date: {contractData.acceptanceDate || formatDate(new Date())}</p>
                 </div>
-                <div className="w-2/5 rounded bg-slate-50 p-3 text-[9px] text-slate-500">Admin Note: This contract is officially issued by ACGC Glass &amp; Aluminum Services. Signature is implicit upon customer acceptance.</div>
+                <div className={`w-2/5 rounded p-3 text-[9px] ${darkMode ? "bg-slate-800 text-slate-300" : "bg-slate-50 text-slate-500"}`}>Admin Note: This contract is officially issued by ACGC Glass &amp; Aluminum Services. Signature is implicit upon customer acceptance.</div>
               </div>
             ) : (
               <div className="mt-6 grid grid-cols-2 gap-10 text-[10px]">
                 <div><p className="border-b border-slate-500 pb-5 text-center">ACGC Representative</p><p className="mt-2 font-semibold">Prepared by ACGC Glass &amp; Aluminum Services</p></div>
-                <div><p className="border-b border-slate-500 pb-5 text-center">Client Signature &amp; Printed Name</p><p className="mt-2 font-semibold">{customerName}</p><p className="text-slate-500">Date: __________________</p></div>
+                <div><p className="border-b border-slate-500 pb-5 text-center">Client Signature &amp; Printed Name</p><p className="mt-2 font-semibold">{customerName}</p><p className={darkMode ? "text-slate-300" : "text-slate-500"}>Date: __________________</p></div>
               </div>
             )}
           </section>

@@ -8943,6 +8943,7 @@ function CustomerDashboard() {
           isLoading={contractActionLoading}
           actionError={contractActionError}
           notificationRecordId={contractNotificationRecordId}
+          darkMode={darkMode}
         />
 
         {/* CONTRACT CONFIRMATION MODAL */}

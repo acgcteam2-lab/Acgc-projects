@@ -34,6 +34,8 @@ Set these in the backend service's Vercel environment settings:
 - `SUPPORT_EMAIL` and `SUPPORT_PHONE` if configured
 - `NODE_ENV=production`
 
+For Brevo SMTP, use `SMTP_HOST=smtp-relay.brevo.com`, `SMTP_PORT=587`, the SMTP login and SMTP key shown in Brevo (not an API key), and a sender address verified in Brevo. Redeploy the backend after changing environment variables.
+
 Do not set `PORT`; Vercel supplies it. The Vercel Cron job calls `/api/auth/system-settings/cron-backup` daily and authenticates using `CRON_SECRET`.
 
 ## Before Production
