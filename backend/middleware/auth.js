@@ -26,14 +26,14 @@ export const authMiddleware = async (req, res, next) => {
 
     let account;
     if (decoded.auth_source === "admin") {
-      account = await Admin.findById(decoded.id).select("session_version").lean();
+      account = await Admin.findById(decoded.id).select("session_version email first_name last_name phone role").lean();
     } else if (decoded.auth_source === "user") {
-      account = await User.findById(decoded.id).select("session_version").lean();
+      account = await User.findById(decoded.id).select("session_version email first_name last_name phone role").lean();
     } else if (decoded.role === "admin") {
-      account = await Admin.findById(decoded.id).select("session_version").lean()
-        || await User.findById(decoded.id).select("session_version").lean();
+      account = await Admin.findById(decoded.id).select("session_version email first_name last_name phone role").lean()
+        || await User.findById(decoded.id).select("session_version email first_name last_name phone role").lean();
     } else {
-      account = await User.findById(decoded.id).select("session_version").lean();
+      account = await User.findById(decoded.id).select("session_version email first_name last_name phone role").lean();
     }
 
     if (!account || Number(decoded.session_version || 0) !== Number(account.session_version || 0)) {
@@ -45,7 +45,7 @@ export const authMiddleware = async (req, res, next) => {
     }
 
     // Attach user info to request
-    req.user = decoded;
+    req.user = { ...decoded, ...account, id: decoded.id, role: decoded.role || account.role };
     next();
   } catch (error) {
     console.error("Auth middleware error:", error);

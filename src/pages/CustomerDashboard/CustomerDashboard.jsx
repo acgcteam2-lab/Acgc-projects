@@ -9,6 +9,10 @@ import {
   ShoppingCart,
   Info,
   User,
+  Building2,
+  Map,
+  Hash,
+  LockKeyhole,
   LogOut,
   Search,
   Mail,
@@ -65,6 +69,7 @@ import {
 } from "@/api/orders";
 import { uploadFiles } from "@/api/uploads";
 import ContractModal from "../../components/ContractModal";
+import OtpCodeInput from "@/components/OtpCodeInput";
 import ProductPriceEstimator from "@/components/ProductPriceEstimator";
 import { formatOrderItemMeasurements } from "@/components/OrderProgressTimeline";
 import OrderTimelineModal from "@/components/OrderTimelineModal";
@@ -74,6 +79,7 @@ import { getProgressColor } from "@/lib/utils";
 import { paginateItems } from "@/lib/pagination";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { getSystemSettings } from "@/api/users";
+import { requestEmailChange, resendEmailChangeCode, verifyEmailChangeCode } from "@/api/auth";
 import { getCart, saveCart } from "@/api/cart";
 import { formatDateToMMMDDYYYY, formatDateTimeToMMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
 import { buildDelayNotifications, sortCustomerNotificationsNewestFirst } from "@/lib/delayNotifications";
@@ -86,7 +92,7 @@ import {
   normalizeOrderStatusKey,
 } from "./orderStatusUtils";
 import { getPaymentSummary, isPaymentProofConfirmed } from "@/pages/Transactions/paymentProofUtils";
-import { buildProductPriceSnapshot, getDefaultExtraChargeSelections, getProductLineTotal } from "@/lib/productPricing";
+import { buildProductPriceSnapshot, getDefaultBladeCount, getDefaultExtraChargeSelections, getDefaultProductLineTotal, getProductLineBreakdown, getProductLineTotal } from "@/lib/productPricing";
 import { getFinalProjectCost } from "@/lib/orderPricing";
 import { getPhilippinePhoneError, isValidPhilippinePhone, normalizePhoneInput } from "@/lib/phoneValidation";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
@@ -130,6 +136,28 @@ const getDelayNotificationMessage = (notification) => {
   const resolutionText = expectedResolution ? ` Expected resolution: ${expectedResolution}.` : "";
   return `${stageName} is delayed.${reason}${resolutionText}`;
 };
+
+function ProfileTextField({ label, icon: Icon, darkMode, action, inputClassName = "", ...inputProps }) {
+  const inputTheme = darkMode
+    ? "border-slate-700 bg-slate-900 text-white placeholder:text-slate-400 disabled:text-slate-400"
+    : "border-gray-300 bg-white text-slate-900 placeholder:text-gray-400 disabled:border-slate-200 disabled:bg-gray-100 disabled:text-gray-500";
+
+  return (
+    <label className={`block text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+      <span className="mb-1 flex min-h-4 items-center justify-between gap-2">
+        <span>{label}</span>
+        {action}
+      </span>
+      <span className="relative block">
+        <Icon size={18} strokeWidth={1.8} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+        <input
+          {...inputProps}
+          className={`w-full rounded-xl border py-2.5 pl-11 pr-4 outline-none transition focus:border-red-500 focus:ring-4 focus:ring-red-500/10 disabled:cursor-not-allowed ${inputTheme} ${inputClassName}`}
+        />
+      </span>
+    </label>
+  );
+}
 
 const normalizeAddress = (value) => {
   if (!value) return "";
@@ -530,6 +558,18 @@ function CustomerDashboard() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileMessage, setProfileMessage] = useState("");
   const [profileError, setProfileError] = useState("");
+  const [emailChangeOpen, setEmailChangeOpen] = useState(false);
+  const [emailChangeSaving, setEmailChangeSaving] = useState(false);
+  const [emailChangeError, setEmailChangeError] = useState("");
+  const [emailChangeForm, setEmailChangeForm] = useState({ new_email: "", confirm_new_email: "", current_password: "" });
+  const [emailVerifyOpen, setEmailVerifyOpen] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState("");
+  const [emailVerificationCode, setEmailVerificationCode] = useState("");
+  const [emailVerifyError, setEmailVerifyError] = useState("");
+  const [emailVerifyMessage, setEmailVerifyMessage] = useState("");
+  const [emailVerifyLoading, setEmailVerifyLoading] = useState(false);
+  const [emailResending, setEmailResending] = useState(false);
+  const [emailResendCooldown, setEmailResendCooldown] = useState(0);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -1505,7 +1545,15 @@ function CustomerDashboard() {
   const hasValidOrderItemPricingDimensions = (item) => {
     const pricingMethod = String(item?.pricing_method || item?.unit || "").toLowerCase();
     const isBladeProduct = pricingMethod === "blade" || pricingMethod === "per_blade";
+    const isMeterProduct = pricingMethod === "per_meter" || pricingMethod === "meter";
+    const isPieceProduct = ["per_piece", "piece", "per_set", "set"].includes(pricingMethod);
     const needsCustomFrameDimensions = isBladeProduct && item?.sale_mode === "frame" && Boolean(item?.custom_frame_size);
+    if (isMeterProduct) {
+      return Number(item?.dimensions?.width) > 0
+        && Number(item?.dimensions?.quantity) > 0
+        && Boolean(item?.dimensions?.unit);
+    }
+    if (isPieceProduct) return Number(item?.dimensions?.quantity) > 0;
     if (!isBladeProduct) return areOrderItemDimensionsValid(item?.dimensions);
     if (needsCustomFrameDimensions && !areOrderItemDimensionsValid(item?.dimensions)) return false;
     return Number(item?.dimensions?.quantity) > 0 && Number(item?.blade_count) > 0;
@@ -1513,6 +1561,14 @@ function CustomerDashboard() {
 
   const getOrderItemDimensionText = (itemOrDimensions) => {
     const dimensions = itemOrDimensions?.dimensions || itemOrDimensions || {};
+    const pricingMethod = String(itemOrDimensions?.pricing_method || itemOrDimensions?.unit || "").toLowerCase();
+    if ((pricingMethod === "per_meter" || pricingMethod === "meter") && Number(dimensions.width) > 0 && dimensions.unit) {
+      return `${dimensions.width} ${dimensions.unit} length`;
+    }
+    if (["per_piece", "piece", "per_set", "set"].includes(pricingMethod)) {
+      const quantity = Math.max(1, Number(dimensions.quantity ?? itemOrDimensions?.quantity) || 1);
+      return `${quantity} piece${quantity === 1 ? "" : "s"}`;
+    }
     if (!areOrderItemDimensionsValid(dimensions)) return "—";
     return `${dimensions.width} ${dimensions.unit} × ${dimensions.height} ${dimensions.unit}`;
   };
@@ -1550,7 +1606,11 @@ function CustomerDashboard() {
       frame_type: options.frame_type || product?.frame_type || product?.default_frame_type || "",
       custom_frame_size: Boolean(options.custom_frame_size ?? product?.custom_frame_size),
       frame_price: options.frame_price == null ? product?.frame_price : Number(options.frame_price) || 0,
-      blade_count: Number(options.blade_count) || Number(product?.blade_count) || Number(product?.minimum_blades) || 1,
+      blade_count: getDefaultBladeCount(product || {}, {
+        sale_mode: options.sale_mode || product?.default_sale_mode,
+        frame_type: options.frame_type || product?.default_frame_type,
+        blade_count: options.blade_count,
+      }),
       extra_charges: options.extra_charges || product?.extra_charges || getDefaultExtraChargeSelections(product),
       estimated_price: Number(options.estimated_price) || 0,
       is_estimate: Boolean(options.is_estimate || dimensions.customized),
@@ -2484,6 +2544,132 @@ function CustomerDashboard() {
     await performProfileSave();
   };
 
+  const openEmailChange = () => {
+    setEmailChangeError("");
+    setProfileMessage("");
+    setEmailChangeForm({ new_email: "", confirm_new_email: "", current_password: "" });
+    setEmailChangeOpen(true);
+  };
+
+  const closeEmailChange = () => {
+    if (emailChangeSaving) return;
+    setEmailChangeOpen(false);
+    setEmailChangeError("");
+  };
+
+  const handleEmailChangeSubmit = async (event) => {
+    event.preventDefault();
+    if (emailChangeSaving) return;
+    setEmailChangeError("");
+
+    const newEmail = emailChangeForm.new_email.trim().toLowerCase();
+    const confirmedEmail = emailChangeForm.confirm_new_email.trim().toLowerCase();
+    const currentEmail = String(user?.email || profileForm.email || "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+      setEmailChangeError("Enter a valid new email address.");
+      return;
+    }
+    if (newEmail !== confirmedEmail) {
+      setEmailChangeError("The new email address and confirmation do not match.");
+      return;
+    }
+    if (newEmail === currentEmail) {
+      setEmailChangeError("The new email address matches your current email.");
+      return;
+    }
+    if (!emailChangeForm.current_password) {
+      setEmailChangeError("Enter your current password to continue.");
+      return;
+    }
+
+    setEmailChangeSaving(true);
+    try {
+      const response = await requestEmailChange({
+        new_email: newEmail,
+        current_password: emailChangeForm.current_password,
+      });
+      setPendingEmail(response.pending_email || newEmail);
+      setEmailVerificationCode("");
+      setEmailVerifyError("");
+      setEmailVerifyMessage(`A verification code has been sent to ${response.pending_email || newEmail}. Enter the code to verify and update your email.`);
+      setEmailResendCooldown(60);
+      setEmailChangeOpen(false);
+      setEmailVerifyOpen(true);
+      setEmailChangeForm({ new_email: "", confirm_new_email: "", current_password: "" });
+    } catch (error) {
+      setEmailChangeError(error.data?.message || error.message || "Unable to request an email change.");
+    } finally {
+      setEmailChangeSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!emailVerifyOpen) return undefined;
+    const cooldownTimer = window.setInterval(() => {
+      setEmailResendCooldown((remaining) => Math.max(remaining - 1, 0));
+    }, 1000);
+    return () => window.clearInterval(cooldownTimer);
+  }, [emailVerifyOpen]);
+
+  const handleEmailCodeVerify = async (event) => {
+    event.preventDefault();
+    if (emailVerifyLoading) return;
+    setEmailVerifyError("");
+    if (!/^\d{6}$/.test(emailVerificationCode)) {
+      setEmailVerifyError("Enter the six-digit verification code.");
+      return;
+    }
+
+    setEmailVerifyLoading(true);
+    try {
+      const response = await verifyEmailChangeCode(emailVerificationCode);
+      let updatedUser = null;
+      try {
+        updatedUser = await refreshUser();
+      } catch (refreshError) {
+        console.warn("Profile refresh after email verification failed", refreshError);
+      }
+      const verifiedEmail = updatedUser?.email || response.email || pendingEmail;
+      setProfileForm((current) => ({ ...current, email: verifiedEmail }));
+      setEmailVerifyOpen(false);
+      setEmailVerificationCode("");
+      setPendingEmail("");
+      setEmailVerifyMessage("");
+      setProfileMessage(response.message || "Your email address has been updated and verified successfully.");
+    } catch (error) {
+      setEmailVerifyError(error.data?.message || error.message || "Unable to verify the code.");
+    } finally {
+      setEmailVerifyLoading(false);
+    }
+  };
+
+  const handleEmailCodeResend = async () => {
+    if (emailResending || emailResendCooldown > 0) return;
+    setEmailVerifyError("");
+    setEmailResending(true);
+    try {
+      await resendEmailChangeCode();
+      setEmailVerificationCode("");
+      setEmailResendCooldown(60);
+      setEmailVerifyMessage("A new verification code has been sent.");
+    } catch (error) {
+      const retryAfter = Number(error.data?.retry_after_seconds) || 0;
+      if (retryAfter > 0) setEmailResendCooldown(retryAfter);
+      setEmailVerifyError(error.data?.message || error.message || "Unable to resend the verification code.");
+    } finally {
+      setEmailResending(false);
+    }
+  };
+
+  const closeEmailVerification = () => {
+    if (emailVerifyLoading || emailResending) return;
+    setEmailVerifyOpen(false);
+    setEmailVerificationCode("");
+    setEmailVerifyError("");
+    setEmailVerifyMessage("");
+    setPendingEmail("");
+  };
+
   const openBatchOrderModal = () => {
     if (cartItems.length === 0) {
       setCheckoutError("Your cart is empty.");
@@ -2713,8 +2899,9 @@ function CustomerDashboard() {
         throw new Error("Some selected cart items are missing their cart IDs. Refresh your cart and try again.");
       }
 
-      const orderItems = selectedCartItems.map((item) =>
-        buildCustomerOrderItem(item, {
+      const orderItems = selectedCartItems.map((item) => {
+        const { product, item: pricingItem } = getCartPricingContext(item);
+        return buildCustomerOrderItem(product, {
           quantity: item.quantity,
           width: item.dimensions?.width ?? item.width,
           height: item.dimensions?.height ?? item.height,
@@ -2724,15 +2911,15 @@ function CustomerDashboard() {
           estimated_price: item.estimated_price,
           notes: batchOrderForm.notes.trim() || item.notes,
           is_estimate: item.is_estimate,
-          blade_glass_type: item.blade_glass_type,
-          sale_mode: item.sale_mode,
-          frame_type: item.frame_type,
-          custom_frame_size: item.custom_frame_size,
-          frame_price: item.frame_price,
-          blade_count: item.blade_count,
-          extra_charges: item.extra_charges,
-        })
-      );
+          blade_glass_type: pricingItem.blade_glass_type,
+          sale_mode: pricingItem.sale_mode,
+          frame_type: pricingItem.frame_type,
+          custom_frame_size: pricingItem.custom_frame_size,
+          frame_price: pricingItem.frame_price,
+          blade_count: pricingItem.blade_count,
+          extra_charges: pricingItem.extra_charges,
+        });
+      });
 
       if (orderItems.some((item) => !hasValidOrderItemPricingDimensions(item))) {
         setCheckoutError("Please provide valid product dimensions before submitting your order.");
@@ -2784,8 +2971,22 @@ function CustomerDashboard() {
 
   const getProductPrice = (product) => {
     if (!product) return "Contact us";
+    if (["blade", "per_blade"].includes(String(product.pricing_method || product.unit || "").toLowerCase())) {
+      const defaultPrice = getDefaultProductLineTotal(product);
+      return defaultPrice > 0 ? formatCurrency(defaultPrice) : "Contact us";
+    }
     const override = Number(product.estimated_price_override) || 0;
-    if (override > 0) return formatCurrency(override);
+    if (override > 0) {
+      const defaultPrice = getProductLineTotal(product, {
+        ...getProductDefaultDimensions(product, 1),
+        blade_glass_type: product.default_blade_glass_type,
+        sale_mode: product.default_sale_mode,
+        frame_type: product.default_frame_type,
+        blade_count: Number(product.blade_count) || Number(product.minimum_blades) || 1,
+        extra_charges: getDefaultExtraChargeSelections(product),
+      });
+      return formatCurrency(defaultPrice);
+    }
     if (product.pricing_method === "blade" || product.unit === "per_blade") {
       const bladeRates = (product.blade_glass_types || [])
         .map((glass) => Number(glass.price_per_blade) || 0)
@@ -2803,6 +3004,12 @@ function CustomerDashboard() {
   const getProductEstimateRate = (product) => {
     const pricingMethod = String(product?.pricing_method || "").toLowerCase();
     const legacyUnit = String(product?.unit || "").toLowerCase();
+    if (pricingMethod === "per_meter" || (!pricingMethod && legacyUnit === "per_meter")) {
+      return Number(product?.unit_price) || undefined;
+    }
+    if (pricingMethod === "per_piece" || (!pricingMethod && ["per_piece", "per_set"].includes(legacyUnit))) {
+      return Number(product?.base_price || product?.unit_price) || undefined;
+    }
     if (pricingMethod === "sqft" || (!pricingMethod && legacyUnit === "per_sqft")) {
       return Number(product?.price_per_sqft) || undefined;
     }
@@ -2857,6 +3064,17 @@ function CustomerDashboard() {
     const rawArea = Number(item.area ?? item.dimensions?.area ?? 0);
     const estimatedPrice = Number(item.estimated_price || 0);
     const quantity = Number(item.quantity || 1);
+    const pricingMethod = String(item.pricing_method || item.unit || "").toLowerCase();
+
+    if ((pricingMethod === "per_meter" || pricingMethod === "meter") && width > 0) {
+      const toMetersFactor = { in: 0.0254, ft: 0.3048, cm: 0.01, m: 1 };
+      const totalLengthMeters = width * (toMetersFactor[measurementUnit] || 1) * quantity;
+      return {
+        dimensions: `Length ${width} ${measurementUnit}`,
+        area: `${totalLengthMeters.toLocaleString(undefined, { maximumFractionDigits: 2 })} m total`,
+        unitRate: `₱${Number(item.unit_price || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}/m`,
+      };
+    }
 
     if (!width || !height) return null;
 
@@ -2887,6 +3105,77 @@ function CustomerDashboard() {
       area: `${areaInSqFt > 0 ? areaInSqFt.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "0"} sq.ft`,
       unitRate: `₱${Number(ratePerSqFt || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}/sq.ft`,
     };
+  };
+
+  function getCartPricingContext(item) {
+    const productId = item.product_id || item._id || item.product?._id || item.product?.id;
+    const product = cartPricingProducts.find((candidate) => String(candidate._id || candidate.id) === String(productId)) || item;
+    if (!isBladePricingProduct(product)) return { product, item };
+
+    const glassTypes = Array.isArray(product.blade_glass_types) ? product.blade_glass_types : [];
+    const frameTypes = Array.isArray(product.blade_frame_types) ? product.blade_frame_types : [];
+    const selectedSaleMode = item.sale_mode || product.default_sale_mode || (product.sell_blades_only === false ? "frame" : "blades_only");
+    const saleMode = selectedSaleMode === "frame" && !product.sell_with_frame ? "blades_only" : selectedSaleMode;
+    const defaultFrame = frameTypes.find((candidate) => candidate.name === product.default_frame_type) || frameTypes[0];
+    const frame = frameTypes.find((candidate) => candidate.name === (item.frame_type || defaultFrame?.name)) || defaultFrame;
+    const customFrameSize = Boolean(item.custom_frame_size && product.allow_custom_frame_size);
+    const bladeCount = getDefaultBladeCount(product, {
+      sale_mode: saleMode,
+      frame_type: frame?.name,
+      custom_frame_size: customFrameSize,
+      blade_count: item.blade_count,
+    });
+    const selectedGlassExists = glassTypes.some((candidate) => candidate.name === item.blade_glass_type);
+    const glassName = selectedGlassExists
+      ? item.blade_glass_type
+      : product.default_blade_glass_type || glassTypes[0]?.name || "";
+    const currentCharges = getDefaultExtraChargeSelections(product);
+    const previousCharges = Array.isArray(item.extra_charges) ? item.extra_charges : [];
+    const extraCharges = currentCharges.map((charge, index) => {
+      const previous = previousCharges.find((candidate) => candidate.name === charge.name) || previousCharges[index];
+      return {
+        ...charge,
+        is_selected: charge.is_optional === true
+          ? (typeof previous?.is_selected === "boolean" ? previous.is_selected : charge.is_selected)
+          : true,
+      };
+    });
+    const pricingItem = {
+      ...item,
+      quantity: Math.max(1, Number(item.quantity) || 1),
+      blade_glass_type: glassName,
+      sale_mode: saleMode,
+      frame_type: frame?.name || "",
+      custom_frame_size: customFrameSize,
+      frame_price: saleMode === "frame"
+        ? Number(customFrameSize ? product.custom_frame_price : frame?.price) || 0
+        : 0,
+      blade_count: bladeCount,
+      extra_charges: extraCharges,
+    };
+    return { product, item: pricingItem };
+  }
+
+  const getCartBladePriceBreakdown = (item) => {
+    const { product, item: pricingItem } = getCartPricingContext(item);
+    if (!isBladePricingProduct(product)) return [];
+    const glassTypes = Array.isArray(product.blade_glass_types) ? product.blade_glass_types : [];
+    const frameTypes = Array.isArray(product.blade_frame_types) ? product.blade_frame_types : [];
+    const glass = glassTypes.find((candidate) => candidate.name === pricingItem.blade_glass_type);
+    const frame = frameTypes.find((candidate) => candidate.name === pricingItem.frame_type);
+    const bladeCount = Number(pricingItem.blade_count) || 1;
+    const bladeRate = Number(glass?.price_per_blade ?? product.price_per_blade) || 0;
+    const saleMode = pricingItem.sale_mode;
+    const frameName = pricingItem.custom_frame_size ? "Custom frame" : frame?.name || "Frame";
+    const framePrice = Number(pricingItem.frame_price) || 0;
+    const breakdown = getProductLineBreakdown(product, pricingItem);
+    const details = [`${pricingItem.blade_glass_type || "Glass"}${saleMode === "frame" ? ` · ${frameName} frame` : ""} · ${bladeCount} blade${bladeCount === 1 ? "" : "s"}`];
+    if (bladeRate > 0) details.push(`${formatCurrency(bladeRate)}/blade`);
+    if (framePrice > 0) details.push(`+ Frame (${frameName}): ${formatCurrency(framePrice)}`);
+    breakdown.extraCharges.forEach((charge) => {
+      if (charge.total > 0) details.push(`+ ${charge.name}: ${formatCurrency(charge.total)}`);
+    });
+    return details;
   };
 
   const getProductImage = (product) => {
@@ -2962,10 +3251,9 @@ function CustomerDashboard() {
     if (!item) return 0;
 
     if (item.cartId) {
-      const productId = item.product_id || item._id || item.product?._id || item.product?.id;
-      const currentProduct = cartPricingProducts.find((product) => String(product._id || product.id) === String(productId)) || item;
+      const { product: currentProduct, item: pricingItem } = getCartPricingContext(item);
       return getProductLineTotal(currentProduct, {
-        ...item,
+        ...pricingItem,
         quantity: item.quantity || item.dimensions?.quantity || 1,
         width: item.dimensions?.width ?? item.width,
         height: item.dimensions?.height ?? item.height,
@@ -3038,8 +3326,9 @@ function CustomerDashboard() {
     return formatOrderItemMeasurements(item);
   };
 
-  const isBladePricingProduct = (product) =>
-    ["blade", "per_blade"].includes(String(product?.pricing_method || product?.unit || "").toLowerCase());
+  function isBladePricingProduct(product) {
+    return ["blade", "per_blade"].includes(String(product?.pricing_method || product?.unit || "").toLowerCase());
+  }
 
   const getBladeOrderSummaryText = (product, selections = {}, quantity = 1) => {
     if (!isBladePricingProduct(product)) return "";
@@ -3436,6 +3725,8 @@ function CustomerDashboard() {
   const productEstimatorWidth = Number(productEstimatorForm.width) || 0;
   const productEstimatorHeight = Number(productEstimatorForm.height) || 0;
   const isBladeEstimator = selectedProduct?.pricing_method === "blade";
+  const isMeterEstimator = selectedProduct?.pricing_method === "per_meter" || selectedProduct?.unit === "per_meter";
+  const isPieceEstimator = ["per_piece", "per_set", "piece", "set"].includes(String(selectedProduct?.pricing_method || selectedProduct?.unit || "").toLowerCase());
   const productBladeGlassTypes = Array.isArray(selectedProduct?.blade_glass_types) ? selectedProduct.blade_glass_types : [];
   const productBladeFrameTypes = Array.isArray(selectedProduct?.blade_frame_types) ? selectedProduct.blade_frame_types : [];
   const selectedBladeGlass = productBladeGlassTypes.find((glass) => glass.name === productEstimatorForm.blade_glass_type);
@@ -3443,7 +3734,7 @@ function CustomerDashboard() {
   const estimatorBladeCount = productEstimatorForm.sale_mode === "frame"
     ? Number(selectedBladeFrame?.blade_count) || Number(productEstimatorForm.blade_count) || 0
     : Number(productEstimatorForm.blade_count) || Number(selectedProduct?.minimum_blades) || 1;
-  const productEstimatorNeedsDimensions = !isBladeEstimator || (productEstimatorForm.sale_mode === "frame" && productEstimatorForm.custom_frame_size);
+  const productEstimatorNeedsDimensions = (!isBladeEstimator && !isPieceEstimator) || (productEstimatorForm.sale_mode === "frame" && productEstimatorForm.custom_frame_size);
   const rawProductEstimatorResult = selectedProduct ? calculateEstimate({
     productName: selectedProduct.product_name || selectedProduct.name,
     categoryKey: selectedProduct.product_type || selectedProduct.category,
@@ -3474,8 +3765,12 @@ function CustomerDashboard() {
           blade_count: estimatorBladeCount,
           extra_charges: productEstimatorForm.extra_charges,
         }),
-        rate: isBladeEstimator ? Number(selectedBladeGlass?.price_per_blade) || 0 : rawProductEstimatorResult?.rate || 0,
-        areaDisplay: isBladeEstimator ? `${estimatorBladeCount} blade(s)` : rawProductEstimatorResult?.areaDisplay,
+        rate: isBladeEstimator
+          ? Number(selectedBladeGlass?.price_per_blade) || 0
+          : isMeterEstimator || isPieceEstimator ? Number(selectedProduct.unit_price || selectedProduct.base_price) || 0 : rawProductEstimatorResult?.rate || 0,
+        areaDisplay: isBladeEstimator
+          ? `${estimatorBladeCount} blade(s)`
+          : isMeterEstimator ? `${productEstimatorWidth} ${productEstimatorForm.unit}` : isPieceEstimator ? "1 piece" : rawProductEstimatorResult?.areaDisplay,
       }
     : null;
   const hasBladeEstimate = Boolean(
@@ -3493,7 +3788,11 @@ function CustomerDashboard() {
   );
   const hasProductEstimatorEstimate = isBladeEstimator
     ? hasBladeEstimate
-    : productEstimatorWidth > 0 && productEstimatorHeight > 0 && Number(productEstimatorResult?.estimated_price) > 0;
+    : isMeterEstimator
+      ? productEstimatorWidth > 0 && Number(productEstimatorResult?.estimated_price) > 0
+      : isPieceEstimator
+        ? Number(productEstimatorResult?.estimated_price) > 0
+      : productEstimatorWidth > 0 && productEstimatorHeight > 0 && Number(productEstimatorResult?.estimated_price) > 0;
 
   const estimateArea = estimateResult.estimated_area || 0;
   const estimateTotalArea = estimateArea;
@@ -4831,10 +5130,14 @@ function CustomerDashboard() {
                           {hasProductEstimatorEstimate ? (
                             <div className={`mt-4 space-y-3 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`} aria-live="polite">
                               <div className="flex items-center justify-between gap-3">
-                                <span className="inline-flex items-center gap-2"><Ruler size={13} aria-hidden="true" />{isBladeEstimator ? "Blades" : "Area"}</span>
+                                <span className="inline-flex items-center gap-2"><Ruler size={13} aria-hidden="true" />{isBladeEstimator ? "Blades" : isMeterEstimator ? "Length" : isPieceEstimator ? "Quantity" : "Area"}</span>
                                 <span className={`font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
                                   {isBladeEstimator
                                     ? `${estimatorBladeCount} blade(s)`
+                                    : isMeterEstimator
+                                    ? productEstimatorResult?.areaDisplay || "—"
+                                    : isPieceEstimator
+                                    ? productEstimatorResult?.areaDisplay || "1 piece"
                                     : Number(productEstimatorResult?.estimated_area) > 0
                                     ? `${Number(productEstimatorResult.estimated_area).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sq ft`
                                     : productEstimatorResult?.areaDisplay || "—"}
@@ -4844,7 +5147,7 @@ function CustomerDashboard() {
                                 <span>Base Rate</span>
                                 <span className={`font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
                                   {Number(productEstimatorResult?.rate) > 0
-                                    ? `${formatCurrency(productEstimatorResult.rate)} / ${isBladeEstimator || productEstimatorResult?.areaDisplay?.includes("blade") ? "blade" : Number(productEstimatorResult?.estimated_area) > 0 ? "sq ft" : "unit"}`
+                                    ? `${formatCurrency(productEstimatorResult.rate)} / ${isBladeEstimator || productEstimatorResult?.areaDisplay?.includes("blade") ? "blade" : isMeterEstimator ? "meter" : isPieceEstimator ? "piece" : Number(productEstimatorResult?.estimated_area) > 0 ? "sq ft" : "unit"}`
                                     : "Contact us"}
                                 </span>
                               </div>}
@@ -7379,6 +7682,11 @@ function CustomerDashboard() {
                               </div>
                             );
                           })()}
+                          {getCartBladePriceBreakdown(item).map((line, index) => (
+                            <p key={`${item.cartId || item._id || item.name}-price-${index}`} className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
+                              {line}
+                            </p>
+                          ))}
                           {item.is_estimate && (
                             <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${darkMode ? "bg-amber-500/10 text-amber-300" : "bg-amber-50 text-amber-700"}`}>
                               Estimated price
@@ -7889,8 +8197,8 @@ function CustomerDashboard() {
           {profileEditing && (
           createPortal(
           <div className="mobile-fullscreen-overlay fixed inset-0 z-[90] overflow-y-auto bg-slate-950/55 px-3 py-4 backdrop-blur-sm sm:px-6 sm:py-8">
-          <div role="dialog" aria-modal="true" aria-labelledby="customer-profile-settings-title" className="mobile-fullscreen-dialog mx-auto max-h-[calc(100dvh-1.5rem)] w-full max-w-3xl overflow-y-auto overscroll-contain">
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+          <div role="dialog" aria-modal="true" aria-labelledby="customer-profile-settings-title" className="mobile-fullscreen-dialog mx-auto max-h-[calc(100dvh-1.5rem)] w-full max-w-5xl overflow-y-auto overscroll-contain xl:h-[min(88dvh,52rem)] xl:max-h-[calc(100dvh-4rem)] xl:overflow-hidden">
+          <div className="grid grid-cols-1 gap-4 xl:h-full xl:min-h-0 xl:grid-cols-3">
             <div className={`rounded-2xl shadow p-4 sm:p-5 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
               <div className="flex flex-col items-center">
                 <ProfileAvatar
@@ -7931,7 +8239,7 @@ function CustomerDashboard() {
               </div>
             </div>
 
-            <div className={`flex min-h-0 flex-col xl:col-span-2 rounded-2xl shadow p-4 sm:p-5 ${darkMode ? "bg-slate-800" : "bg-white"}`}>
+            <div className={`flex min-h-0 flex-col rounded-2xl p-4 shadow sm:p-5 xl:col-span-2 xl:overflow-hidden ${darkMode ? "bg-slate-800" : "bg-white"}`}>
               <div className="mb-4 flex flex-wrap items-center gap-3">
                 <User size={24} className="text-red-600" />
                 <div>
@@ -7987,161 +8295,147 @@ function CustomerDashboard() {
                   </div>
                 </div>
 
-                <div className="mt-3 max-h-[min(42dvh,26rem)] overflow-y-auto overscroll-contain lg:max-h-[min(48dvh,30rem)]">
+                <div className="mt-3 max-h-[min(42dvh,26rem)] overflow-y-auto overscroll-contain lg:max-h-[min(48dvh,30rem)] xl:max-h-none xl:min-h-0 xl:flex-1">
                   {profileTab === "profile" ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>First Name</label>
-                        <div className="relative mt-1.5">
-                          <User size={16} className="absolute left-3.5 top-3.5 text-gray-400" />
-                          <input
-                            type="text"
-                            name="first_name"
-                            value={profileForm.first_name}
-                            onChange={handleProfileChange}
-                            placeholder="First Name"
-                            className={`w-full pl-10 pr-3 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>Last Name</label>
-                        <div className="relative mt-1.5">
-                          <User size={16} className="absolute left-3.5 top-3.5 text-gray-400" />
-                          <input
-                            type="text"
-                            name="last_name"
-                            value={profileForm.last_name}
-                            onChange={handleProfileChange}
-                            placeholder="Last Name"
-                            className={`w-full pl-10 pr-3 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>Phone Number</label>
-                        <div className="relative mt-1.5">
-                          <Phone size={16} className="absolute left-3.5 top-3.5 text-gray-400" />
-                          <input
-                            type="tel"
-                            inputMode="tel"
-                            maxLength={13}
-                            name="phone"
-                            value={profileForm.phone}
-                            onChange={handleProfileChange}
-                            placeholder="+639171234567 or 09171234567"
-                            className={`w-full pl-10 pr-3 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>Email Address</label>
-                        <div className="relative mt-1.5">
-                          <Mail size={16} className="absolute left-3.5 top-3.5 text-gray-400" />
-                          <input
-                            type="email"
-                            name="email"
-                            value={profileForm.email}
-                            disabled
-                            className={`w-full pl-10 pr-3 py-2.5 border rounded-xl ${darkMode ? "bg-slate-900 border-slate-700 text-slate-400" : "bg-gray-100 text-gray-500 border-slate-200"}`}
-                          />
-                        </div>
-                      </div>
-
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <ProfileTextField
+                        label="First Name"
+                        icon={User}
+                        darkMode={darkMode}
+                        type="text"
+                        name="first_name"
+                        value={profileForm.first_name}
+                        onChange={handleProfileChange}
+                        placeholder="First Name"
+                      />
+                      <ProfileTextField
+                        label="Last Name"
+                        icon={User}
+                        darkMode={darkMode}
+                        type="text"
+                        name="last_name"
+                        value={profileForm.last_name}
+                        onChange={handleProfileChange}
+                        placeholder="Last Name"
+                      />
+                      <ProfileTextField
+                        label="Phone Number"
+                        icon={Phone}
+                        darkMode={darkMode}
+                        type="tel"
+                        inputMode="tel"
+                        maxLength={13}
+                        name="phone"
+                        value={profileForm.phone}
+                        onChange={handleProfileChange}
+                        placeholder="+639171234567 or 09171234567"
+                      />
+                      <ProfileTextField
+                        label="Email Address"
+                        icon={Mail}
+                        darkMode={darkMode}
+                        type="email"
+                        name="email"
+                        id="profile-email-address"
+                        value={profileForm.email}
+                        disabled
+                        action={(
+                          <button
+                            type="button"
+                            onClick={openEmailChange}
+                            className={`inline-flex items-center gap-1.5 text-xs font-semibold ${darkMode ? "text-red-300 hover:text-red-200" : "text-red-700 hover:text-red-800"}`}
+                          >
+                            <Pencil size={13} aria-hidden="true" /> Edit Email
+                          </button>
+                        )}
+                      />
                       <div className="md:col-span-2">
-                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>Street Address</label>
-                        <input
+                        <ProfileTextField
+                          label="Street Address"
+                          icon={MapPin}
+                          darkMode={darkMode}
                           type="text"
                           name="street_address"
                           value={profileForm.street_address}
                           onChange={handleProfileChange}
                           placeholder="Street address"
-                          className={`w-full mt-1.5 px-3 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
                         />
                       </div>
-
-                      <div>
-                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>City</label>
-                        <input
-                          type="text"
-                          name="city"
-                          value={profileForm.city}
-                          onChange={handleProfileChange}
-                          placeholder="City"
-                          className={`w-full mt-1.5 px-3 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
-                        />
-                      </div>
-
-                      <div>
-                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>Province</label>
-                        <input
-                          type="text"
-                          name="province"
-                          value={profileForm.province}
-                          onChange={handleProfileChange}
-                          placeholder="Province"
-                          className={`w-full mt-1.5 px-3 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
-                        />
-                      </div>
-
-                      <div className="md:col-span-2">
-                        <label className={darkMode ? "text-xs font-medium text-slate-300" : "text-xs font-medium text-gray-600"}>Zip Code</label>
-                        <input
-                          type="text"
-                          name="zip_code"
-                          value={profileForm.zip_code}
-                          onChange={handleProfileChange}
-                          placeholder="Zip Code"
-                          className={`w-full mt-1.5 px-3 py-2.5 border rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "bg-slate-900 border-slate-700 text-white placeholder:text-slate-400" : "bg-white border-slate-200"}`}
-                        />
-                      </div>
+                      <ProfileTextField
+                        label="City"
+                        icon={Building2}
+                        darkMode={darkMode}
+                        type="text"
+                        name="city"
+                        value={profileForm.city}
+                        onChange={handleProfileChange}
+                        placeholder="City"
+                      />
+                      <ProfileTextField
+                        label="Province"
+                        icon={Map}
+                        darkMode={darkMode}
+                        type="text"
+                        name="province"
+                        value={profileForm.province}
+                        onChange={handleProfileChange}
+                        placeholder="Province"
+                      />
+                      <ProfileTextField
+                        label="Zip Code"
+                        icon={Hash}
+                        darkMode={darkMode}
+                        type="text"
+                        inputMode="numeric"
+                        name="zip_code"
+                        value={profileForm.zip_code}
+                        onChange={handleProfileChange}
+                        placeholder="Zip Code"
+                      />
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div className="md:col-span-3">
-                        <label className={`text-sm font-medium ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Current Password</label>
-                        <input
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div className="md:col-span-2">
+                        <ProfileTextField
+                          label="Current Password"
+                          icon={LockKeyhole}
+                          darkMode={darkMode}
                           type="password"
                           name="current_password"
                           value={profileForm.current_password}
                           onChange={handleProfileChange}
                           placeholder="Enter current password"
-                          className={`mt-2 w-full rounded-2xl border px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-600 bg-slate-900 text-slate-100 placeholder:text-slate-400" : "border-slate-200 bg-white"}`}
+                          autoComplete="current-password"
                         />
                       </div>
-
-                      <div>
-                        <label className={`text-sm font-medium ${darkMode ? "text-slate-300" : "text-gray-600"}`}>New Password</label>
-                        <input
-                          type="password"
-                          name="new_password"
-                          value={profileForm.new_password}
-                          onChange={handleProfileChange}
-                          placeholder="Enter new password"
-                          className={`mt-2 w-full rounded-2xl border px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-600 bg-slate-900 text-slate-100 placeholder:text-slate-400" : "border-slate-200 bg-white"}`}
-                        />
-                      </div>
-
-                      <div>
-                        <label className={`text-sm font-medium ${darkMode ? "text-slate-300" : "text-gray-600"}`}>Confirm Password</label>
-                        <input
-                          type="password"
-                          name="confirm_password"
-                          value={profileForm.confirm_password}
-                          onChange={handleProfileChange}
-                          placeholder="Confirm new password"
-                          className={`mt-2 w-full rounded-2xl border px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-600 bg-slate-900 text-slate-100 placeholder:text-slate-400" : "border-slate-200 bg-white"}`}
-                        />
-                      </div>
+                      <ProfileTextField
+                        label="New Password"
+                        icon={LockKeyhole}
+                        darkMode={darkMode}
+                        type="password"
+                        name="new_password"
+                        value={profileForm.new_password}
+                        onChange={handleProfileChange}
+                        placeholder="Enter new password"
+                        autoComplete="new-password"
+                      />
+                      <ProfileTextField
+                        label="Confirm Password"
+                        icon={LockKeyhole}
+                        darkMode={darkMode}
+                        type="password"
+                        name="confirm_password"
+                        value={profileForm.confirm_password}
+                        onChange={handleProfileChange}
+                        placeholder="Confirm new password"
+                        autoComplete="new-password"
+                      />
                     </div>
                   )}
                 </div>
               </div>
 
-              <div className={`sticky bottom-0 z-10 -mx-4 -mb-4 mt-3 flex justify-end border-t px-4 py-2.5 sm:-mx-5 sm:-mb-5 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+              <div className={`-mx-4 -mb-4 mt-3 flex shrink-0 justify-end border-t px-4 py-2.5 sm:-mx-5 sm:-mb-5 sm:px-5 xl:static ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
                 <button
                   onClick={handleProfileSave}
                   disabled={profileSaving}
@@ -8151,6 +8445,143 @@ function CustomerDashboard() {
                   {profileSaving ? "Saving..." : "Save Changes"}
                 </button>
               </div>
+
+              {emailChangeOpen && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto bg-slate-950/65 p-3 backdrop-blur-sm sm:p-6">
+                  <form
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="email-change-title"
+                    onSubmit={handleEmailChangeSubmit}
+                    className={`my-auto w-full max-w-lg rounded-2xl border p-5 shadow-2xl sm:p-6 ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                  >
+                    <h3 id="email-change-title" className="text-lg font-bold">Edit Email Address</h3>
+                    <p className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                      We will send a verification code to your new address. Your current email stays active until it is verified.
+                    </p>
+                    {emailChangeError && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{emailChangeError}</p>}
+                    <div className="mt-5 space-y-4">
+                      <label className="block text-sm font-medium">
+                        Current Email Address
+                        <input
+                          type="email"
+                          value={user?.email || profileForm.email || ""}
+                          readOnly
+                          className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 ${darkMode ? "border-slate-700 bg-slate-900 text-slate-300" : "border-slate-200 bg-slate-100 text-slate-600"}`}
+                        />
+                      </label>
+                      <label className="block text-sm font-medium">
+                        New Email Address
+                        <input
+                          type="email"
+                          autoComplete="email"
+                          required
+                          value={emailChangeForm.new_email}
+                          onChange={(event) => setEmailChangeForm((current) => ({ ...current, new_email: event.target.value }))}
+                          className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-700 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                        />
+                      </label>
+                      <label className="block text-sm font-medium">
+                        Confirm New Email Address
+                        <input
+                          type="email"
+                          autoComplete="email"
+                          required
+                          value={emailChangeForm.confirm_new_email}
+                          onChange={(event) => setEmailChangeForm((current) => ({ ...current, confirm_new_email: event.target.value }))}
+                          className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-700 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                        />
+                      </label>
+                      <label className="block text-sm font-medium">
+                        Current Password
+                        <input
+                          type="password"
+                          autoComplete="current-password"
+                          required
+                          value={emailChangeForm.current_password}
+                          onChange={(event) => setEmailChangeForm((current) => ({ ...current, current_password: event.target.value }))}
+                          className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-700 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                        />
+                      </label>
+                    </div>
+                    <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                      <button
+                        type="button"
+                        onClick={closeEmailChange}
+                        disabled={emailChangeSaving}
+                        className={`rounded-xl border px-4 py-2.5 text-sm font-semibold disabled:opacity-60 ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={emailChangeSaving}
+                        className="rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {emailChangeSaving ? "Sending..." : "Save Changes"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {emailVerifyOpen && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto bg-slate-950/65 p-3 backdrop-blur-sm sm:p-6">
+                  <form
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="email-verify-title"
+                    onSubmit={handleEmailCodeVerify}
+                    className={`my-auto w-full max-w-lg rounded-2xl border p-5 shadow-2xl sm:p-6 ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                  >
+                    <h3 id="email-verify-title" className="text-lg font-bold">Verify Email Address</h3>
+                    <p className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                      A verification code was sent to the new email address below. Enter it to verify and update your email.
+                    </p>
+                    <p className={`mt-4 break-all rounded-xl border px-3 py-2.5 text-sm font-semibold ${darkMode ? "border-slate-700 bg-slate-900 text-white" : "border-slate-200 bg-slate-50 text-slate-900"}`}>
+                      {pendingEmail}
+                    </p>
+                    {emailVerifyMessage && <p role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{emailVerifyMessage}</p>}
+                    {emailVerifyError && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{emailVerifyError}</p>}
+                    <label htmlFor="email-verification-code" className="mb-2 mt-5 block text-sm font-medium">Verification Code</label>
+                    <OtpCodeInput
+                      id="email-verification-code"
+                      value={emailVerificationCode}
+                      onChange={setEmailVerificationCode}
+                      disabled={emailVerifyLoading || emailResending}
+                      darkMode={darkMode}
+                      autoFocus
+                    />
+                    <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <button
+                        type="button"
+                        onClick={handleEmailCodeResend}
+                        disabled={emailResending || emailVerifyLoading || emailResendCooldown > 0}
+                        className={`rounded-xl px-2 py-2.5 text-left text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "text-red-300 hover:text-red-200" : "text-red-700 hover:text-red-800"}`}
+                      >
+                        {emailResending ? "Sending code..." : emailResendCooldown > 0 ? `Resend code in ${emailResendCooldown}s` : "Resend Code"}
+                      </button>
+                      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                        <button
+                          type="button"
+                          onClick={closeEmailVerification}
+                          disabled={emailVerifyLoading || emailResending}
+                          className={`rounded-xl border px-4 py-2.5 text-sm font-semibold disabled:opacity-60 ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={emailVerifyLoading || emailResending}
+                          className="rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {emailVerifyLoading ? "Verifying..." : "Verify Code"}
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+                </div>
+              )}
 
               {showPasswordModal && (
                 <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">

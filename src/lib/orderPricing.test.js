@@ -3,6 +3,7 @@ import {
   calculateRequiredDownpayment,
   getFinalProjectCost,
   getRequiredDownpayment,
+  isProjectPriceLocked,
 } from "./orderPricing";
 
 describe("order pricing source of truth", () => {
@@ -35,5 +36,12 @@ describe("order pricing source of truth", () => {
 
   it("preserves an explicitly configured fixed downpayment for other terms", () => {
     expect(calculateRequiredDownpayment(120000, "custom_arrangement", 30000)).toBe(30000);
+  });
+
+  it("locks project pricing after contract acceptance or recorded payment", () => {
+    expect(isProjectPriceLocked({ contract_status: "accepted" })).toBe(true);
+    expect(isProjectPriceLocked({ amount_paid: 1 })).toBe(true);
+    expect(isProjectPriceLocked({ payment_proof_confirmed_at: "2026-01-01" })).toBe(true);
+    expect(isProjectPriceLocked({ contract_status: "pending", amount_paid: 0 })).toBe(false);
   });
 });

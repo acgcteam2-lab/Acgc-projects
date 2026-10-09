@@ -44,3 +44,17 @@ export const updateProfile = (payload) => apiFetch("/auth/profile", {
   method: "PUT",
   body: JSON.stringify(payload),
 });
+
+export const requestEmailChange = (payload) => apiFetch("/auth/profile/email-change", {
+  method: "POST",
+  body: JSON.stringify(payload),
+});
+
+export const verifyEmailChangeCode = (code) => apiFetch("/auth/profile/email-change/verify", {
+  method: "POST",
+  body: JSON.stringify({ code }),
+});
+
+export const resendEmailChangeCode = () => apiFetch("/auth/profile/email-change/resend", {
+  method: "POST",
+});

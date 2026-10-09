@@ -3,6 +3,20 @@ const toNonNegativeAmount = (value) => {
   return Number.isFinite(amount) ? Math.max(amount, 0) : 0;
 };
 
+export const isProjectPriceLocked = (order = {}) => {
+  const status = String(order.status || "").toLowerCase();
+  const contractStatus = String(order.contract_status || "").toLowerCase();
+  const paymentStatus = String(order.payment_status || "").toLowerCase();
+  return order.acceptedByCustomer === true
+    || status === "contract_accepted"
+    || contractStatus === "accepted"
+    || toNonNegativeAmount(order.amount_paid) > 0
+    || order.downpayment_received === true
+    || Boolean(order.payment_proof_confirmed_at)
+    || paymentStatus === "paid"
+    || paymentStatus === "partial";
+};
+
 export const getFinalProjectCost = (order = {}) => {
   const manualOverride = toNonNegativeAmount(order.manual_override);
   if (manualOverride > 0) return manualOverride;

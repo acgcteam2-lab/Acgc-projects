@@ -7,10 +7,10 @@ import Product from "../models/Product.js";
 import User from "../models/User.js";
 import Cart from "../models/Cart.js";
 import { sendMail } from "../config/mailer.js";
-import { formatOrderEmailDate, sendOrderNotification } from "../services/orderEmails.js";
+import { formatOrderEmailDate, getCurrentCustomerContact, sendOrderNotification } from "../services/orderEmails.js";
 import { applyInstallationWarranty, isCompletedInstallationStage } from "../services/warranty.js";
 import { buildProductPriceSnapshot, getMeasuredProductLineTotal } from "../../src/lib/productPricing.js";
-import { calculateRequiredDownpayment, getFinalProjectCost, getRequiredDownpayment } from "../../src/lib/orderPricing.js";
+import { calculateRequiredDownpayment, getFinalProjectCost, getRequiredDownpayment, isProjectPriceLocked } from "../../src/lib/orderPricing.js";
 import { getInstallationDateError } from "../../src/lib/installationSchedule.js";
 
 const isWithinReviewEditWindow = (submittedAt) => {
@@ -135,15 +135,25 @@ const hasValidDimensions = (item) =>
   Number(item.dimensions?.quantity) > 0 &&
   Boolean(item.dimensions?.unit);
 
+const hasValidMeterLength = (item) =>
+  Number(item.dimensions?.width) > 0 &&
+  Number(item.dimensions?.quantity) > 0 &&
+  Boolean(item.dimensions?.unit);
+
 const requiresOrderItemDimensions = (product = {}, item = {}) => {
   const pricingMethod = getOrderItemPricingMethod(product, item);
   const isBladeProduct = pricingMethod === "blade" || pricingMethod === "per_blade";
-  return !isBladeProduct || (item.sale_mode === "frame" && Boolean(item.custom_frame_size));
+  const isMeterProduct = pricingMethod === "per_meter";
+  const isPieceProduct = ["per_piece", "piece", "per_set", "set"].includes(pricingMethod);
+  return (!isBladeProduct && !isMeterProduct && !isPieceProduct)
+    || (isBladeProduct && item.sale_mode === "frame" && Boolean(item.custom_frame_size));
 };
 
 const hasValidOrderItemPricingInput = (product = {}, item = {}) => {
   const pricingMethod = getOrderItemPricingMethod(product, item);
   const isBladeProduct = pricingMethod === "blade" || pricingMethod === "per_blade";
+  if (pricingMethod === "per_meter") return hasValidMeterLength(item);
+  if (["per_piece", "piece", "per_set", "set"].includes(pricingMethod)) return Number(item.dimensions?.quantity) > 0;
   if (!isBladeProduct) return hasValidDimensions(item);
   if (requiresOrderItemDimensions(product, item) && !hasValidDimensions(item)) return false;
   return Number(item.dimensions?.quantity) > 0 && Number(item.blade_count) > 0;
@@ -256,16 +266,25 @@ const getItemAmountValue = (item) => {
 const repriceInspectionItems = async (items) => {
   const sanitizedItems = sanitizeOrderItems(items);
   const productIds = [...new Set(sanitizedItems.map((item) => item.product_id).filter(Boolean))];
+  if (sanitizedItems.some((item) => !item.product_id || !mongoose.Types.ObjectId.isValid(item.product_id))) {
+    const error = new Error("Each inspection item must reference a valid product.");
+    error.statusCode = 400;
+    throw error;
+  }
   const products = productIds.length
     ? await Product.find({ _id: { $in: productIds } })
         .select("pricing_method unit unit_price base_price price_per_sqft price_per_blade blade_count blade_glass_types sell_blades_only sell_with_frame blade_frame_types allow_custom_frame_size custom_frame_price minimum_blades maximum_blades customer_can_choose_blade_count default_blade_glass_type default_sale_mode default_frame_type show_price_per_blade customization customization_fee extra_charges size_limits estimated_price estimated_price_override width height measurement_unit")
         .lean()
     : [];
   const productsById = new Map(products.map((product) => [String(product._id), product]));
+  if (productsById.size !== productIds.length) {
+    const error = new Error("One or more inspection products no longer exist. Refresh the inspection and select an available product.");
+    error.statusCode = 400;
+    throw error;
+  }
 
   return sanitizedItems.map((item) => {
     const product = productsById.get(String(item.product_id));
-    if (!product) return { ...item, line_total: getItemAmountValue(item) };
 
     const priceSnapshot = buildProductPriceSnapshot(product, item);
     const itemOverride = item.estimation_mode === "manual"
@@ -507,6 +526,11 @@ export const createOrderAsAdmin = async (req, res) => {
       inspection_notes,
     } = req.body;
 
+    if (req.body.manual_override !== undefined && req.body.manual_override !== null && String(req.body.manual_override).trim() !== ""
+      && (!Number.isFinite(Number(req.body.manual_override)) || Number(req.body.manual_override) < 0)) {
+      return res.status(400).json({ success: false, message: "Manual price override must be a valid non-negative amount." });
+    }
+
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, message: "Order items are required" });
     }
@@ -539,11 +563,12 @@ export const createOrderAsAdmin = async (req, res) => {
       warranty_status: item.warranty_period === "No Warranty" ? "no_warranty" : "pending",
     }));
     const calculatedEstimatedCost = pricedItems.reduce((sum, item) => sum + getItemAmountValue(item), 0);
-    const estimated_cost = calculatedEstimatedCost > 0
-      ? calculatedEstimatedCost
-      : Math.max(Number(req.body.estimated_cost) || 0, 0);
+    if (!(calculatedEstimatedCost > 0)) {
+      return res.status(400).json({ success: false, message: "Inspection items must have valid configured prices." });
+    }
+    const estimated_cost = calculatedEstimatedCost;
     const manualOverride = Math.max(Number(req.body.manual_override) || 0, 0);
-    const total_amount = manualOverride || estimated_cost || Math.max(Number(req.body.total_amount) || 0, 0);
+    const total_amount = manualOverride || estimated_cost;
     const requiredAmount = calculateRequiredDownpayment(total_amount, payment_terms, required_downpayment_amount);
     const initialPaidAmount = downpayment_received ? requiredAmount : 0;
 
@@ -624,7 +649,7 @@ export const createOrderAsAdmin = async (req, res) => {
     void sendOrderNotification(hasSignedWalkInContract ? "contract_accepted" : "order_submitted", order);
   } catch (error) {
     console.error("Create order as admin error:", error);
-    res.status(500).json({ success: false, message: "Unable to create order", error: error.message });
+    res.status(error.statusCode || 500).json({ success: false, message: error.message || "Unable to create order" });
   }
 };
 
@@ -1052,7 +1077,8 @@ export const submitOrderReview = async (req, res) => {
     const productName = itemIndex === null ? order.items?.[0]?.name : order.items[itemIndex]?.name;
     const reviewMessage = buildReviewNotificationMessage(order, savedReview, productName);
     const adminEmail = process.env.ADMIN_EMAIL || "admin@example.com";
-    const customerEmail = req.user.email || order.customer_email || "";
+    const linkedCustomer = await getCurrentCustomerContact(req.user.id);
+    const customerEmail = linkedCustomer?.email || req.user.email || order.customer_email || "";
 
     res.json({ success: true, order });
 
@@ -1516,7 +1542,12 @@ export const updateOrderInspection = async (req, res) => {
     }
 
     const { orderId } = req.params;
-    const { inspection_status, inspection_date, estimated_installation_date, inspection_notes, issues_found, shipping_address, payment_terms, agreed_payment_date, items, estimated_cost, total_amount, customer_name, customer_email, customer_phone, has_account_on_website, downpayment_received, required_downpayment_amount, manual_override, warranty_period, custom_warranty_days, warranty_assignment_mode } = req.body;
+    const { inspection_status, inspection_date, estimated_installation_date, inspection_notes, issues_found, shipping_address, payment_terms, agreed_payment_date, items, customer_name, customer_email, customer_phone, has_account_on_website, downpayment_received, required_downpayment_amount, manual_override, warranty_period, custom_warranty_days, warranty_assignment_mode } = req.body;
+
+    if (manual_override !== undefined && manual_override !== null && String(manual_override).trim() !== ""
+      && (!Number.isFinite(Number(manual_override)) || Number(manual_override) < 0)) {
+      return res.status(400).json({ success: false, message: "Manual price override must be a valid non-negative amount." });
+    }
 
     updateData = {
       status: "site_inspection",
@@ -1557,6 +1588,9 @@ export const updateOrderInspection = async (req, res) => {
     if (customer_email !== undefined) updateData.customer_email = customer_email || "";
     if (customer_phone !== undefined) updateData.customer_phone = customer_phone || "";
     if (Array.isArray(items)) {
+      if (items.length === 0) {
+        return res.status(400).json({ success: false, message: "At least one inspection item is required." });
+      }
       const repricedItems = await repriceInspectionItems(items);
       const invalidItem = repricedItems.find((item) => !item.product_id || !item.name);
       if (invalidItem) {
@@ -1564,10 +1598,6 @@ export const updateOrderInspection = async (req, res) => {
       }
       updateData.items = repricedItems;
     }
-    if (total_amount !== undefined) {
-      updateData.total_amount = Number(total_amount) || 0;
-    }
-
     const order = await Order.findById(orderId).populate(
       "customer",
       "first_name last_name email phone street_address city province zip_code"
@@ -1625,13 +1655,14 @@ export const updateOrderInspection = async (req, res) => {
     const wasDownpaymentReceived = Boolean(order.downpayment_received);
     const currentItems = Array.isArray(updateData.items) ? updateData.items : order.items || [];
     const calculatedItemsEstimate = currentItems.reduce((sum, item) => sum + getItemAmountValue(item), 0);
+    if (Array.isArray(updateData.items) && !(calculatedItemsEstimate > 0)) {
+      return res.status(400).json({ success: false, message: "Inspection items must have valid configured prices." });
+    }
     const updatedEstimatedCost = Array.isArray(updateData.items)
       ? calculatedItemsEstimate
-      : Number(estimated_cost) > 0
-        ? Number(estimated_cost)
-        : Number(order.estimated_cost) > 0
-          ? Number(order.estimated_cost)
-          : calculatedItemsEstimate;
+      : Number(order.estimated_cost) > 0
+        ? Number(order.estimated_cost)
+        : calculatedItemsEstimate;
     const updatedManualOverride = manual_override !== undefined
       ? Math.max(Number(manual_override) || 0, 0)
       : Math.max(Number(order.manual_override) || 0, 0);
@@ -1639,9 +1670,7 @@ export const updateOrderInspection = async (req, res) => {
       ? updatedManualOverride
       : updatedEstimatedCost > 0
         ? updatedEstimatedCost
-        : total_amount !== undefined
-          ? Math.max(Number(total_amount) || 0, 0)
-          : getFinalProjectCost(order);
+        : getFinalProjectCost(order);
     const updatedPaymentTerms = payment_terms !== undefined ? payment_terms : order.payment_terms;
     const configuredRequiredAmount = required_downpayment_amount !== undefined
       ? required_downpayment_amount
@@ -1651,6 +1680,17 @@ export const updateOrderInspection = async (req, res) => {
       updatedPaymentTerms,
       configuredRequiredAmount,
     );
+    const currentEstimatedCost = Number(order.estimated_cost) || (order.items || []).reduce((sum, item) => sum + getItemAmountValue(item), 0);
+    const currentRequiredAmount = Number(order.required_downpayment_amount ?? order.downpayment_amount) || 0;
+    const amountChanged = Math.round(updatedTotalAmount * 100) !== Math.round(getFinalProjectCost(order) * 100)
+      || Math.round(updatedEstimatedCost * 100) !== Math.round(currentEstimatedCost * 100)
+      || Math.round(updatedRequiredAmount * 100) !== Math.round(currentRequiredAmount * 100);
+    if (isProjectPriceLocked(order) && amountChanged) {
+      return res.status(409).json({
+        success: false,
+        message: "This project's price is locked because its contract was accepted or a payment was recorded. Use the contract amendment and approval workflow before changing its price.",
+      });
+    }
     updateData.manual_override = updatedManualOverride;
     updateData.estimated_cost = updatedEstimatedCost;
     updateData.final_project_cost = updatedTotalAmount;
@@ -1697,7 +1737,7 @@ export const updateOrderInspection = async (req, res) => {
           : [error.message],
       });
     }
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
       message: error.message || "Unable to update inspection",
       error: error.name,
@@ -2011,12 +2051,10 @@ export const updateOrderProgress = async (req, res) => {
     }
 
     if (newDelayEvents.length > 0) {
-      const linkedCustomer = order.customer_email
-        ? null
-        : order.customer
-          ? await User.findById(order.customer).select("email first_name")
-          : null;
-      const customerEmail = order.customer_email || linkedCustomer?.email || "";
+      const linkedCustomer = order.customer
+        ? await getCurrentCustomerContact(order.customer?._id || order.customer)
+        : null;
+      const customerEmail = linkedCustomer?.email || order.customer_email || "";
       if (customerEmail) {
         await Promise.all(newDelayEvents.map(async (delayEvent) => {
           const expectedResolution = delayEvent.expectedResolution
@@ -2162,7 +2200,10 @@ export const sendWalkInApprovalEmail = async (req, res) => {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    const customerEmailValue = (customerEmail || order.customer_email || "").trim();
+    const linkedCustomer = order.customer
+      ? await getCurrentCustomerContact(order.customer?._id || order.customer)
+      : null;
+    const customerEmailValue = (linkedCustomer?.email || customerEmail || order.customer_email || "").trim();
     const isWalkInCustomer = String(order.order_type || "") === "walk_in_customer";
 
     if (!customerEmailValue) {

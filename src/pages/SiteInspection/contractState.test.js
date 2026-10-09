@@ -1,7 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { buildContractSnapshot, hasContractSnapshotChanged, hasExistingContract } from "./contractState";
+import { buildContractSnapshot, getContractBladeDetails, hasContractSnapshotChanged, hasExistingContract } from "./contractState";
 
 describe("contract state tracking", () => {
+  it("resolves per-blade glass, count, and selected frame pricing for contract lines", () => {
+    expect(getContractBladeDetails(
+      { pricing_method: "per_blade", blade_glass_type: "Tinted", sale_mode: "frame", frame_type: "Classic" },
+      {
+        price_per_blade: 75,
+        blade_count: 12,
+        blade_glass_types: [{ name: "Tinted", price_per_blade: 90 }],
+        blade_frame_types: [{ name: "Classic", blade_count: 12, price: 500 }],
+      },
+    )).toEqual({
+      isBlade: true,
+      glassName: "Tinted",
+      bladeCount: 12,
+      bladeRate: 90,
+      saleMode: "frame",
+      frameName: "Classic",
+      framePrice: 500,
+    });
+  });
+
   it("recognizes persisted, sent, and accepted contracts as existing", () => {
     expect(hasExistingContract({ contractGenerated: true })).toBe(true);
     expect(hasExistingContract({ contract_status: "sent" })).toBe(true);

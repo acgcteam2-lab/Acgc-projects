@@ -31,7 +31,7 @@ import {
 import { recordActivity } from "@/lib/activityLog";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { resolveBackendImageUrl } from "@/lib/resolveBackendImageUrl";
-import { getDefaultExtraChargeSelections, getProductLineTotal } from "@/lib/productPricing";
+import { getDefaultExtraChargeSelections, getDefaultProductLineTotal, getProductLineTotal } from "@/lib/productPricing";
 import { getProductEstimatorState } from "@/components/ProductPriceEstimator";
 
 const PRODUCT_IMAGE_PLACEHOLDER =
@@ -508,6 +508,7 @@ function ProductFormModal({
   const estimateProduct = {
     pricing_method: pricingMethodValue,
     base_price: Number(newProduct.base_price) || 0,
+    unit_price: Number(newProduct.unit_price) || 0,
     price_per_sqft: Number(newProduct.price_per_sqft) || 0,
     price_per_blade: Number(newProduct.price_per_blade) || 0,
     blade_count: Number(newProduct.blade_count) || 0,
@@ -578,10 +579,15 @@ function ProductFormModal({
       : Number(newProduct.estimated_price || 0);
   const baseEstimate = getProductLineTotal({ ...estimateProduct, extra_charges: [] }, estimateItem);
   const configuredChargeTotal = Math.max(0, displayedEstimatedPrice - baseEstimate);
-  const estimatedMeasureLabel = pricingMethodValue === "blade" ? "Default blade count" : "Estimated area";
+  const estimatedMeasureLabel = pricingMethodValue === "blade"
+    ? "Default blade count"
+    : pricingMethodValue === "per_meter" ? "Length" : pricingMethodValue === "per_piece" ? "Quantity" : "Estimated area";
   const estimatedMeasureValue = pricingMethodValue === "blade"
     ? adminEstimatorState.result?.areaDisplay || `${Number(estimateItem.blade_count) || 0} blade${Number(estimateItem.blade_count) === 1 ? "" : "s"}`
-    : `${Number(newProduct.estimated_area || 0).toFixed(2)} sq ft`;
+    : pricingMethodValue === "per_meter"
+      ? `${Number(newProduct.width || 0).toLocaleString()} ${newProduct.unit || "m"}`
+      : pricingMethodValue === "per_piece" ? "1 piece"
+      : `${Number(newProduct.estimated_area || 0).toFixed(2)} sq ft`;
   const pricingMethodCards = [
     { key: "sqft", title: "Per area", badge: "sq ft", description: "Width × height, charged by area" },
     { key: "blade", title: "Per blade", badge: "blade", description: "Glass rate, with optional frame" },
@@ -616,6 +622,10 @@ function ProductFormModal({
     ? bladeConfigurationIsValid
     : pricingMethodValue === "sqft"
       ? Number(newProduct.width) > 0 && Number(newProduct.height) > 0 && Number(newProduct.price_per_sqft) > 0
+      : pricingMethodValue === "per_meter"
+        ? Number(newProduct.width) > 0 && Number(newProduct.unit_price) > 0
+        : pricingMethodValue === "per_piece"
+          ? Number(newProduct.base_price) > 0
       : pricingMethodValue === "fixed"
         ? Boolean(editingProduct || Number(newProduct.base_price) > 0)
         : false;
@@ -973,7 +983,7 @@ function ProductFormModal({
                     </div>
                     <div className={`mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
                       <span className={`text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Default total <strong className={darkMode ? "text-white" : "text-slate-900"}>{isEstimateReady ? currency(defaultBladeTotal) : "—"}</strong></span>
-                      <button type="button" onClick={() => updateField("estimated_price_override", defaultBladeTotal > 0 ? String(defaultBladeTotal) : "")} disabled={!isEstimateReady || defaultBladeTotal <= 0} className={`rounded-lg border border-dashed px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 text-red-300" : "border-red-300 text-red-800"}`}>Use as Product Price</button>
+                      <button type="button" onClick={() => updateField("estimated_price_override", baseEstimate > 0 ? String(baseEstimate) : "")} disabled={!isEstimateReady || baseEstimate <= 0} className={`rounded-lg border border-dashed px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "border-slate-600 text-red-300" : "border-red-300 text-red-800"}`}>Use as Product Price</button>
                     </div>
                   </div>
 
@@ -1246,6 +1256,8 @@ function Products() {
         ? "sqft"
         : bladePrice > 0
         ? "blade"
+        : product.unit === "per_meter"
+        ? "per_meter"
         : unitPrice > 0 || basePrice > 0
         ? "fixed"
         : ""
@@ -1261,6 +1273,15 @@ function Products() {
       if (sqftPrice > 0) return `₱${sqftPrice.toLocaleString()} / sq ft`;
       if (unitPrice > 0) return `₱${unitPrice.toLocaleString()} / sq ft`;
       return "Contact us / sq ft";
+    }
+
+    if (pricingMethod === "per_meter") {
+      return unitPrice > 0 ? `₱${unitPrice.toLocaleString()} / meter` : "Contact us / meter";
+    }
+
+    if (pricingMethod === "per_piece") {
+      const piecePrice = basePrice || unitPrice;
+      return piecePrice > 0 ? `₱${piecePrice.toLocaleString()} / piece` : "Contact us / piece";
     }
 
     if (pricingMethod === "fixed") {
@@ -1279,40 +1300,46 @@ function Products() {
   };
 
   const getProductEstimatedCost = (product) => {
+    if (product.pricing_method === "blade" || PRICING_METHOD[product.product_name] === "blade") {
+      return getDefaultProductLineTotal(product);
+    }
+
     const override = Number(product.estimated_price_override || 0);
-    if (override > 0) return override;
+    if (override > 0) {
+      return getProductLineTotal(product, {
+        width: Number(product.width) || 0,
+        height: Number(product.height) || 0,
+        measurement_unit: product.measurement_unit || "in",
+        blade_count: Number(product.blade_count) || Number(product.minimum_blades) || 1,
+        quantity: 1,
+      });
+    }
 
     if (product.pricing_method === "fixed") {
       return Number(product.base_price || product.unit_price || product.estimated_price || 0);
     }
 
-    if (product.pricing_method === "blade" || PRICING_METHOD[product.product_name] === "blade") {
-      const bladeRates = (product.blade_glass_types || [])
-        .map((glass) => Number(glass.price_per_blade) || 0)
-        .filter((price) => price > 0);
-      if (bladeRates.length) return Math.min(...bladeRates);
-      const legacyBladeRate = Number(product.price_per_blade || product.unit_price) || 0;
-      if (legacyBladeRate > 0) return legacyBladeRate;
+    if (product.pricing_method === "per_meter" || product.unit === "per_meter") {
+      return getProductLineTotal(product, {
+        width: Number(product.width) || 0,
+        measurement_unit: product.measurement_unit || "m",
+        quantity: 1,
+      });
+    }
+
+    if (product.pricing_method === "per_piece") {
+      return getProductLineTotal(product, { quantity: 1 });
     }
 
     const savedEstimate = Number(product.estimated_price || 0);
-    if (savedEstimate > 0) return savedEstimate;
-
-    return calculateEstimate({
-      productName: product.product_name || product.name,
-      categoryKey: product.product_type || product.category,
-      variantName: product.variant,
+    const configuredEstimate = getProductLineTotal(product, {
       width: Number(product.width) || 0,
       height: Number(product.height) || 0,
-      measurementUnit: product.measurement_unit || "in",
-      blade_count: Number(product.blade_count) || 0,
-      base_price: Number(product.base_price) || (product.pricing_method === "fixed" ? Number(product.unit_price) : undefined),
-      overrideRate: Number(product.price_per_sqft) > 0
-        ? Number(product.price_per_sqft)
-        : product.pricing_method === "blade"
-        ? Number(product.price_per_blade) || undefined
-        : undefined,
-    }).estimated_price;
+      measurement_unit: product.measurement_unit || "in",
+      blade_count: Number(product.blade_count) || Number(product.minimum_blades) || 1,
+      quantity: 1,
+    });
+    return configuredEstimate > 0 ? configuredEstimate : savedEstimate;
   };
 
   const [isSidebarOpen, setIsSidebarOpen] =
@@ -1665,6 +1692,7 @@ function Products() {
     extra_charges: [],
     size_limits: { min_width: "", max_width: "", min_height: "", max_height: "", unit: "in" },
     standard_size: "",
+    unit_price: "",
     width: "",
     height: "",
     unit: "in",
@@ -1949,7 +1977,8 @@ function Products() {
           pricing_method: product.pricing_method === "per_piece" ? "fixed" : product.pricing_method || PRICING_METHOD[safeProduct.product_name || safeProduct.name] || "",
           category: product.category || "",
           variant: safeProduct.variant || "",
-          base_price: product.base_price || product.unit_price || "",
+          base_price: product.base_price || (product.pricing_method === "per_meter" ? "" : product.unit_price) || "",
+          unit_price: product.unit_price ?? "",
           price_per_sqft: product.price_per_sqft ?? "",
           price_per_blade: product.price_per_blade ?? "",
           blade_glass_types: bladeGlassTypes,
@@ -2101,6 +2130,16 @@ function Products() {
       }
     }
 
+    if (pricingMethod === "per_meter" && (Number(newProduct.width) <= 0 || Number(newProduct.unit_price) <= 0)) {
+      setModalError("Length and price per meter must be greater than 0.");
+      return;
+    }
+
+    if (pricingMethod === "per_piece" && Number(newProduct.base_price) <= 0) {
+      setModalError("Price per piece must be greater than 0.");
+      return;
+    }
+
     if (pricingMethod === "blade") {
       const glassTypes = newProduct.blade_glass_types || [];
       if (!glassTypes.length || glassTypes.some((glass) => !String(glass.name || "").trim() || Number(glass.price_per_blade) <= 0)) {
@@ -2205,8 +2244,10 @@ function Products() {
         // Backend compatibility fields
         name: productName,
         sku: "",
-        unit_price: Number(newProduct.estimated_price_override) || Number(newProduct.estimated_price) || Number(newProduct.base_price) || Number(newProduct.price_per_sqft) || Number(newProduct.price_per_blade) || 0,
-        unit: pricingMethod === "sqft" ? "per_sqft" : pricingMethod === "blade" ? "per_blade" : "per_piece",
+        unit_price: pricingMethod === "per_meter"
+          ? Number(newProduct.unit_price) || 0
+          : Number(newProduct.estimated_price_override) || Number(newProduct.estimated_price) || Number(newProduct.base_price) || Number(newProduct.price_per_sqft) || Number(newProduct.price_per_blade) || 0,
+        unit: pricingMethod === "sqft" ? "per_sqft" : pricingMethod === "blade" ? "per_blade" : pricingMethod === "per_meter" ? "per_meter" : "per_piece",
         measurement_unit: newProduct.unit || "in",
         image_url: finalImages.main || "",
         product_type: selectedProductType,
@@ -2467,13 +2508,16 @@ function Products() {
                       const productHeight = Number(product.height) || 0;
                       const productAreaSqft = toSquareFeet(productWidth, productHeight, product.measurement_unit || "in");
                       const pricingMethod = product.pricing_method || PRICING_METHOD[product.product_name] || "";
-                      const hasEstimatedCostOverride = Number(product.estimated_price_override) > 0;
-                      const unitPriceLabel = hasEstimatedCostOverride
-                        ? `₱${Number(product.price_per_sqft || 0).toLocaleString("en-PH", { maximumFractionDigits: 2 })} / sq ft / OEC`
-                        : pricingMethod !== "blade" && productAreaSqft > 0 && estimatedCost > 0
+                      const hasConfiguredBladePricing = pricingMethod === "blade" && (product.blade_glass_types?.length || product.blade_frame_types?.length);
+                      const hasEstimatedCostOverride = pricingMethod === "fixed"
+                        && Number(product.estimated_price_override) > 0
+                        && !(Number(product.base_price) > 0 || Number(product.unit_price) > 0);
+                      const unitPriceLabel = pricingMethod === "sqft" && productAreaSqft > 0 && estimatedCost > 0
                         ? `₱${(Number(product.price_per_sqft) || estimatedCost / productAreaSqft).toLocaleString("en-PH", { maximumFractionDigits: 2 })} / sq ft`
                         : getProductPriceLabel(product);
-                      const productDimensions = productWidth > 0 && productHeight > 0
+                      const productDimensions = pricingMethod === "per_meter" && productWidth > 0
+                        ? `${productWidth.toLocaleString()} ${product.measurement_unit || "m"}`
+                        : productWidth > 0 && productHeight > 0
                         ? `${productWidth.toLocaleString()} × ${productHeight.toLocaleString()} ${product.measurement_unit || "in"}`
                         : product.standard_size || "";
                       return (

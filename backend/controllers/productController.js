@@ -30,9 +30,13 @@ const validateProductPayload = (payload, existingProduct = null) => {
   if (!category) return "Category is required.";
   if (!trimText(merged.variant) && !existingProduct && pricingMethod !== "blade") return "Variant is required.";
   if (!hasProductImage({ image_url, images })) return "Main product photo is required.";
-    const allowedMethods = existingProduct ? ["sqft", "blade", "fixed", "per_piece"] : ["sqft", "blade"];
-    if (!allowedMethods.includes(pricingMethod)) {
+  const allowedMethods = ["sqft", "blade", "fixed", "per_piece", "per_meter"];
+  if (!allowedMethods.includes(pricingMethod)) {
     return "A valid pricing method is required.";
+  }
+
+  if (merged.estimated_price_override != null && (!Number.isFinite(Number(merged.estimated_price_override)) || Number(merged.estimated_price_override) < 0)) {
+    return "Product price override must be a valid non-negative amount.";
   }
 
   if (pricingMethod === "sqft") {
@@ -93,6 +97,11 @@ const validateProductPayload = (payload, existingProduct = null) => {
 
   if ((pricingMethod === "fixed" || pricingMethod === "per_piece") && toNonNegativeNumber(merged.base_price || merged.unit_price) <= 0) {
     return "Base price is required for fixed price products.";
+  }
+
+  if (pricingMethod === "per_meter") {
+    if (toNonNegativeNumber(merged.width) <= 0) return "Length must be greater than 0 for per-meter products.";
+    if (toNonNegativeNumber(merged.unit_price) <= 0) return "Price per meter is required.";
   }
 
   if (merged.extra_charges != null && !Array.isArray(merged.extra_charges)) {

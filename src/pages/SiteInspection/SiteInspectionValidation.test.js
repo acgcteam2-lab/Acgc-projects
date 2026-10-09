@@ -240,6 +240,48 @@ describe("inspection measurement calculations", () => {
     expect(calculateMeasurementSubtotal(item)).toBe(3600);
   });
 
+  it("calculates and validates per-meter inspection rows from length without height", () => {
+    const item = {
+      product_id: "p-1",
+      name: "Aluminum rail",
+      pricing_method: "per_meter",
+      width: 100,
+      height: 0,
+      quantity: 2,
+      qty: 2,
+      measurement_unit: "cm",
+    };
+    const product = { pricing_method: "per_meter", unit_price: 500 };
+
+    expect(calculateMeasurementSubtotal(item, product)).toBe(1000);
+    expect(validateInspectionPayload({
+      customerName: "John Doe",
+      phone: "09123456789",
+      siteAddress: "1 Main Street",
+      inspection_date: "2026-10-10",
+      items: [item],
+    })).toEqual({});
+  });
+
+  it("calculates and validates per-piece inspection rows from quantity alone", () => {
+    const item = {
+      product_id: "p-1",
+      name: "Cabinet handle",
+      pricing_method: "per_piece",
+      quantity: 2,
+      qty: 2,
+    };
+
+    expect(calculateMeasurementSubtotal(item, { pricing_method: "per_piece", base_price: 750 })).toBe(1500);
+    expect(validateInspectionPayload({
+      customerName: "John Doe",
+      phone: "09123456789",
+      siteAddress: "1 Main Street",
+      inspection_date: "2026-10-10",
+      items: [item],
+    })).toEqual({});
+  });
+
   it("applies fixed base price per unit", () => {
     const item = {
       width: 48,
@@ -325,7 +367,7 @@ describe("inspection measurement calculations", () => {
     }, product)).toBe(729000);
   });
 
-  it("keeps the product estimate override when inspection matches standard size", () => {
+  it("uses the configured area rate when inspection matches standard size despite a product-card override", () => {
     const product = {
       pricing_method: "sqft",
       width: 48,
@@ -340,7 +382,7 @@ describe("inspection measurement calculations", () => {
       height: 48,
       quantity: 1,
       measurement_unit: "in",
-    }, product)).toBe(7500);
+    }, product)).toBe(16000);
   });
 
   it("scales a fixed product base price when batch inspection dimensions change", () => {

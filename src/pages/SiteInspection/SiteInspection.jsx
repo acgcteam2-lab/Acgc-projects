@@ -199,13 +199,18 @@ export const getInspectionItemPricingMethod = (item = {}) => {
   return unit;
 };
 
+export const isInspectionMeterItem = (item = {}) => ["per_meter", "meter"].includes(getInspectionItemPricingMethod(item));
+
+const isInspectionPieceItem = (item = {}) => ["per_piece", "piece", "per_set", "set"].includes(getInspectionItemPricingMethod(item));
+
 export const isInspectionBladeItem = (item = {}) => {
   const method = getInspectionItemPricingMethod(item);
   return method === "blade" || method === "per_blade";
 };
 
 export const requiresInspectionItemDimensions = (item = {}) =>
-  !isInspectionBladeItem(item) || (item.sale_mode === "frame" && Boolean(item.custom_frame_size));
+  (!isInspectionBladeItem(item) && !isInspectionMeterItem(item) && !isInspectionPieceItem(item))
+  || (item.sale_mode === "frame" && Boolean(item.custom_frame_size));
 
 export const calculateMeasurementSubtotal = (item, product = null) => {
   const quantity = Number(item.quantity ?? item.qty ?? 1) || 1;
@@ -287,7 +292,7 @@ export const validateInspectionPayload = (payload = {}) => {
     if (!item.name?.trim()) rowErrors.name = "Description is required.";
     const needsDimensions = requiresInspectionItemDimensions(item);
     if (needsDimensions && Number(item.width) <= 0) rowErrors.width = "Width must be greater than zero.";
-    if (needsDimensions && Number(item.height) <= 0) rowErrors.height = "Height must be greater than zero.";
+    if (needsDimensions && !isInspectionMeterItem(item) && Number(item.height) <= 0) rowErrors.height = "Height must be greater than zero.";
     if (Number(item.qty) <= 0) rowErrors.qty = "Quantity must be at least 1.";
     if (String(item.pricing_method || "").toLowerCase() === "blade") {
       if (!String(item.blade_glass_type || "").trim()) rowErrors.blade_glass_type = "Select a glass type.";
@@ -1142,6 +1147,8 @@ function SiteInspection() {
     const labelClasses = `mb-1.5 block text-[10px] font-bold ${darkMode ? "text-slate-400" : "text-slate-600"}`;
     const mutedClass = darkMode ? "text-slate-400" : "text-slate-500";
     const rowTotal = calculateRowSubtotal(item);
+    const inspectionState = mode.startsWith("edit") ? editInspection : newInspection;
+    const hasPerProductWarranty = inspectionState.items.length > 1 && inspectionState.warranty_assignment_mode === "per_product";
     const productSelectId = `${mode}-blade-product-${index}`;
     const glassSelectId = `${mode}-blade-glass-${index}`;
     const frameSelectId = `${mode}-blade-frame-${index}`;
@@ -1270,10 +1277,46 @@ function SiteInspection() {
           </div>
         )}
 
-        <div className={`mt-4 flex items-center justify-end gap-3 border-t pt-3 text-sm ${darkMode ? "border-slate-700 text-slate-300" : "border-slate-200 text-slate-600"}`}>
-          <span>Total:</span>
-          <span className={`text-lg font-black ${darkMode ? "text-white" : "text-slate-900"}`}>{formatCurrency(totals.totalEstimate)}</span>
-        </div>
+        {hasPerProductWarranty && (
+          <div className={`mt-4 border-t border-dashed pt-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+            <label htmlFor={`${mode}-blade-warranty-${index}`} className={labelClasses}>Warranty for {item.name || `product ${index + 1}`}</label>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <select
+                id={`${mode}-blade-warranty-${index}`}
+                value={getItemWarrantySelectValue(item)}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === "Custom") {
+                    onFieldChange(item.id, "warranty_period", "Custom");
+                    if (!Number(item.custom_warranty_days)) onFieldChange(item.id, "custom_warranty_days", 90);
+                  } else {
+                    onFieldChange(item.id, "warranty_period", value === "No Warranty" ? value : Number(value));
+                  }
+                }}
+                className={inputClasses}
+              >
+                <option value="No Warranty">No Warranty</option>
+                <option value="30">30 Days</option>
+                <option value="60">60 Days</option>
+                <option value="90">90 Days</option>
+                <option value="Custom">Custom</option>
+              </select>
+              {getItemWarrantySelectValue(item) === "Custom" && (
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  aria-label={`Custom warranty days for ${item.name || `product ${index + 1}`}`}
+                  value={getItemWarrantyCustomDays(item)}
+                  onChange={(event) => onFieldChange(item.id, "custom_warranty_days", event.target.value)}
+                  className={inputClasses}
+                  placeholder="Custom warranty days"
+                />
+              )}
+            </div>
+          </div>
+        )}
+
       </article>
     );
   };
@@ -1320,6 +1363,8 @@ function SiteInspection() {
         return `Base ₱${base.toLocaleString()}`;
       case "per_piece":
         return `₱${unitPrice.toLocaleString()} / pc`;
+      case "per_meter":
+        return `₱${unitPrice.toLocaleString()} / meter`;
       default:
         return `₱${unitPrice.toLocaleString()}`;
     }
@@ -1357,6 +1402,8 @@ function SiteInspection() {
           pricing_method: item.pricing_method || "",
           price_per_sqft: Number(item.price_per_sqft) || 0,
           price_per_blade: Number(item.price_per_blade) || 0,
+          blade_glass_types: Array.isArray(item.blade_glass_types) ? item.blade_glass_types : [],
+          blade_frame_types: Array.isArray(item.blade_frame_types) ? item.blade_frame_types : [],
           base_price: Number(item.base_price) || 0,
           blade_glass_type: item.blade_glass_type || "",
           sale_mode: item.sale_mode || "",
@@ -1865,9 +1912,19 @@ function SiteInspection() {
         quantity,
         width,
         height,
+        unit: item.measurement_unit || item.measurementUnit || item.dimensions?.unit || "in",
         area,
         unitPrice,
         amount,
+        pricing_method: item.pricing_method || "",
+        price_per_blade: Number(item.price_per_blade) || 0,
+        blade_glass_type: item.blade_glass_type || "",
+        blade_glass_types: Array.isArray(item.blade_glass_types) ? item.blade_glass_types : [],
+        sale_mode: item.sale_mode || "",
+        frame_type: item.frame_type || "",
+        frame_price: Number(item.frame_price) || 0,
+        blade_frame_types: Array.isArray(item.blade_frame_types) ? item.blade_frame_types : [],
+        blade_count: Number(item.blade_count) || 0,
         category: item.product_id?.category || item.product_type || "N/A",
         warrantyPeriod: item.warranty_period,
         warrantyCustomDays: item.custom_warranty_days,
@@ -3516,8 +3573,8 @@ function SiteInspection() {
                       {!(newInspection.items || []).some((item) => getBladeMeasurementDetails(item)) && (
                         <div className={`grid min-w-[760px] grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 px-3 py-3 text-[10px] font-bold uppercase tracking-[0.1em] ${darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-600"}`}>
                           <div>Product / Description</div>
-                          <div>Width</div>
-                          <div>Height</div>
+                          <div>Width / Length</div>
+                          <div>Height (area pricing)</div>
                           <div>Unit</div>
                           <div>Qty</div>
                           <div>Rate / Unit</div>
@@ -3544,43 +3601,6 @@ function SiteInspection() {
                               </select>
                               {getMeasurementLimitWarnings(item).map((warning) => <p key={warning} role="status" className={`text-xs ${darkMode ? "text-amber-300" : "text-amber-800"}`}>{warning}</p>)}
                               {renderBladeMeasurementOptions(item, handleItemFieldChange, index)}
-                              {newInspection.items.length > 1 && newInspection.warranty_assignment_mode === "per_product" && (
-                                <div className="w-full">
-                                  <label className={`mb-1 block text-[10px] font-bold uppercase ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Warranty</label>
-                                  <select
-                                    aria-label={`Warranty for ${item.name || `product ${index + 1}`}`}
-                                    value={getItemWarrantySelectValue(item)}
-                                    onChange={(event) => {
-                                      const value = event.target.value;
-                                      if (value === "Custom") {
-                                        handleItemFieldChange(item.id, "warranty_period", "Custom");
-                                        if (!Number(item.custom_warranty_days)) handleItemFieldChange(item.id, "custom_warranty_days", 90);
-                                      } else {
-                                        handleItemFieldChange(item.id, "warranty_period", value === "No Warranty" ? value : Number(value));
-                                      }
-                                    }}
-                                    className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900"}
-                                  >
-                                    <option value="No Warranty">No Warranty</option>
-                                    <option value="30">30 Days</option>
-                                    <option value="60">60 Days</option>
-                                    <option value="90">90 Days</option>
-                                    <option value="Custom">Custom</option>
-                                  </select>
-                                  {getItemWarrantySelectValue(item) === "Custom" && (
-                                    <input
-                                      type="number"
-                                      min="1"
-                                      step="1"
-                                      aria-label={`Custom warranty days for product ${index + 1}`}
-                                      value={getItemWarrantyCustomDays(item)}
-                                      onChange={(event) => handleItemFieldChange(item.id, "custom_warranty_days", event.target.value)}
-                                      className={`mt-2 ${darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900"}`}
-                                      placeholder="Custom days"
-                                    />
-                                  )}
-                                </div>
-                              )}
                             </div>
                             <input
                               type="number"
@@ -3623,6 +3643,48 @@ function SiteInspection() {
                               <span className={`text-sm font-bold ${darkMode ? "text-slate-100" : "text-slate-800"}`}>{formatCurrency(rowSubtotal)}</span>
                               <button type="button" onClick={() => removeItemRow(item.id)} className="text-lg font-bold text-red-400 hover:text-red-300">×</button>
                             </div>
+                            {newInspection.items.length > 1 && newInspection.warranty_assignment_mode === "per_product" && (
+                              <div className={`col-span-full grid gap-3 border-t pt-3 sm:grid-cols-[minmax(0,1fr)_minmax(180px,0.8fr)] ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                                <label className="min-w-0">
+                                  <span className={`mb-1 block text-[10px] font-bold uppercase ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Warranty for {item.name || `product ${index + 1}`}</span>
+                                  <select
+                                    aria-label={`Warranty for ${item.name || `product ${index + 1}`}`}
+                                    value={getItemWarrantySelectValue(item)}
+                                    onChange={(event) => {
+                                      const value = event.target.value;
+                                      if (value === "Custom") {
+                                        handleItemFieldChange(item.id, "warranty_period", "Custom");
+                                        if (!Number(item.custom_warranty_days)) handleItemFieldChange(item.id, "custom_warranty_days", 90);
+                                      } else {
+                                        handleItemFieldChange(item.id, "warranty_period", value === "No Warranty" ? value : Number(value));
+                                      }
+                                    }}
+                                    className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900"}
+                                  >
+                                    <option value="No Warranty">No Warranty</option>
+                                    <option value="30">30 Days</option>
+                                    <option value="60">60 Days</option>
+                                    <option value="90">90 Days</option>
+                                    <option value="Custom">Custom</option>
+                                  </select>
+                                </label>
+                                {getItemWarrantySelectValue(item) === "Custom" && (
+                                  <label className="min-w-0">
+                                    <span className={`mb-1 block text-[10px] font-bold uppercase ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Custom warranty days</span>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      step="1"
+                                      aria-label={`Custom warranty days for product ${index + 1}`}
+                                      value={getItemWarrantyCustomDays(item)}
+                                      onChange={(event) => handleItemFieldChange(item.id, "custom_warranty_days", event.target.value)}
+                                      className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900"}
+                                      placeholder="Custom days"
+                                    />
+                                  </label>
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -3701,11 +3763,11 @@ function SiteInspection() {
                             </div>
                             <div className="mt-3 grid grid-cols-2 gap-3">
                               <label className="min-w-0">
-                                <span className={labelClasses}>Width</span>
-                                <input type="number" min="0" inputMode="decimal" aria-label={`Width for measurement ${index + 1}`} value={getDimensionInputValue(item.width)} onFocus={() => clearDefaultDimensionZero(item.id, "width", item.width, handleItemFieldChange)} onChange={(event) => handleItemFieldChange(item.id, "width", event.target.value)} className={inputClasses} />
+                                <span className={labelClasses}>{isInspectionMeterItem(item) ? "Length" : "Width"}</span>
+                                <input type="number" min="0" inputMode="decimal" aria-label={`${isInspectionMeterItem(item) ? "Length" : "Width"} for measurement ${index + 1}`} value={getDimensionInputValue(item.width)} onFocus={() => clearDefaultDimensionZero(item.id, "width", item.width, handleItemFieldChange)} onChange={(event) => handleItemFieldChange(item.id, "width", event.target.value)} className={inputClasses} />
                               </label>
                               <label className="min-w-0">
-                                <span className={labelClasses}>Height</span>
+                                <span className={labelClasses}>{isInspectionMeterItem(item) ? "Height (optional)" : "Height"}</span>
                                 <input type="number" min="0" inputMode="decimal" aria-label={`Height for measurement ${index + 1}`} value={getDimensionInputValue(item.height)} onFocus={() => clearDefaultDimensionZero(item.id, "height", item.height, handleItemFieldChange)} onChange={(event) => handleItemFieldChange(item.id, "height", event.target.value)} className={inputClasses} />
                               </label>
                               <label className="min-w-0">
@@ -3962,8 +4024,16 @@ function SiteInspection() {
             const measurementRows = inspectionItems.map((item, index) => {
               const itemName = item.name || item.product_id?.name || `Item ${index + 1}`;
               const qty = Number(item.quantity ?? item.qty ?? 1) || 1;
-              const unitPrice = Number(item.unit_price ?? item.price ?? 0) || 0;
-              const explicitLineTotal = Number(item.estimated_price ?? item.total_price ?? 0);
+              const bladeDetails = isInspectionBladeItem(item) ? getBladeMeasurementDetails(item) : null;
+              const bladeExtraCharges = bladeDetails
+                ? bladeDetails.extraCharges
+                  .map((charge) => ({
+                    name: charge.name || charge.label || "Extra charge",
+                    total: getBladeExtraChargeTotal(charge, bladeDetails),
+                  }))
+                  .filter((charge) => charge.total > 0)
+                : [];
+              const rowTotal = getInspectionItemTotal(item);
               const itemWarrantyPeriod = item.warranty_period ?? viewInspection.warranty_period ?? 90;
               const isNoItemWarranty = itemWarrantyPeriod === "No Warranty";
               const itemWarrantyDays = itemWarrantyPeriod === "Custom"
@@ -3979,14 +4049,22 @@ function SiteInspection() {
               return {
                 key: `${itemName}-${index}`,
                 itemName,
+                isBlade: Boolean(bladeDetails),
+                bladeDetails: bladeDetails ? {
+                  glassName: bladeDetails.selectedGlass?.name || item.blade_glass_type || "Glass",
+                  bladeCount: bladeDetails.bladeCount,
+                  bladeRate: bladeDetails.bladeRate,
+                  saleMode: bladeDetails.saleMode,
+                  frameName: item.custom_frame_size ? "Custom frame" : bladeDetails.selectedFrame?.name || "Frame",
+                  framePrice: bladeDetails.framePrice,
+                  extraCharges: bladeExtraCharges,
+                } : null,
                 width: Number(item.width || 0),
                 height: Number(item.height || 0),
-                unit: item.unit || "in",
+                unit: bladeDetails ? "per blade" : item.measurement_unit || item.unit || "in",
                 qty,
-                unitPrice,
-                lineTotal: Number.isFinite(explicitLineTotal) && explicitLineTotal > 0
-                  ? explicitLineTotal
-                  : qty * unitPrice,
+                unitPrice: bladeDetails ? bladeDetails.bladeRate : Number(item.unit_price ?? item.price ?? 0) || 0,
+                lineTotal: rowTotal,
                 warrantyPeriod: isNoItemWarranty ? "No Warranty" : `${itemWarrantyDays} days`,
                 warrantyStartDate: isNoItemWarranty
                   ? "—"
@@ -4108,11 +4186,11 @@ function SiteInspection() {
                           <thead className={darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-600"}>
                             <tr>
                               <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Product / Description</th>
-                              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Width</th>
-                              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Height</th>
-                              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Unit</th>
+                              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Width / Blades</th>
+                              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Height / Glass</th>
+                              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Size / Sale mode</th>
                               <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Qty</th>
-                              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Price/SQFT</th>
+                              <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Rate / Unit</th>
                               {inspectionItems.length > 1 && <th className="px-4 py-3 text-[11px] font-black uppercase tracking-[0.14em]">Warranty</th>}
                               <th className="px-4 py-3 text-right text-[11px] font-black uppercase tracking-[0.14em]">Est. Total</th>
                             </tr>
@@ -4120,12 +4198,24 @@ function SiteInspection() {
                           <tbody>
                             {measurementRows.length ? measurementRows.map((measurement) => (
                               <tr key={measurement.key} className={darkMode ? "border-t border-slate-700 text-slate-200" : "border-t border-slate-200 text-slate-700"}>
-                                <td className="px-4 py-3 font-medium">{measurement.itemName}</td>
-                                <td className="px-4 py-3">{measurement.width || "—"}</td>
-                                <td className="px-4 py-3">{measurement.height || "—"}</td>
-                                <td className="px-4 py-3">{measurement.unit}</td>
+                                <td className="px-4 py-3 font-medium">
+                                  <div>{measurement.itemName}</div>
+                                  {measurement.bladeDetails && (
+                                    <div className={`mt-1 space-y-0.5 text-xs font-normal ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                                      {measurement.bladeDetails.saleMode === "frame" && measurement.bladeDetails.framePrice > 0 && (
+                                        <div>Frame ({measurement.bladeDetails.frameName}): {formatCurrency(measurement.bladeDetails.framePrice)}</div>
+                                      )}
+                                      {measurement.bladeDetails.extraCharges.map((charge) => (
+                                        <div key={charge.name}>+ {charge.name}: {formatCurrency(charge.total)}</div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3">{measurement.isBlade ? `${measurement.bladeDetails.bladeCount} blades` : measurement.width || "—"}</td>
+                                <td className="px-4 py-3">{measurement.isBlade ? measurement.bladeDetails.glassName : measurement.height || "—"}</td>
+                                <td className="px-4 py-3">{measurement.isBlade ? measurement.bladeDetails.saleMode === "frame" ? `${measurement.bladeDetails.frameName} frame` : "Blades only" : measurement.unit}</td>
                                 <td className="px-4 py-3">{measurement.qty}</td>
-                                <td className="px-4 py-3">{measurement.unitPrice ? formatCurrency(measurement.unitPrice) : "—"}</td>
+                                <td className="px-4 py-3">{measurement.unitPrice ? `${formatCurrency(measurement.unitPrice)}${measurement.isBlade ? " / blade" : ""}` : "—"}</td>
                                 {inspectionItems.length > 1 && (
                                   <td className="px-4 py-3 text-sm">
                                     <div className="font-semibold">{measurement.warrantyPeriod}</div>
@@ -4156,18 +4246,29 @@ function SiteInspection() {
                             <h4 className={`break-words text-sm font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
                               {measurement.itemName || `Item ${index + 1}`}
                             </h4>
+                            {measurement.bladeDetails && (
+                              <div className={`mt-2 space-y-1 text-xs ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                                <p>{measurement.bladeDetails.glassName} · {measurement.bladeDetails.bladeCount} blades · {measurement.bladeDetails.saleMode === "frame" ? `${measurement.bladeDetails.frameName} frame` : "Blades only"}</p>
+                                {measurement.bladeDetails.saleMode === "frame" && measurement.bladeDetails.framePrice > 0 && (
+                                  <p>Frame: {formatCurrency(measurement.bladeDetails.framePrice)}</p>
+                                )}
+                                {measurement.bladeDetails.extraCharges.map((charge) => (
+                                  <p key={charge.name}>+ {charge.name}: {formatCurrency(charge.total)}</p>
+                                ))}
+                              </div>
+                            )}
                             <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3">
                               <div className="min-w-0">
-                                <dt className={measurementLabelClass}>Width</dt>
-                                <dd className={`mt-1 text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{measurement.width || "—"}</dd>
+                                <dt className={measurementLabelClass}>{measurement.isBlade ? "Blade count" : "Width"}</dt>
+                                <dd className={`mt-1 text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{measurement.isBlade ? `${measurement.bladeDetails.bladeCount} blades` : measurement.width || "—"}</dd>
                               </div>
                               <div className="min-w-0">
-                                <dt className={measurementLabelClass}>Height</dt>
-                                <dd className={`mt-1 text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{measurement.height || "—"}</dd>
+                                <dt className={measurementLabelClass}>{measurement.isBlade ? "Glass" : "Height"}</dt>
+                                <dd className={`mt-1 text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{measurement.isBlade ? measurement.bladeDetails.glassName : measurement.height || "—"}</dd>
                               </div>
                               <div className="min-w-0">
-                                <dt className={measurementLabelClass}>Unit</dt>
-                                <dd className={`mt-1 text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{measurement.unit}</dd>
+                                <dt className={measurementLabelClass}>{measurement.isBlade ? "Sale mode" : "Unit"}</dt>
+                                <dd className={`mt-1 text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{measurement.isBlade ? measurement.bladeDetails.saleMode === "frame" ? `${measurement.bladeDetails.frameName} frame` : "Blades only" : measurement.unit}</dd>
                               </div>
                               <div className="min-w-0">
                                 <dt className={measurementLabelClass}>Quantity</dt>
@@ -4187,8 +4288,8 @@ function SiteInspection() {
                             </dl>
                             <div className={`mt-3 grid grid-cols-2 gap-3 border-t pt-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                               <div className="min-w-0">
-                                <p className={measurementLabelClass}>Price / Sqft</p>
-                                <p className={`mt-1 truncate text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{measurement.unitPrice ? formatCurrency(measurement.unitPrice) : "—"}</p>
+                                <p className={measurementLabelClass}>{measurement.isBlade ? "Rate / Blade" : "Rate / Unit"}</p>
+                                <p className={`mt-1 truncate text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>{measurement.unitPrice ? `${formatCurrency(measurement.unitPrice)}${measurement.isBlade ? " / blade" : ""}` : "—"}</p>
                               </div>
                               <div className="min-w-0 text-right">
                                 <p className={measurementLabelClass}>Estimated Total</p>
@@ -4526,8 +4627,8 @@ function SiteInspection() {
                       {!(editInspection.items || []).some((item) => getBladeMeasurementDetails(item)) && (
                         <div className={`grid grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 px-3 py-3 text-[11px] font-black uppercase tracking-[0.12em] ${darkMode ? "bg-[#0d2033] text-slate-300" : "bg-slate-100 text-slate-600"}`}>
                           <div>Product / Description</div>
-                          <div>Width</div>
-                          <div>Height</div>
+                          <div>Width / Length</div>
+                          <div>Height (area pricing)</div>
                           <div>Unit</div>
                           <div>Qty</div>
                           <div>Rate / Unit</div>
@@ -4554,34 +4655,6 @@ function SiteInspection() {
                               </select>
                               {getMeasurementLimitWarnings(item).map((warning) => <p key={warning} role="status" className={`text-xs ${darkMode ? "text-amber-300" : "text-amber-800"}`}>{warning}</p>)}
                               {renderBladeMeasurementOptions(item, handleEditItemFieldChange, index)}
-                              {editInspection.items.length > 1 && editInspection.warranty_assignment_mode === "per_product" && (
-                                <div className="w-full">
-                                  <label className={`mb-1 block text-[10px] font-bold uppercase ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Warranty</label>
-                                  <select
-                                    aria-label={`Warranty for ${item.name || "product"}`}
-                                    value={getItemWarrantySelectValue(item)}
-                                    onChange={(event) => {
-                                      const value = event.target.value;
-                                      if (value === "Custom") {
-                                        handleEditItemFieldChange(item.id, "warranty_period", "Custom");
-                                        if (!Number(item.custom_warranty_days)) handleEditItemFieldChange(item.id, "custom_warranty_days", 90);
-                                      } else {
-                                        handleEditItemFieldChange(item.id, "warranty_period", value === "No Warranty" ? value : Number(value));
-                                      }
-                                    }}
-                                    className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900"}
-                                  >
-                                    <option value="No Warranty">No Warranty</option>
-                                    <option value="30">30 Days</option>
-                                    <option value="60">60 Days</option>
-                                    <option value="90">90 Days</option>
-                                    <option value="Custom">Custom</option>
-                                  </select>
-                                  {getItemWarrantySelectValue(item) === "Custom" && (
-                                    <input type="number" min="1" step="1" aria-label={`Custom warranty days for ${item.name || "product"}`} value={getItemWarrantyCustomDays(item)} onChange={(event) => handleEditItemFieldChange(item.id, "custom_warranty_days", event.target.value)} className={`mt-2 ${darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900"}`} placeholder="Custom days" />
-                                  )}
-                                </div>
-                              )}
                             </div>
 
                             <input
@@ -4634,6 +4707,48 @@ function SiteInspection() {
                                 ×
                               </button>
                             </div>
+                            {editInspection.items.length > 1 && editInspection.warranty_assignment_mode === "per_product" && (
+                              <div className={`col-span-full grid gap-3 border-t pt-3 sm:grid-cols-[minmax(0,1fr)_minmax(180px,0.8fr)] ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                                <label className="min-w-0">
+                                  <span className={`mb-1 block text-[10px] font-bold uppercase ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Warranty for {item.name || `product ${index + 1}`}</span>
+                                  <select
+                                    aria-label={`Warranty for ${item.name || "product"}`}
+                                    value={getItemWarrantySelectValue(item)}
+                                    onChange={(event) => {
+                                      const value = event.target.value;
+                                      if (value === "Custom") {
+                                        handleEditItemFieldChange(item.id, "warranty_period", "Custom");
+                                        if (!Number(item.custom_warranty_days)) handleEditItemFieldChange(item.id, "custom_warranty_days", 90);
+                                      } else {
+                                        handleEditItemFieldChange(item.id, "warranty_period", value === "No Warranty" ? value : Number(value));
+                                      }
+                                    }}
+                                    className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900"}
+                                  >
+                                    <option value="No Warranty">No Warranty</option>
+                                    <option value="30">30 Days</option>
+                                    <option value="60">60 Days</option>
+                                    <option value="90">90 Days</option>
+                                    <option value="Custom">Custom</option>
+                                  </select>
+                                </label>
+                                {getItemWarrantySelectValue(item) === "Custom" && (
+                                  <label className="min-w-0">
+                                    <span className={`mb-1 block text-[10px] font-bold uppercase ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Custom warranty days</span>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      step="1"
+                                      aria-label={`Custom warranty days for ${item.name || `product ${index + 1}`}`}
+                                      value={getItemWarrantyCustomDays(item)}
+                                      onChange={(event) => handleEditItemFieldChange(item.id, "custom_warranty_days", event.target.value)}
+                                      className={darkMode ? "w-full rounded-lg border border-slate-600 bg-[#122d42] px-2 py-2 text-sm text-slate-100" : "w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-900"}
+                                      placeholder="Custom days"
+                                    />
+                                  </label>
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -4703,11 +4818,11 @@ function SiteInspection() {
                             </div>
                             <div className="mt-3 grid grid-cols-2 gap-3">
                               <label className="min-w-0">
-                                <span className={labelClasses}>Width</span>
+                                <span className={labelClasses}>{isInspectionMeterItem(item) ? "Length" : isInspectionPieceItem(item) ? "Not used" : "Width"}</span>
                                 <input type="number" min="0" inputMode="decimal" aria-label={`Width for measurement ${index + 1}`} value={getDimensionInputValue(item.width)} onFocus={() => clearDefaultDimensionZero(item.id, "width", item.width, handleEditItemFieldChange)} onChange={(event) => handleEditItemFieldChange(item.id, "width", event.target.value)} className={inputClasses} />
                               </label>
                               <label className="min-w-0">
-                                <span className={labelClasses}>Height</span>
+                                <span className={labelClasses}>{isInspectionMeterItem(item) ? "Height (optional)" : isInspectionPieceItem(item) ? "Not used" : "Height"}</span>
                                 <input type="number" min="0" inputMode="decimal" aria-label={`Height for measurement ${index + 1}`} value={getDimensionInputValue(item.height)} onFocus={() => clearDefaultDimensionZero(item.id, "height", item.height, handleEditItemFieldChange)} onChange={(event) => handleEditItemFieldChange(item.id, "height", event.target.value)} className={inputClasses} />
                               </label>
                               <label className="min-w-0">

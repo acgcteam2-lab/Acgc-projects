@@ -229,9 +229,7 @@ function Signup() {
           <div className="pointer-events-none absolute -right-16 -top-8 h-56 w-56 rounded-full border border-white/10" />
           <div className="relative z-10 text-center">
             <p className="mb-5 text-xs font-black uppercase tracking-[0.3em] text-red-100">Welcome To</p>
-            <div className="mx-auto mb-4 inline-flex rounded-2xl border border-white/70 bg-white p-3 shadow-[0_12px_32px_rgba(0,0,0,0.32)]">
-              <img src={logo} alt="ACGC" className="w-44 drop-shadow-xl" />
-            </div>
+            <img src={logo} alt="ACGC" className="mx-auto mb-4 w-44 drop-shadow-[0_0_4px_rgba(255,255,255,0.7)]" />
             <p className="mx-auto max-w-sm text-xs font-medium leading-5 text-red-50">Securely manage products, site inspections, and operations from one powerful dashboard.</p>
           </div>
         </div>

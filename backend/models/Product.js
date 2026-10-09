@@ -70,7 +70,7 @@ const ProductSchema = new mongoose.Schema(
     pricing_method: {
       type: String,
       trim: true,
-      enum: ["sqft", "blade", "fixed", "per_piece", ""],
+      enum: ["sqft", "blade", "fixed", "per_piece", "per_meter", ""],
       default: "",
     },
     variant: {

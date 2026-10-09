@@ -32,7 +32,7 @@ import logo from "../../assets/images/ACGCLOGO1.png";
 import { calculateEstimate } from "@/lib/estimator";
 import { getFinalProjectCost } from "@/lib/orderPricing";
 import { resolveBackendImageUrl } from "../../lib/resolveBackendImageUrl";
-import { getProductLineTotal } from "../../lib/productPricing";
+import { getDefaultProductLineTotal, getProductLineTotal } from "../../lib/productPricing";
 import { useIsMobile } from "@/hooks/useIsMobile";
 
 function LandingPage() {
@@ -236,9 +236,16 @@ function LandingPage() {
 
   const getProductPrice = (product) => {
     if (!product) return "Contact us";
+    if (isBladeProduct(product)) {
+      const defaultPrice = getDefaultProductLineTotal(product);
+      return defaultPrice > 0
+        ? `₱${defaultPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        : "Contact us";
+    }
     const override = Number(product.estimated_price_override) || 0;
     if (override > 0) {
-      return `₱${override.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const defaultPrice = getProductLineTotal(product, getProductDefaultDimensions(product));
+      return `₱${defaultPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
     if (isBladeProduct(product) && product.show_price_per_blade !== false) {
       const glassRates = (product.blade_glass_types || [])

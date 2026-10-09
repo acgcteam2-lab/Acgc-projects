@@ -23,6 +23,19 @@ const dateOnly = (value) => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("en-PH", { dateStyle: "long" });
 };
+
+export const getCurrentCustomerContact = async (customerId) => {
+  if (!customerId) return null;
+  try {
+    return await User.findById(customerId).select("email first_name last_name").lean();
+  } catch (error) {
+    console.error("Unable to resolve current customer contact:", error);
+    return null;
+  }
+};
+
+export const resolveOrderCustomerEmail = (order, options = {}, linkedCustomer = null) =>
+  linkedCustomer?.email || options.customerEmail || order?.customer_email || order?.customer?.email || "";
 const customerName = (order) => order?.customer_name || [order?.customer?.first_name, order?.customer?.last_name].filter(Boolean).join(" ") || "Valued Customer";
 const itemDescription = (item) => {
   const quantity = asNumber(item?.quantity) || 1;
@@ -238,19 +251,14 @@ export const buildOrderEmail = (event, order, { audience = "customer", ...extra 
 
 export const sendOrderNotification = async (event, order, options = {}) => {
   const recipients = [];
-  let customerEmail = options.customerEmail || order?.customer_email || order?.customer?.email;
-  if ((!customerEmail || !order?.customer_name) && order?.customer) {
-    try {
-      const customerId = order.customer?._id || order.customer;
-      const customer = await User.findById(customerId).select("email first_name last_name").lean();
-      customerEmail ||= customer?.email;
-      if (!order.customer_name && customer) {
-        order.customer_name = [customer.first_name, customer.last_name].filter(Boolean).join(" ");
-      }
-    } catch (error) {
-      console.error("Unable to resolve customer details for order email:", error);
+  let linkedCustomer = null;
+  if (order?.customer) {
+    linkedCustomer = await getCurrentCustomerContact(order.customer?._id || order.customer);
+    if (!order.customer_name && linkedCustomer) {
+      order.customer_name = [linkedCustomer.first_name, linkedCustomer.last_name].filter(Boolean).join(" ");
     }
   }
+  const customerEmail = resolveOrderCustomerEmail(order, options, linkedCustomer);
   const adminEmail = options.adminEmail || process.env.ADMIN_EMAIL;
   if (options.audience !== "admin" && customerEmail) recipients.push({ to: customerEmail, audience: "customer" });
   if (["order_submitted", "payment_proof_submitted", "contract_accepted"].includes(event) && adminEmail && options.audience !== "customer") {

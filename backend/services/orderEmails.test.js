@@ -1,8 +1,20 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildOrderEmail, getOrderEmailPaymentTotals } from "./orderEmails.js";
+import { buildOrderEmail, getOrderEmailPaymentTotals, resolveOrderCustomerEmail } from "./orderEmails.js";
 
 describe("order email templates", () => {
+  it("uses the current linked-account email instead of historical order snapshots", () => {
+    assert.equal(resolveOrderCustomerEmail(
+      { customer_email: "old@example.com" },
+      { customerEmail: "stale-option@example.com" },
+      { email: "current@example.com" },
+    ), "current@example.com");
+  });
+
+  it("keeps the saved recipient fallback for orders without a linked account", () => {
+    assert.equal(resolveOrderCustomerEmail({ customer_email: "walkin@example.com" }), "walkin@example.com");
+  });
+
   it("includes order details, escapes dynamic data, and omits irrelevant cancellation fields", () => {
     const email = buildOrderEmail("order_cancelled", {
       _id: "mongo-id",

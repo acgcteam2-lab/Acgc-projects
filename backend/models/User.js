@@ -10,6 +10,28 @@ const UserSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
+    pending_email: {
+      type: String,
+      lowercase: true,
+      trim: true,
+      default: null,
+    },
+    pending_email_verification_code: {
+      type: String,
+      default: null,
+    },
+    pending_email_verification_expires: {
+      type: Date,
+      default: null,
+    },
+    pending_email_verification_attempts: {
+      type: Number,
+      default: 0,
+    },
+    pending_email_verification_sent_at: {
+      type: Date,
+      default: null,
+    },
     username: {
       type: String,
       required: true,
@@ -107,6 +129,11 @@ const UserSchema = new mongoose.Schema(
   }
 );
 
+UserSchema.index(
+  { pending_email: 1 },
+  { unique: true, partialFilterExpression: { pending_email: { $type: "string" } } },
+);
+
 // Hash password before saving
 UserSchema.pre("save", async function () {
   if (!this.isModified("password")) return;
@@ -126,6 +153,10 @@ UserSchema.methods.toJSON = function () {
   delete user.password;
     delete user.email_verification_token;
     delete user.email_verification_expires;
+    delete user.pending_email_verification_code;
+    delete user.pending_email_verification_expires;
+    delete user.pending_email_verification_attempts;
+    delete user.pending_email_verification_sent_at;
     delete user.password_reset_code;
     delete user.password_reset_expires;
   return user;

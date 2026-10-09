@@ -159,6 +159,11 @@ const buildAddressFromRequest = (reqBody) => {
 
 const router = express.Router();
 const hashVerificationToken = (token) => createHash("sha256").update(token).digest("hex");
+const verificationHashesMatch = (firstHash, secondHash) => {
+  const first = Buffer.from(String(firstHash || ""), "hex");
+  const second = Buffer.from(String(secondHash || ""), "hex");
+  return first.length === second.length && first.length > 0 && timingSafeEqual(first, second);
+};
 
 const sendVerificationEmail = async (user, token) => {
   const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
@@ -176,6 +181,26 @@ const sendVerificationEmail = async (user, token) => {
       <p>This link expires in 24 hours.</p>
     `,
   });
+};
+
+const sendPendingEmailVerificationCode = async (user, pendingEmail, code) => {
+  await sendMail({
+    from: process.env.EMAIL_FROM || "ACGC <no-reply@acgc.local>",
+    to: pendingEmail,
+    subject: "Your ACGC email verification code",
+    text: `Hello ${user.first_name}, your ACGC email verification code is ${code}. It expires in 10 minutes.`,
+    html: `<p>Hello ${user.first_name},</p><p>Your ACGC email verification code is:</p><p style="font-size:28px;font-weight:700;letter-spacing:8px">${code}</p><p>This code expires in 10 minutes. Your current email remains active until verification.</p>`,
+  });
+};
+
+const createEmailChangeCode = async (user, pendingEmail) => {
+  const code = String(randomInt(100000, 1000000));
+  user.pending_email_verification_code = hashVerificationToken(`${user._id}:${pendingEmail}:${code}`);
+  user.pending_email_verification_expires = new Date(Date.now() + 10 * 60 * 1000);
+  user.pending_email_verification_attempts = 0;
+  user.pending_email_verification_sent_at = new Date();
+  await user.save();
+  await sendPendingEmailVerificationCode(user, pendingEmail, code);
 };
 
 const sendPasswordResetCode = async (account, code) => {
@@ -482,8 +507,208 @@ router.get("/verify-email", async (req, res) => {
 
     return res.json({ success: true, message: "Email verified successfully. You can now log in." });
   } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ success: false, message: "This email address is already registered to another account." });
+    }
     console.error("Email verification error:", error);
     return res.status(500).json({ success: false, message: "Unable to verify email." });
+  }
+});
+
+router.post("/profile/email-change", authMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== "customer") {
+      return res.status(403).json({ success: false, message: "Only customers can change their account email." });
+    }
+
+    const newEmail = String(req.body?.new_email || "").trim().toLowerCase();
+    const currentPassword = String(req.body?.current_password || "");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+      return res.status(400).json({ success: false, message: "Enter a valid email address." });
+    }
+    if (!currentPassword) {
+      return res.status(400).json({ success: false, message: "Current password is required." });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user || user.role !== "customer") {
+      return res.status(404).json({ success: false, message: "Customer account not found." });
+    }
+    if (!(await user.comparePassword(currentPassword))) {
+      return res.status(401).json({ success: false, message: "Current password is incorrect." });
+    }
+    if (newEmail === user.email.toLowerCase()) {
+      return res.status(400).json({ success: false, message: "The new email address matches your current email." });
+    }
+
+    const [existingUser, existingPendingEmail, existingAdmin] = await Promise.all([
+      User.findOne({ email: newEmail, _id: { $ne: user._id } }).select("_id"),
+      User.findOne({ pending_email: newEmail, _id: { $ne: user._id } }).select("_id"),
+      Admin.findOne({ email: newEmail }).select("_id"),
+    ]);
+    if (existingUser || existingPendingEmail || existingAdmin) {
+      return res.status(409).json({ success: false, message: "This email address is already registered or pending verification for another account." });
+    }
+
+    user.pending_email = newEmail;
+    user.pending_email_verification_code = null;
+    user.pending_email_verification_expires = null;
+    user.pending_email_verification_attempts = 0;
+    user.pending_email_verification_sent_at = null;
+
+    try {
+      await createEmailChangeCode(user, newEmail);
+    } catch (mailError) {
+      await User.updateOne(
+        { _id: user._id, pending_email: newEmail },
+        { $set: {
+          pending_email: null,
+          pending_email_verification_code: null,
+          pending_email_verification_expires: null,
+          pending_email_verification_attempts: 0,
+          pending_email_verification_sent_at: null,
+        } },
+      );
+      return res.status(502).json({ success: false, message: "Unable to send the verification code. Your current email is unchanged." });
+    }
+
+    return res.json({
+      success: true,
+      pending_email: newEmail,
+      message: `A verification code was sent to ${newEmail}. Your current email remains active until verified.`,
+    });
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ success: false, message: "This email address is already registered or pending verification for another account." });
+    }
+    console.error("Request email change error:", error);
+    return res.status(500).json({ success: false, message: "Unable to request an email change." });
+  }
+});
+
+router.post("/profile/email-change/resend", authMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== "customer") {
+      return res.status(403).json({ success: false, message: "Only customers can change their account email." });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user || user.role !== "customer") {
+      return res.status(404).json({ success: false, message: "Customer account not found." });
+    }
+    if (!user.pending_email) {
+      return res.status(400).json({ success: false, message: "There is no pending email change to verify." });
+    }
+
+    const cooldownEndsAt = user.pending_email_verification_sent_at
+      ? user.pending_email_verification_sent_at.getTime() + 60 * 1000
+      : 0;
+    if (Date.now() < cooldownEndsAt) {
+      return res.status(429).json({
+        success: false,
+        retry_after_seconds: Math.ceil((cooldownEndsAt - Date.now()) / 1000),
+        message: "Please wait before requesting another verification code.",
+      });
+    }
+
+    try {
+      await createEmailChangeCode(user, user.pending_email);
+    } catch (mailError) {
+      console.error("Email change code resend failed:", mailError);
+      await User.updateOne(
+        { _id: user._id, pending_email: user.pending_email },
+        { $set: {
+          pending_email_verification_code: null,
+          pending_email_verification_expires: null,
+          pending_email_verification_sent_at: null,
+        } },
+      );
+      return res.status(502).json({ success: false, message: "Unable to send a new verification code. Please try again later." });
+    }
+
+    return res.json({ success: true, message: "A new verification code was sent." });
+  } catch (error) {
+    console.error("Resend email change code error:", error);
+    return res.status(500).json({ success: false, message: "Unable to resend the verification code." });
+  }
+});
+
+router.post("/profile/email-change/verify", authMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== "customer") {
+      return res.status(403).json({ success: false, message: "Only customers can change their account email." });
+    }
+
+    const code = String(req.body?.code || "").trim();
+    if (!/^\d{6}$/.test(code)) {
+      return res.status(400).json({ success: false, message: "Enter the six-digit verification code." });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user || user.role !== "customer") {
+      return res.status(404).json({ success: false, message: "Customer account not found." });
+    }
+    if (!user.pending_email) {
+      return res.status(400).json({ success: false, message: "There is no pending email change to verify." });
+    }
+    if (!user.pending_email_verification_code || !user.pending_email_verification_expires) {
+      return res.status(400).json({ success: false, message: "Your verification code has expired. Request a new code to continue." });
+    }
+    if (user.pending_email_verification_expires <= new Date()) {
+      user.pending_email_verification_code = null;
+      await user.save();
+      return res.status(400).json({ success: false, message: "Your verification code has expired. Request a new code to continue." });
+    }
+    if (user.pending_email_verification_attempts >= 5) {
+      user.pending_email_verification_code = null;
+      user.pending_email_verification_expires = null;
+      await user.save();
+      return res.status(429).json({ success: false, message: "Too many incorrect codes. Request a new code to continue." });
+    }
+
+    const expectedCodeHash = hashVerificationToken(`${user._id}:${user.pending_email}:${code}`);
+    if (!verificationHashesMatch(expectedCodeHash, user.pending_email_verification_code)) {
+      user.pending_email_verification_attempts += 1;
+      if (user.pending_email_verification_attempts >= 5) {
+        user.pending_email_verification_code = null;
+        user.pending_email_verification_expires = null;
+      }
+      await user.save();
+      const attemptsRemaining = Math.max(0, 5 - user.pending_email_verification_attempts);
+      return res.status(attemptsRemaining ? 400 : 429).json({
+        success: false,
+        attempts_remaining: attemptsRemaining,
+        message: attemptsRemaining
+          ? `Incorrect verification code. ${attemptsRemaining} attempt${attemptsRemaining === 1 ? "" : "s"} remaining.`
+          : "Too many incorrect codes. Request a new code to continue.",
+      });
+    }
+
+    const pendingEmail = user.pending_email.toLowerCase().trim();
+    const [existingUser, existingAdmin] = await Promise.all([
+      User.findOne({ email: pendingEmail, _id: { $ne: user._id } }).select("_id"),
+      Admin.findOne({ email: pendingEmail }).select("_id"),
+    ]);
+    if (existingUser || existingAdmin) {
+      return res.status(409).json({ success: false, message: "This email address is already registered to another account." });
+    }
+
+    user.email = pendingEmail;
+    user.email_verified = true;
+    user.pending_email = null;
+    user.pending_email_verification_code = null;
+    user.pending_email_verification_expires = null;
+    user.pending_email_verification_attempts = 0;
+    user.pending_email_verification_sent_at = null;
+    await user.save();
+
+    return res.json({ success: true, email: user.email, message: "Your email address has been updated and verified successfully." });
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ success: false, message: "This email address is already registered to another account." });
+    }
+    console.error("Verify email change code error:", error);
+    return res.status(500).json({ success: false, message: "Unable to verify the code." });
   }
 });
 

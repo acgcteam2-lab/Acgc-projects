@@ -3,6 +3,7 @@ import logo from "@/assets/images/ACGCLOGO1.png";
 import approvedStamp from "@/assets/approved.png";
 import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { getFinalProjectCost, getRequiredDownpayment } from "@/lib/orderPricing";
+import { getContractBladeDetails } from "@/pages/SiteInspection/contractState";
 
 function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, onRegenerate, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false, notificationRecordId = null }) {
   const darkMode = false;
@@ -214,13 +215,25 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
               <tbody>
                 {contractItems.map((item, index) => {
                   const warranty = getItemWarrantyDetails(item, index);
+                  const sourceItem = sourceItems[index] || {};
+                  const bladeDetails = getContractBladeDetails(item, sourceItem);
                   return (
                   <tr key={`${item.name || "item"}-${index}`} className={darkMode ? "border-b border-slate-600" : "border-b border-slate-200"}>
                     <td className="px-2 py-2">{index + 1}</td>
-                    <td className="px-2 py-2 font-medium">{item.name || "Item"}</td>
-                    <td className="px-2 py-2 text-center">{item.width || 0} x {item.height || 0} ({item.unit || "in"})</td>
+                    <td className="px-2 py-2 font-medium">
+                      {item.name || "Item"}
+                      {bladeDetails.isBlade && (
+                        <div className="mt-1 text-[9px] font-normal text-slate-500">
+                          <div>{bladeDetails.glassName || "Glass"} · {bladeDetails.bladeCount} blades × {formatCurrency(bladeDetails.bladeRate)}/blade</div>
+                          {bladeDetails.saleMode === "frame" && (
+                            <div>Frame: {bladeDetails.frameName || "Selected frame"}{bladeDetails.framePrice > 0 ? ` · ${formatCurrency(bladeDetails.framePrice)}` : ""}</div>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-2 py-2 text-center">{item.width || 0} x {item.height || 0} ({item.unit || sourceItem.measurement_unit || "in"})</td>
                     <td className="px-2 py-2 text-center">{item.quantity || 1}</td>
-                    <td className="px-2 py-2 text-right">{formatCurrency(item.unitPrice)}</td>
+                    <td className="px-2 py-2 text-right">{bladeDetails.isBlade ? <>{formatCurrency(bladeDetails.bladeRate)} / blade{bladeDetails.framePrice > 0 ? <div className="text-[9px]">+ {formatCurrency(bladeDetails.framePrice)} frame</div> : null}</> : formatCurrency(item.unitPrice)}</td>
                     {isPerProductWarranty && (
                       <td className="px-2 py-2 text-center text-[9px]">
                         <div className="font-bold">{warranty.periodText}</div>

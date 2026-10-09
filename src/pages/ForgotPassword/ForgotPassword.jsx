@@ -13,6 +13,7 @@ import {
   Mail,
 } from "lucide-react";
 import { requestPasswordReset, resetPassword, verifyPasswordResetCode } from "@/api/auth";
+import OtpCodeInput from "@/components/OtpCodeInput";
 import logo from "../../assets/images/ACGCLOGO1.png";
 
 const getPasswordStrength = (password) => {
@@ -147,7 +148,10 @@ function ForgotPassword() {
               <form onSubmit={handleSubmit} className="mt-6">
                 {step === 1 ? <EmailField value={email} onChange={setEmail} /> : null}
                 {step === 2 ? (
-                  <Field label="Verification code" icon={KeyRound} value={code} onChange={(value) => setCode(value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter 6-digit code" inputMode="numeric" />
+                  <div>
+                    <label htmlFor="password-reset-code" className="mb-2 block text-sm font-semibold text-slate-700">Verification code</label>
+                    <OtpCodeInput id="password-reset-code" value={code} onChange={setCode} autoFocus />
+                  </div>
                 ) : null}
                 {step === 3 ? (
                   <div className="space-y-4">

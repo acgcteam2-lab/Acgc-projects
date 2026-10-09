@@ -8,6 +8,11 @@ const toNonNegativeNumber = (value) => {
 const getQuantity = (item = {}) =>
   Math.max(1, Number(item.quantity ?? item.dimensions?.quantity) || 1);
 
+const toMeters = (value, unit) => {
+  const factors = { in: 0.0254, ft: 0.3048, cm: 0.01, m: 1 };
+  return (Number(value) || 0) * (factors[unit] || 1);
+};
+
 export const getDefaultExtraChargeSelections = (product = {}) => (
   (Array.isArray(product.extra_charges) ? product.extra_charges : []).map((charge) => ({
     ...charge,
@@ -21,7 +26,8 @@ const getPricingMethod = (product = {}, item = {}) => {
   const legacyUnit = String(product.unit || item.unit || "").toLowerCase();
   if (legacyUnit === "per_sqft" || legacyUnit === "sqft") return "sqft";
   if (legacyUnit === "per_blade" || legacyUnit === "blade") return "blade";
-  if (["per_piece", "piece", "per_set", "set", "per_meter", "meter"].includes(legacyUnit)) return "fixed";
+  if (legacyUnit === "per_meter" || legacyUnit === "meter") return "per_meter";
+  if (["per_piece", "piece", "per_set", "set"].includes(legacyUnit)) return "per_piece";
   if (Number(product.price_per_sqft ?? item.price_per_sqft) > 0) return "sqft";
   if (Number(product.price_per_blade ?? item.price_per_blade) > 0) return "blade";
   return "fixed";
@@ -45,14 +51,33 @@ const getBladePricing = (product = {}, item = {}) => {
   return { glassTypes, frameTypes, glassName, saleMode, frameName, frameType, bladeCount, bladeRate, framePrice };
 };
 
+export const getDefaultBladeCount = (product = {}, selections = {}) => {
+  const frameTypes = Array.isArray(product.blade_frame_types) ? product.blade_frame_types : [];
+  const saleMode = selections.sale_mode || product.default_sale_mode || (product.sell_blades_only === false ? "frame" : "blades_only");
+  const frameName = selections.frame_type || product.default_frame_type || "";
+  const frame = frameTypes.find((candidate) => candidate.name === frameName) || frameTypes[0];
+  const selectedCount = Number(selections.blade_count);
+  const minimumBlades = Math.max(1, Number(product.minimum_blades) || 1);
+
+  if (saleMode === "frame" && !selections.custom_frame_size) {
+    const frameBladeCount = Number(frame?.blade_count) || minimumBlades;
+    return Math.max(selectedCount || 0, frameBladeCount, minimumBlades);
+  }
+
+  if (selectedCount > 0) return selectedCount;
+  return Number(product.blade_count) || minimumBlades;
+};
+
 export const getProductLineTotal = (product = {}, item = {}) => {
   const quantity = getQuantity(item);
   const method = getPricingMethod(product, item);
   const bladePricing = method === "blade" ? getBladePricing(product, item) : null;
-  const usesConfiguredBladePricing = Boolean(bladePricing && (bladePricing.glassTypes.length || bladePricing.frameTypes.length));
-  const overridePrice = usesConfiguredBladePricing ? 0 : toNonNegativeNumber(
-    product.estimated_price_override ?? item.estimated_price_override,
-  );
+  const hasConfiguredBladePricing = Boolean(bladePricing && (bladePricing.glassTypes.length || bladePricing.frameTypes.length));
+  const configuredFixedPrice = toNonNegativeNumber(product.base_price ?? item.base_price)
+    || toNonNegativeNumber(product.unit_price ?? item.unit_price);
+  const overridePrice = method === "fixed" && !configuredFixedPrice && !hasConfiguredBladePricing
+    ? toNonNegativeNumber(product.estimated_price_override ?? item.estimated_price_override)
+    : 0;
 
   const unit = item.measurement_unit || item.measurementUnit || item.dimensions?.unit || product.measurement_unit || "in";
   const width = Number(item.width ?? item.dimensions?.width ?? product.width) || 0;
@@ -75,10 +100,16 @@ export const getProductLineTotal = (product = {}, item = {}) => {
     }
   }
 
-  if (overridePrice <= 0 && ["fixed", "per_piece", "per_set", "per_meter", "piece", "set", "meter"].includes(method)) {
+  if (overridePrice <= 0 && (method === "per_meter" || method === "meter")) {
+    const length = Number(item.length ?? item.dimensions?.length ?? item.width ?? item.dimensions?.width ?? product.length ?? product.width) || 0;
+    const rate = toNonNegativeNumber(product.price_per_meter ?? product.unit_price ?? item.price_per_meter ?? item.unit_price);
+    subtotal = toMeters(length, unit) * rate * quantity;
+  }
+
+  if (overridePrice <= 0 && ["fixed", "per_piece", "per_set", "piece", "set"].includes(method)) {
     const savedEstimate = toNonNegativeNumber(product.estimated_price ?? item.estimated_price);
     const basePrice = toNonNegativeNumber(product.base_price ?? item.base_price);
-    const fixedPrice = basePrice || savedEstimate || toNonNegativeNumber(product.unit_price ?? item.unit_price);
+    const fixedPrice = basePrice || toNonNegativeNumber(product.unit_price ?? item.unit_price) || savedEstimate;
     subtotal = fixedPrice * quantity;
   }
 
@@ -129,6 +160,60 @@ export const getProductLineTotal = (product = {}, item = {}) => {
   return Math.round((subtotal + additionalCharges + legacyCustomizationFee) * 100) / 100;
 };
 
+export const getDefaultProductLineTotal = (product = {}) => {
+  const method = getPricingMethod(product);
+  const frameTypes = Array.isArray(product.blade_frame_types) ? product.blade_frame_types : [];
+  const defaultFrame = frameTypes.find((frame) => frame.name === product.default_frame_type) || frameTypes[0];
+  const defaultSaleMode = product.default_sale_mode || (product.sell_blades_only === false ? "frame" : "blades_only");
+  const isBladePricing = method === "blade" || method === "per_blade";
+  const bladeCount = getDefaultBladeCount(product, {
+    sale_mode: defaultSaleMode,
+    frame_type: defaultFrame?.name || product.default_frame_type,
+  });
+
+  return getProductLineTotal(product, {
+    width: Number(product.width) || 0,
+    height: Number(product.height) || 0,
+    measurement_unit: product.measurement_unit || "in",
+    blade_glass_type: product.default_blade_glass_type || product.blade_glass_types?.[0]?.name || "",
+    sale_mode: defaultSaleMode,
+    frame_type: defaultFrame?.name || product.default_frame_type || "",
+    blade_count: isBladePricing ? bladeCount : Number(product.blade_count) || undefined,
+    extra_charges: getDefaultExtraChargeSelections(product),
+    quantity: 1,
+  });
+};
+
+export const getProductLineBreakdown = (product = {}, item = {}) => {
+  const baseTotal = getProductLineTotal({ ...product, extra_charges: [] }, item);
+  const configuredCharges = Array.isArray(product.extra_charges)
+    ? product.extra_charges
+    : Array.isArray(item.extra_charges) ? item.extra_charges : [];
+  const itemCharges = Array.isArray(item.extra_charges) ? item.extra_charges : [];
+  const extraCharges = configuredCharges.flatMap((charge, index) => {
+    const selection = itemCharges[index] || {};
+    if (charge?.is_active === false) return [];
+    if (charge?.is_optional === true) {
+      const selected = typeof selection.is_selected === "boolean"
+        ? selection.is_selected
+        : charge.is_default_selected !== false;
+      if (!selected) return [];
+    }
+
+    const chargeTotal = getProductLineTotal(
+      { ...product, extra_charges: [charge] },
+      { ...item, extra_charges: [{ ...selection, is_selected: true }] },
+    ) - baseTotal;
+    return [{ name: charge.name || charge.label || `Extra charge ${index + 1}`, total: Math.max(0, Math.round(chargeTotal * 100) / 100) }];
+  });
+
+  return {
+    baseTotal,
+    extraCharges,
+    total: getProductLineTotal(product, item),
+  };
+};
+
 export const getProductSizeLimitWarnings = (product = {}, item = {}) => {
   const limits = product.size_limits || item.size_limits;
   if (!limits) return [];
@@ -163,11 +248,13 @@ export const getProductSizeLimitWarnings = (product = {}, item = {}) => {
 
 export const getMeasuredProductLineTotal = (product = {}, item = {}) => {
   const method = getPricingMethod(product, item);
-  const overridePrice = toNonNegativeNumber(product.estimated_price_override ?? item.estimated_price_override);
   const configuredFixedPrice = toNonNegativeNumber(product.base_price ?? item.base_price)
-    || toNonNegativeNumber(product.estimated_price ?? item.estimated_price)
     || toNonNegativeNumber(product.unit_price ?? item.unit_price);
-  const measuredPrice = overridePrice || configuredFixedPrice;
+  const overridePrice = method === "fixed" && !configuredFixedPrice
+    ? toNonNegativeNumber(product.estimated_price_override ?? item.estimated_price_override)
+    : 0;
+  const measuredFixedPrice = configuredFixedPrice || toNonNegativeNumber(product.estimated_price ?? item.estimated_price);
+  const measuredPrice = overridePrice || measuredFixedPrice;
   const width = Number(item.width ?? item.dimensions?.width) || 0;
   const height = Number(item.height ?? item.dimensions?.height) || 0;
   const productWidth = Number(product.width) || 0;
@@ -229,6 +316,8 @@ export const buildProductPriceSnapshot = (product, item) => {
     ? toNonNegativeNumber(product.price_per_sqft)
     : method === "blade"
       ? bladePricing.bladeRate
+      : method === "per_meter"
+        ? toNonNegativeNumber(product.price_per_meter ?? product.unit_price)
       : toNonNegativeNumber(product.base_price || product.estimated_price || product.unit_price);
 
   return {

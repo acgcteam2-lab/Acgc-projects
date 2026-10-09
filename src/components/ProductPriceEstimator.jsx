@@ -8,6 +8,12 @@ const currency = (value) =>
 export const isBladePricingProduct = (product) =>
   ["blade", "per_blade"].includes(String(product?.pricing_method || product?.unit || "").toLowerCase());
 
+export const isMeterPricingProduct = (product) =>
+  ["per_meter", "meter"].includes(String(product?.pricing_method || product?.unit || "").toLowerCase());
+
+export const isPiecePricingProduct = (product) =>
+  ["per_piece", "piece", "per_set", "set"].includes(String(product?.pricing_method || product?.unit || "").toLowerCase());
+
 export const getDefaultProductEstimatorForm = (product = {}) => {
   const glassTypes = Array.isArray(product.blade_glass_types) ? product.blade_glass_types : [];
   const frameTypes = Array.isArray(product.blade_frame_types) ? product.blade_frame_types : [];
@@ -22,7 +28,7 @@ export const getDefaultProductEstimatorForm = (product = {}) => {
 
   return {
     unit: product.custom_frame_size_unit || product.measurement_unit || "in",
-    width: "0",
+    width: isMeterPricingProduct(product) ? String(product.width || "") : "0",
     height: "0",
     blade_glass_type: product.default_blade_glass_type || glassTypes[0]?.name || "",
     sale_mode: saleMode,
@@ -37,6 +43,8 @@ const getProductEstimateRate = (product, form) => {
   const pricingMethod = String(product?.pricing_method || "").toLowerCase();
   const legacyUnit = String(product?.unit || "").toLowerCase();
   if (pricingMethod === "sqft" || legacyUnit === "per_sqft") return Number(product?.price_per_sqft) || undefined;
+  if (pricingMethod === "per_meter" || legacyUnit === "per_meter") return Number(product?.unit_price) || undefined;
+  if (isPiecePricingProduct(product)) return Number(product?.base_price || product?.unit_price) || undefined;
   if (isBladePricingProduct(product)) {
     const selectedGlass = (product?.blade_glass_types || []).find((glass) => glass.name === form.blade_glass_type);
     return Number(selectedGlass?.price_per_blade ?? product?.price_per_blade) || undefined;
@@ -48,6 +56,8 @@ export const getProductEstimatorState = (product, form = {}) => {
   if (!product) {
     return {
       isBladeEstimator: false,
+      isMeterEstimator: false,
+      isPieceEstimator: false,
       needsDimensions: true,
       hasEstimate: false,
       result: null,
@@ -62,6 +72,8 @@ export const getProductEstimatorState = (product, form = {}) => {
   }
 
   const isBladeEstimator = isBladePricingProduct(product);
+  const isMeterEstimator = isMeterPricingProduct(product);
+  const isPieceEstimator = isPiecePricingProduct(product);
   const glassTypes = Array.isArray(product.blade_glass_types) ? product.blade_glass_types : [];
   const frameTypes = Array.isArray(product.blade_frame_types) ? product.blade_frame_types : [];
   const selectedGlass = glassTypes.find((glass) => glass.name === form.blade_glass_type) || glassTypes[0] || null;
@@ -75,7 +87,7 @@ export const getProductEstimatorState = (product, form = {}) => {
     ? selectedFrameBladeCount
     : minimumBlades;
   const bladeCount = Number(form.blade_count) || bladeCountMinimum;
-  const needsDimensions = !isBladeEstimator || (form.sale_mode === "frame" && Boolean(form.custom_frame_size));
+  const needsDimensions = isMeterEstimator || (!isBladeEstimator && !isPieceEstimator) || (form.sale_mode === "frame" && Boolean(form.custom_frame_size));
   const item = {
     width,
     height,
@@ -107,8 +119,12 @@ export const getProductEstimatorState = (product, form = {}) => {
   const result = {
     ...rawResult,
     estimated_price: estimatedPrice,
-    rate: isBladeEstimator ? Number(selectedGlass?.price_per_blade ?? product.price_per_blade) || 0 : rawResult.rate || 0,
-    areaDisplay: isBladeEstimator ? `${bladeCount} blade${bladeCount === 1 ? "" : "s"}` : rawResult.areaDisplay,
+    rate: isBladeEstimator
+      ? Number(selectedGlass?.price_per_blade ?? product.price_per_blade) || 0
+      : isMeterEstimator || isPieceEstimator ? Number(getProductEstimateRate(product, form)) || 0 : rawResult.rate || 0,
+    areaDisplay: isBladeEstimator
+      ? `${bladeCount} blade${bladeCount === 1 ? "" : "s"}`
+      : isMeterEstimator ? `${width} ${item.measurement_unit}` : isPieceEstimator ? "1 piece" : rawResult.areaDisplay,
   };
   const hasBladeEstimate = Boolean(
     isBladeEstimator &&
@@ -123,7 +139,11 @@ export const getProductEstimatorState = (product, form = {}) => {
   );
   const hasEstimate = isBladeEstimator
     ? hasBladeEstimate
-    : width > 0 && height > 0 && Number(result.estimated_price) > 0;
+    : isMeterEstimator
+      ? width > 0 && Number(result.estimated_price) > 0
+      : isPieceEstimator
+        ? Number(result.estimated_price) > 0
+      : width > 0 && height > 0 && Number(result.estimated_price) > 0;
   const baseSubtotal = isBladeEstimator ? (Number(result.rate) || 0) * bladeCount : Number(result.estimated_price) || 0;
   const frameTotal = isBladeEstimator && item.sale_mode === "frame"
     ? Number(item.custom_frame_size ? product.custom_frame_price : selectedFrame?.price) || 0
@@ -142,6 +162,8 @@ export const getProductEstimatorState = (product, form = {}) => {
 
   return {
     isBladeEstimator,
+    isMeterEstimator,
+    isPieceEstimator,
     needsDimensions,
     hasEstimate,
     result,
@@ -162,6 +184,8 @@ function ProductPriceEstimator({ product, form, onFormChange, darkMode = false, 
   const state = getProductEstimatorState(product, form);
   const {
     isBladeEstimator,
+    isMeterEstimator,
+    isPieceEstimator,
     needsDimensions,
     hasEstimate,
     result,
@@ -204,7 +228,23 @@ function ProductPriceEstimator({ product, form, onFormChange, darkMode = false, 
         <h4 id="product-estimator-title" className={`text-sm font-bold ${strongClass}`}>Price Estimator</h4>
       </div>
 
-      {needsDimensions && (
+      {needsDimensions && (isMeterEstimator ? (
+        <div className="mt-4 grid grid-cols-[minmax(0,1fr)_minmax(88px,0.8fr)] gap-2">
+          <label className="min-w-0">
+            <span className={labelClass}>Length</span>
+            <input type="number" min="0" step="any" value={form.width || ""} onChange={(event) => updateForm({ width: event.target.value })} className={fieldClass} />
+          </label>
+          <label className="min-w-0">
+            <span className={labelClass}>Unit</span>
+            <select value={form.unit || "in"} onChange={(event) => updateForm({ unit: event.target.value })} className={fieldClass}>
+              <option value="in">in</option>
+              <option value="ft">ft</option>
+              <option value="cm">cm</option>
+              <option value="m">m</option>
+            </select>
+          </label>
+        </div>
+      ) : (
         <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(88px,0.8fr)]">
           <label className="min-w-0">
             <span className={labelClass}>Width</span>
@@ -225,7 +265,7 @@ function ProductPriceEstimator({ product, form, onFormChange, darkMode = false, 
             </select>
           </label>
         </div>
-      )}
+      ))}
 
       {isBladeEstimator && (
         <div className={compact ? "mt-4 space-y-3" : `mt-4 space-y-3 rounded-lg border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
@@ -302,12 +342,12 @@ function ProductPriceEstimator({ product, form, onFormChange, darkMode = false, 
       {hasEstimate ? (
         <div className={`mt-4 space-y-3 text-sm ${textClass}`} aria-live="polite">
           <div className="flex items-center justify-between gap-3">
-            <span className="inline-flex items-center gap-2"><Ruler size={13} aria-hidden="true" />{isBladeEstimator ? "Blades" : "Area"}</span>
+            <span className="inline-flex items-center gap-2"><Ruler size={13} aria-hidden="true" />{isBladeEstimator ? "Blades" : isMeterEstimator ? "Length" : isPieceEstimator ? "Quantity" : "Area"}</span>
             <span className={`font-bold ${strongClass}`}>{isBladeEstimator ? bladeCount : result?.areaDisplay || "N/A"}</span>
           </div>
           <div className="flex items-center justify-between gap-3">
             <span>Base Rate</span>
-            <span className={`font-bold ${strongClass}`}>{Number(result?.rate) > 0 ? `${formatCurrency(result.rate)} / ${isBladeEstimator ? "blade" : "sq ft"}` : "Contact us"}</span>
+            <span className={`font-bold ${strongClass}`}>{Number(result?.rate) > 0 ? `${formatCurrency(result.rate)} / ${isBladeEstimator ? "blade" : isMeterEstimator ? "meter" : isPieceEstimator ? "piece" : "sq ft"}` : "Contact us"}</span>
           </div>
           {isBladeEstimator && <div className="space-y-2 text-xs">
             <div className="flex items-center justify-between gap-3"><span>Blades ({bladeCount} x {formatCurrency(result.rate)})</span><strong className={strongClass}>{formatCurrency(bladeCount * Number(result.rate || 0))}</strong></div>
@@ -325,7 +365,7 @@ function ProductPriceEstimator({ product, form, onFormChange, darkMode = false, 
         </div>
       ) : (
         <div className={`mt-3 flex min-h-12 items-center justify-center rounded-lg px-3 py-2.5 text-center text-xs ${darkMode ? "bg-slate-800 text-slate-300" : "bg-slate-50 text-slate-500"}`}>
-          {isBladeEstimator ? "Choose a glass type and valid blade or frame option to estimate." : "Enter width and height to calculate your estimate."}
+          {isBladeEstimator ? "Choose a glass type and valid blade or frame option to estimate." : isMeterEstimator ? "Enter a length to calculate your estimate." : isPieceEstimator ? "A configured piece price is required to calculate your estimate." : "Enter width and height to calculate your estimate."}
         </div>
       )}
 
