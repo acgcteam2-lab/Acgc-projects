@@ -7,7 +7,6 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js",
     "dev": "nodemon --quiet server.js",
-    "verify:smtp": "node verify-smtp.mjs",
     "verify:cloudinary": "node scripts/verify-cloudinary.js",
     "migrate:atlas": "node scripts/migrate-to-atlas.js",
     "promote-admin": "node scripts/promote-admin.js"

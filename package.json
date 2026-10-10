@@ -15,7 +15,6 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "verify:smtp": "npm --prefix backend run verify:smtp",
     "verify:cloudinary": "npm --prefix backend run verify:cloudinary",
     "start:backend": "cd backend && npm start",
     "dev:backend": "npm --prefix backend run dev",
