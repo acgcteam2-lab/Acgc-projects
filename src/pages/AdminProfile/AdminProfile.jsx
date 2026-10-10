@@ -17,6 +17,7 @@ import { getPhilippinePhoneError, isValidPhilippinePhone, normalizePhoneInput } 
 import { getActivityStorageKey, readActivityLog } from "@/lib/activityLog";
 import { getAdminOrder } from "@/api/orders";
 import { formatDateTimeToMMMDDYYYY } from "@/lib/dateUtils";
+import { useAdminTheme } from "@/contexts/AdminThemeContext";
 
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
@@ -26,6 +27,7 @@ import ProfileAvatar from "../../components/ui/ProfileAvatar";
 
 function AdminProfile() {
   const isMobile = useIsMobile();
+  const { darkMode } = useAdminTheme();
   const activityPageSize = 5;
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     if (typeof window === "undefined") return true;
