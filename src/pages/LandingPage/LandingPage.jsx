@@ -814,7 +814,7 @@ function LandingPage() {
       )}
 
 {active === "products" && (
-  <section id="products" className="mx-auto max-w-7xl scroll-mt-28 px-4 pb-10 pt-32 sm:px-6 sm:py-14 sm:scroll-mt-24">
+  <section id="products" className="mx-auto w-full min-w-0 max-w-7xl scroll-mt-28 px-3 pb-10 pt-32 sm:px-6 sm:py-14 sm:scroll-mt-24">
     <div className="mb-6 flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
       <div>
         <p className="text-xs font-black uppercase tracking-[0.25em] text-red-600">ACGC Catalog</p>
@@ -884,7 +884,7 @@ function LandingPage() {
       </div>
     ) : (
       <>
-        <div className="grid grid-cols-1 gap-3 sm:gap-5 md:grid-cols-3 xl:grid-cols-4">
+        <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:gap-5 md:grid-cols-3 xl:grid-cols-4">
           {displayedProducts.map((product, index) => {
             const productId = product._id || product.id || `${product.name}-${index}`;
             const rating = featuredProductStats[product._id || product.id] || { averageRating: 0, ratingsCount: 0 };
@@ -908,9 +908,9 @@ function LandingPage() {
                     openProductDetails(product);
                   }
                 }}
-                className="group flex h-full min-w-0 flex-col overflow-hidden rounded-[20px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff7f7_100%)] shadow-[0_12px_30px_rgba(15,23,42,0.07)] transition-all duration-300 ease-out hover:-translate-y-1 hover:border-red-200 hover:shadow-[0_22px_55px_rgba(127,29,29,0.12)] motion-reduce:transition-none max-md:min-h-[124px] max-md:flex-row"
+                className="group flex h-full w-full min-w-0 flex-col overflow-hidden rounded-[20px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff7f7_100%)] shadow-[0_12px_30px_rgba(15,23,42,0.07)] transition-all duration-300 ease-out hover:-translate-y-1 hover:border-red-200 hover:shadow-[0_22px_55px_rgba(127,29,29,0.12)] motion-reduce:transition-none max-md:min-h-[124px] max-md:flex-row"
               >
-                <div className="relative aspect-[4/3] overflow-hidden bg-slate-100 max-md:aspect-auto max-md:w-[34%] max-md:min-w-[5.5rem] max-md:max-w-32 max-md:shrink-0">
+                <div className="relative aspect-[4/3] overflow-hidden bg-slate-100 max-md:aspect-auto max-md:w-[clamp(5.5rem,30vw,7rem)] max-md:shrink-0">
                   {image ? (
                     <img src={image} alt={productName} className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-110 motion-reduce:transition-none" />
                   ) : (
@@ -938,7 +938,7 @@ function LandingPage() {
                   </div>
                 </div>
 
-                <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 max-md:gap-2 max-md:p-3">
+                <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 max-md:gap-2 max-md:p-2.5">
                   <div className="min-w-0">
                     <h3 className="line-clamp-2 text-[17px] font-black leading-tight text-slate-900 max-md:text-sm" title={productName}>{productName}</h3>
                     <p className="mt-1 truncate text-[12px] font-medium text-slate-600 max-md:text-[10px]">{category}</p>
