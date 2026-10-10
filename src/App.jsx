@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import ForgotPassword from "./pages/ForgotPassword/ForgotPassword";
 import LandingPage from "./pages/LandingPage/LandingPage";
 import Login from "./pages/Login/Login";
@@ -60,7 +60,18 @@ function LogoutLoadingScreen() {
 function AppRoutes() {
   const { logoutLoading, user } = useAuth();
   const { darkMode } = useAdminTheme();
-  const usesAdminTheme = user?.role === "admin" || user?.role === "skilled_worker";
+  const location = useLocation();
+  const publicLightRoutes = new Set([
+    "/",
+    "/login",
+    "/signup",
+    "/verify-email",
+    "/forgot-password",
+    "/reset-password",
+    "/track-order",
+  ]);
+  const isPublicLightRoute = publicLightRoutes.has(location.pathname);
+  const usesAdminTheme = !isPublicLightRoute && (user?.role === "admin" || user?.role === "skilled_worker");
   const [pullDistance, setPullDistance] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const pullDistanceRef = useRef(0);
@@ -175,7 +186,7 @@ function AppRoutes() {
   }
 
   return (
-    <div className={`admin-theme-shell relative ${usesAdminTheme ? (darkMode ? "admin-theme-dark" : "admin-theme-light") : ""}`}>
+    <div className={`admin-theme-shell relative ${isPublicLightRoute ? "public-light-theme" : ""} ${usesAdminTheme ? (darkMode ? "admin-theme-dark" : "admin-theme-light") : ""}`}>
       {(pullDistance > 0 || refreshing) && (
         <div
           aria-live="polite"

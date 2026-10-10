@@ -61,6 +61,10 @@ body:has(.mobile-fullscreen-overlay) .customer-mobile-navigation {
     linear-gradient(135deg, #f8fafc 0%, #ffffff 54%, #fff1f2 100%);
 }
 
+.public-light-theme {
+  color-scheme: light;
+}
+
 .auth-light-canvas::before,
 .auth-light-canvas::after {
   position: absolute;
