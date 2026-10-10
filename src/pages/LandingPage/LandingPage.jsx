@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  Menu,
   X,
   ArrowRight,
   ShoppingBag,
@@ -38,7 +37,6 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 function LandingPage() {
   const isMobile = useIsMobile();
   const [active, setActive] = useState("home");
-  const [mobileMenu, setMobileMenu] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [productEstimatorForm, setProductEstimatorForm] = useState({ unit: "in", width: "0", height: "0", blade_glass_type: "", sale_mode: "blades_only", frame_type: "", custom_frame_size: false, blade_count: 1 });
   const [featuredProducts, setFeaturedProducts] = useState([]);
@@ -64,7 +62,6 @@ function LandingPage() {
   const trackingPaymentSummary = trackingResult ? getPaymentSummary(trackingResult) : null;
   const scrollToSection = (sectionId) => {
     setActive(sectionId);
-    setMobileMenu(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const isBladeProduct = (product) => ["blade", "per_blade"].includes(
@@ -524,12 +521,7 @@ function LandingPage() {
 
       {/* NAVBAR */}
 
-      <header
-        className="fixed inset-x-0 top-0 z-50 border-b border-white/50 bg-white/65 backdrop-blur-2xl"
-        onKeyDown={(event) => {
-          if (event.key === "Escape") setMobileMenu(false);
-        }}
-      >
+      <header className="fixed inset-x-0 top-0 z-50 border-b border-white/50 bg-white/90 shadow-sm backdrop-blur-2xl">
 
         <div className="flex w-full items-center justify-between gap-2 px-3 py-2 sm:gap-3 sm:px-4 sm:py-2.5">
 
@@ -538,7 +530,7 @@ function LandingPage() {
           <button
             type="button"
             onClick={() => scrollToSection("home")}
-            className="flex min-w-0 flex-1 items-center gap-2 px-1 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 sm:gap-3 sm:px-1.5"
+            className="mx-auto flex min-w-0 items-center gap-2 px-1 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 sm:gap-3 sm:px-1.5 lg:mx-0 lg:flex-1"
             aria-label="Go to ACGC Services home"
           >
             <img
@@ -596,65 +588,41 @@ function LandingPage() {
 
           </div>
 
-          {/* MOBILE MENU */}
-
-          <button
-            type="button"
-            onClick={() => setMobileMenu((open) => !open)}
-            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200/80 bg-white/70 text-slate-700 shadow-sm transition-colors hover:bg-white motion-reduce:transition-none lg:hidden"
-            aria-label={mobileMenu ? "Close navigation menu" : "Open navigation menu"}
-            aria-expanded={mobileMenu}
-            aria-controls="mobile-navigation"
-          >
-            {mobileMenu ? <X size={22} aria-hidden="true" /> : <Menu size={22} aria-hidden="true" />}
-          </button>
-
         </div>
 
-        {/* MOBILE DROPDOWN */}
-
-        {mobileMenu && (
-          <div
-            id="mobile-navigation"
-            className="border-t border-white/50 bg-white/70 px-3 pb-3 pt-2 backdrop-blur-2xl lg:hidden sm:px-4"
-          >
-            <nav aria-label="Mobile navigation" className="mx-auto max-h-[calc(100dvh-5rem)] max-w-xl overflow-y-auto rounded-2xl border border-white/80 bg-white/90 p-2 shadow-[0_18px_45px_rgba(15,23,42,0.14)] backdrop-blur-2xl">
-              {[
-                { name: "Browse Products", id: "products", Icon: ShoppingBag },
-                { name: "About Us", id: "about", Icon: BriefcaseBusiness },
-                { name: "Track Order", id: "track-order", Icon: Truck },
-              ].map(({ name, id, Icon }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => scrollToSection(id)}
-                  aria-current={active === id ? "page" : undefined}
-                  className={`flex min-h-12 w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left text-sm font-semibold transition-colors motion-reduce:transition-none ${active === id ? "border-red-100 bg-red-50 text-red-700" : "border-transparent text-slate-700 hover:bg-slate-50"}`}
-                >
-                  <Icon size={18} aria-hidden="true" />
-                  {name}
-                </button>
-              ))}
-
-              <div className="mt-2 grid grid-cols-2 gap-2 border-t border-slate-100 pt-3">
-                <Link
-                  to="/login"
-                  onClick={() => setMobileMenu(false)}
-                  className="inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 motion-reduce:transition-none"
-                >
-                  Login
-                </Link>
-                <Link
-                  to="/signup"
-                  onClick={() => setMobileMenu(false)}
-                  className="inline-flex min-h-11 items-center justify-center rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700 motion-reduce:transition-none"
-                >
-                  Sign Up
-                </Link>
-              </div>
-            </nav>
+        <div className="border-t border-slate-100/80 px-2 pb-2 pt-1.5 lg:hidden">
+          <nav aria-label="Mobile navigation" className="mx-auto grid max-w-md grid-cols-3 gap-1">
+            {[
+              { name: "Products", id: "products" },
+              { name: "About", id: "about" },
+              { name: "Track Order", id: "track-order" },
+            ].map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => scrollToSection(item.id)}
+                aria-current={active === item.id ? "page" : undefined}
+                className={`min-h-8 rounded-lg px-1 text-[11px] font-semibold transition-colors motion-reduce:transition-none ${active === item.id ? "bg-red-50 text-red-700" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500`}
+              >
+                {item.name}
+              </button>
+            ))}
+          </nav>
+          <div className="mx-auto mt-1.5 grid max-w-md grid-cols-2 gap-2">
+            <Link
+              to="/login"
+              className="inline-flex min-h-8 items-center justify-center rounded-lg border border-red-700 px-3 py-1 text-xs font-semibold text-red-700 transition-colors hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+            >
+              Login
+            </Link>
+            <Link
+              to="/signup"
+              className="inline-flex min-h-8 items-center justify-center rounded-lg bg-red-700 px-3 py-1 text-xs font-semibold text-white transition-colors hover:bg-red-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+            >
+              Sign Up
+            </Link>
           </div>
-        )}
+        </div>
 
       </header>
 
@@ -662,7 +630,7 @@ function LandingPage() {
 
       {active === "home" && (
         <>
-          <section id="home" className="relative scroll-mt-24 overflow-hidden bg-[#170d11] pt-24 text-white">
+          <section id="home" className="relative scroll-mt-28 overflow-hidden bg-[#170d11] pt-32 text-white sm:scroll-mt-24 sm:pt-24">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.16),transparent_26%),radial-gradient(circle_at_bottom_right,_rgba(239,68,68,0.2),transparent_28%),linear-gradient(135deg,#170d11_0%,#4b1017_38%,#140d13_100%)]" />
             <div className="absolute -left-16 top-28 h-72 w-72 rounded-full border border-white/10" />
             <div className="absolute -right-10 bottom-6 h-80 w-80 rounded-full border border-white/10" />
@@ -846,7 +814,7 @@ function LandingPage() {
       )}
 
 {active === "products" && (
-  <section id="products" className="mx-auto max-w-7xl scroll-mt-24 px-4 py-10 sm:px-6 sm:py-14">
+  <section id="products" className="mx-auto max-w-7xl scroll-mt-28 px-4 pb-10 pt-32 sm:px-6 sm:py-14 sm:scroll-mt-24">
     <div className="mb-6 flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
       <div>
         <p className="text-xs font-black uppercase tracking-[0.25em] text-red-600">ACGC Catalog</p>
