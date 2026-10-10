@@ -871,7 +871,7 @@ function LandingPage() {
     </div>
 
     {isLoadingFeatured ? (
-      <div className="grid grid-cols-1 gap-3 min-[360px]:grid-cols-2 sm:gap-5 md:grid-cols-3 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:gap-5 md:grid-cols-3 xl:grid-cols-4">
         {[...Array(8)].map((_, index) => (
           <div key={index} className="h-80 animate-pulse rounded-[26px] border border-slate-200 bg-white" />
         ))}
@@ -884,7 +884,7 @@ function LandingPage() {
       </div>
     ) : (
       <>
-        <div className="grid grid-cols-1 gap-3 min-[360px]:grid-cols-2 sm:gap-5 md:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:gap-5 md:grid-cols-3 xl:grid-cols-4">
           {displayedProducts.map((product, index) => {
             const productId = product._id || product.id || `${product.name}-${index}`;
             const rating = featuredProductStats[product._id || product.id] || { averageRating: 0, ratingsCount: 0 };
@@ -908,9 +908,9 @@ function LandingPage() {
                     openProductDetails(product);
                   }
                 }}
-                className="group flex h-full min-w-0 flex-col overflow-hidden rounded-[26px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff7f7_100%)] shadow-[0_16px_40px_rgba(15,23,42,0.08)] transition-all duration-300 ease-out hover:-translate-y-1.5 hover:border-red-200 hover:shadow-[0_22px_55px_rgba(127,29,29,0.12)] motion-reduce:transition-none"
+                className="group flex h-full min-w-0 flex-col overflow-hidden rounded-[20px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff7f7_100%)] shadow-[0_12px_30px_rgba(15,23,42,0.07)] transition-all duration-300 ease-out hover:-translate-y-1 hover:border-red-200 hover:shadow-[0_22px_55px_rgba(127,29,29,0.12)] motion-reduce:transition-none max-md:min-h-[124px] max-md:flex-row"
               >
-                <div className="relative aspect-[4/3] overflow-hidden bg-slate-100">
+                <div className="relative aspect-[4/3] overflow-hidden bg-slate-100 max-md:aspect-auto max-md:w-[34%] max-md:min-w-[5.5rem] max-md:max-w-32 max-md:shrink-0">
                   {image ? (
                     <img src={image} alt={productName} className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-110 motion-reduce:transition-none" />
                   ) : (
@@ -919,7 +919,7 @@ function LandingPage() {
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
                   <div className="absolute left-3 right-3 top-3 flex items-start justify-between gap-2">
                     {product.is_featured ? (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/80 bg-amber-200/90 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-amber-950 backdrop-blur-sm">
+                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/80 bg-amber-200/90 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-amber-950 backdrop-blur-sm max-md:px-1.5 max-md:py-0.5 max-md:text-[8px]">
                         <Star size={11} fill="currentColor" aria-hidden="true" /> Top Product
                       </span>
                     ) : (
@@ -929,7 +929,7 @@ function LandingPage() {
                     )}
                   </div>
                   <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3">
-                    <span className="max-w-[70%] truncate rounded-full border border-white/25 bg-slate-950/40 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.1em] text-slate-100 backdrop-blur-sm">
+                    <span className="max-w-[70%] truncate rounded-full border border-white/25 bg-slate-950/40 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.1em] text-slate-100 backdrop-blur-sm max-md:hidden">
                       {category}
                     </span>
                     <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/60 bg-white/90 text-red-700 shadow-lg" aria-hidden="true">
@@ -938,35 +938,37 @@ function LandingPage() {
                   </div>
                 </div>
 
-                <div className="flex flex-1 flex-col gap-3 p-4">
+                <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 max-md:gap-2 max-md:p-3">
                   <div className="min-w-0">
-                    <h3 className="truncate text-[17px] font-black leading-tight text-slate-900" title={productName}>{productName}</h3>
-                    <p className="mt-1 truncate text-[12px] font-medium text-slate-600">{category}</p>
+                    <h3 className="line-clamp-2 text-[17px] font-black leading-tight text-slate-900 max-md:text-sm" title={productName}>{productName}</h3>
+                    <p className="mt-1 truncate text-[12px] font-medium text-slate-600 max-md:text-[10px]">{category}</p>
                   </div>
 
-                  <div className="flex min-w-0 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px]">
+                  <div className="flex min-w-0 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] max-md:w-fit max-md:gap-1 max-md:border-0 max-md:bg-transparent max-md:p-0">
                     <span className="flex shrink-0 items-center gap-0.5 text-amber-400">{renderRatingStars(rating.averageRating || 0, 13)}</span>
                     <span className="truncate font-medium text-slate-700">
                       {rating.ratingsCount ? `${rating.averageRating.toFixed(1)} · ${rating.ratingsCount} reviews` : "No ratings yet"}
                     </span>
                   </div>
 
-                  <div className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <div className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 max-md:gap-1 max-md:rounded-lg max-md:px-2 max-md:py-1.5">
                     {dimensions && (
-                      <p className="flex items-center justify-between gap-2 text-[11px]">
+                      <p className="flex items-center justify-between gap-2 text-[11px] max-md:text-[9px]">
                         <span className="text-slate-500">Dimensions</span>
                         <span className="truncate font-semibold text-slate-700">{dimensions}</span>
                       </p>
                     )}
-                    <p className="flex items-center justify-between gap-2 text-[11px]">
+                    <p className="flex items-center justify-between gap-2 text-[11px] max-md:text-[9px]">
                       <span className="text-slate-500">Unit rate</span>
                       <span className="font-semibold text-slate-700">{getProductUnitRate(product)}</span>
                     </p>
                   </div>
 
-                  <div className="mt-auto border-t border-slate-200 pt-3">
-                    <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Starting from</p>
-                    <p className="mt-1 text-[22px] font-black text-red-700">{getProductPrice(product)}</p>
+                  <div className="mt-auto flex items-end justify-between gap-2 border-t border-slate-200 pt-3 max-md:pt-1.5">
+                    <div className="min-w-0">
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500 max-md:text-[8px]">Starting from</p>
+                      <p className="mt-1 truncate text-[22px] font-black text-red-700 max-md:text-base">{getProductPrice(product)}</p>
+                    </div>
                   </div>
                 </div>
               </article>

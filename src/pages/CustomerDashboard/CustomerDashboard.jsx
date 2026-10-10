@@ -4638,23 +4638,23 @@ function CustomerDashboard() {
               {productError && <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">{productError}</div>}
 
               {isLoadingProducts ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">{[...Array(6)].map((_, i) => <div key={i} className="animate-pulse bg-white rounded-3xl p-6 h-96" />)}</div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:gap-6 xl:grid-cols-4">{[...Array(6)].map((_, i) => <div key={i} className="h-32 animate-pulse rounded-2xl bg-white md:h-96 md:rounded-3xl md:p-6" />)}</div>
               ) : visibleProducts.length === 0 ? (
                 <div className={`rounded-3xl p-10 text-center shadow ${darkMode ? "bg-slate-800 text-slate-200" : "bg-white text-gray-600"}`}><p className={darkMode ? "text-slate-300" : "text-gray-600"}>No products matched your search.</p></div>
               ) : (
                 <>
-                  <div className="grid grid-cols-1 gap-3 min-[360px]:grid-cols-2 sm:gap-5 md:grid-cols-3 xl:grid-cols-4">
+                  <div className="grid grid-cols-1 gap-3 sm:gap-5 md:grid-cols-3 xl:grid-cols-4">
                     {displayedProducts.map((product) => (
                       <div
                         key={product._id || product.name}
-                        className={`customer-product-card group relative flex h-full min-w-0 cursor-pointer flex-col overflow-hidden rounded-[26px] border transition-all duration-300 ease-out hover:-translate-y-1.5 motion-reduce:transition-none ${
+                        className={`customer-product-card group relative flex h-full min-w-0 cursor-pointer flex-col overflow-hidden rounded-[26px] border transition-all duration-300 ease-out hover:-translate-y-1 motion-reduce:transition-none max-md:min-h-[124px] max-md:flex-row max-md:rounded-[18px] ${
                           darkMode
                             ? "border-slate-700 bg-[linear-gradient(180deg,#0f172a_0%,#111827_100%)] shadow-[0_20px_45px_rgba(2,6,23,0.45)] hover:border-red-500/60 hover:shadow-[0_26px_60px_rgba(239,68,68,0.16)]"
                             : "border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff7f7_100%)] shadow-[0_16px_40px_rgba(15,23,42,0.08)] hover:border-red-200 hover:shadow-[0_22px_55px_rgba(127,29,29,0.12)]"
                         }`}
                         onClick={() => handleViewProduct(product)}
                       >
-                        <div className={`relative aspect-[4/3] overflow-hidden ${darkMode ? "bg-slate-900" : "bg-slate-100"}`}>
+                        <div className={`relative aspect-[4/3] overflow-hidden ${darkMode ? "bg-slate-900" : "bg-slate-100"} max-md:aspect-auto max-md:w-[34%] max-md:min-w-[5.5rem] max-md:max-w-32 max-md:shrink-0`}>
                           <img src={getProductImage(product)} alt={product.name} className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-110 motion-reduce:transition-none" />
                           <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
 
@@ -4671,12 +4671,12 @@ function CustomerDashboard() {
                           </div>
 
                           <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3">
-                            <div className="max-w-[70%] rounded-full border border-white/25 bg-slate-950/40 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.10em] text-slate-100 backdrop-blur-sm">
+                            <div className="max-w-[70%] rounded-full border border-white/25 bg-slate-950/40 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.10em] text-slate-100 backdrop-blur-sm max-md:hidden">
                               {product.product_type || product.category || "General"}
                             </div>
 
                             {canRequestOrders && (
-                              <div className="flex gap-1.5">
+                              <div className="hidden gap-1.5 md:flex">
                                 <button
                                   type="button"
                                   onClick={(event) => {
@@ -4706,16 +4706,16 @@ function CustomerDashboard() {
                           </div>
                         </div>
 
-                        <div className="flex flex-1 flex-col gap-3 p-4">
+                        <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 max-md:gap-2 max-md:p-3">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
-                              <h3 className={`truncate text-[17px] font-black leading-tight ${darkMode ? "text-white" : "text-slate-900"}`} title={product.name}>{product.name}</h3>
-                              <p className={`mt-1 truncate text-[12px] font-medium ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{product.product_type || product.category || "General"}</p>
+                              <h3 className={`line-clamp-2 text-[17px] font-black leading-tight max-md:text-sm ${darkMode ? "text-white" : "text-slate-900"}`} title={product.name}>{product.name}</h3>
+                              <p className={`mt-1 truncate text-[12px] font-medium max-md:text-[10px] ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{product.product_type || product.category || "General"}</p>
                             </div>
                           </div>
 
                           {canUploadFeedback && (
-                            <div className={`flex min-w-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] ${darkMode ? "border-slate-700 bg-slate-900/80 text-slate-300" : "border-slate-200 bg-white text-slate-700"}`}>
+                            <div className={`flex min-w-0 items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] max-md:w-fit max-md:gap-1 max-md:border-0 max-md:bg-transparent max-md:p-0 ${darkMode ? "border-slate-700 bg-slate-900/80 text-slate-300" : "border-slate-200 bg-white text-slate-700"}`}>
                               <span className="flex items-center gap-1 text-amber-400">{renderRatingStars(productReviewStats[product._id || product.id]?.averageRating || 0, 13)}</span>
                               <span className={`truncate ${darkMode ? "font-medium text-slate-200" : "font-medium text-slate-800"}`}>
                                 {productReviewStats[product._id || product.id]?.averageRating > 0
@@ -4732,14 +4732,14 @@ function CustomerDashboard() {
                           )}
 
                           {String(product.pricing_method || product.unit).toLowerCase() !== "blade" && (
-                          <div className={`grid gap-2 rounded-2xl border px-3 py-2.5 ${darkMode ? "border-slate-700 bg-slate-900/75" : "border-slate-200 bg-slate-50"}`}>
+                          <div className={`grid gap-2 rounded-2xl border px-3 py-2.5 max-md:gap-1 max-md:rounded-lg max-md:px-2 max-md:py-1.5 ${darkMode ? "border-slate-700 bg-slate-900/75" : "border-slate-200 bg-slate-50"}`}>
                             {product.dimensions ? (
-                              <p className="flex items-center justify-between gap-2 text-[11px]">
+                              <p className="flex items-center justify-between gap-2 text-[11px] max-md:text-[9px]">
                                 <span className={darkMode ? "text-slate-400" : "text-slate-500"}>Dimensions</span>
                                 <span className={`truncate font-semibold ${darkMode ? "text-slate-100" : "text-slate-700"}`}>{product.dimensions}</span>
                               </p>
                             ) : product.standard_size ? (
-                              <p className="flex items-center justify-between gap-2 text-[11px]">
+                              <p className="flex items-center justify-between gap-2 text-[11px] max-md:text-[9px]">
                                 <span className={darkMode ? "text-slate-400" : "text-slate-500"}>Dimensions</span>
                                 <span className={`truncate font-semibold ${darkMode ? "text-slate-100" : "text-slate-700"}`}>{product.standard_size}</span>
                               </p>
@@ -4750,16 +4750,46 @@ function CustomerDashboard() {
                               </p>
                             ) : null}
 
-                            <p className="flex items-center justify-between gap-2 text-[11px]">
+                            <p className="flex items-center justify-between gap-2 text-[11px] max-md:text-[9px]">
                               <span className={darkMode ? "text-slate-400" : "text-slate-500"}>Unit rate</span>
                               <span className={`font-semibold ${darkMode ? "text-slate-100" : "text-slate-700"}`}>{getProductUnitRate(product)}</span>
                             </p>
                           </div>
                           )}
 
-                          <div className={`mt-auto border-t pt-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
-                            <p className={`text-[10px] uppercase tracking-[0.14em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Starting from</p>
-                            <p className={`mt-1 text-[22px] font-black ${darkMode ? "text-red-300" : "text-red-700"}`}>{getProductPrice(product)}</p>
+                          <div className={`mt-auto flex items-end justify-between gap-2 border-t pt-3 max-md:flex-col max-md:items-stretch max-md:gap-2 max-md:pt-1.5 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                            <div className="min-w-0">
+                              <p className={`text-[10px] uppercase tracking-[0.14em] max-md:text-[8px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Starting from</p>
+                              <p className={`mt-1 truncate text-[22px] font-black max-md:text-base ${darkMode ? "text-red-300" : "text-red-700"}`}>{getProductPrice(product)}</p>
+                            </div>
+                            {canRequestOrders && (
+                              <div className="flex w-full shrink-0 items-center justify-end gap-1 md:hidden">
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      openOrderNowModal(product);
+                                    }}
+                                    className={`inline-flex size-8 items-center justify-center rounded-lg border ${darkMode ? "border-red-400/50 bg-slate-900 text-red-200" : "border-red-200 bg-white text-red-700"}`}
+                                    aria-label="Place order"
+                                    title="Place order"
+                                  >
+                                    <Package size={14} aria-hidden="true" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleAddToCart(product);
+                                    }}
+                                    className={`inline-flex size-8 items-center justify-center rounded-lg border ${darkMode ? "border-slate-600 bg-slate-900 text-slate-200" : "border-slate-200 bg-white text-slate-700"}`}
+                                    aria-label="Add to cart"
+                                    title="Add to cart"
+                                  >
+                                    <ShoppingCart size={14} aria-hidden="true" />
+                                  </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
