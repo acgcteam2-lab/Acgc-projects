@@ -895,7 +895,11 @@ function CustomerDashboard() {
         if (!active) return;
         const loadedItems =
           Array.isArray(response.items)
-            ? response.items.map((item) => ({ ...item, selected: item.selected !== false }))
+            ? response.items.map((item) => ({
+                ...item,
+                quantity: Math.max(1, Number(item.quantity) || 1),
+                selected: item.selected !== false,
+              }))
             : [];
         cartItemsRef.current = loadedItems;
         setCartItems(loadedItems);
@@ -2078,10 +2082,10 @@ function CustomerDashboard() {
             p.cartId === existing.cartId
               ? {
                 ...p,
-                quantity: p.quantity + 1,
+                quantity: (Number(p.quantity) || 0) + 1,
                 dimensions: {
                   ...(p.dimensions || {}),
-                  quantity: p.quantity + 1,
+                  quantity: (Number(p.quantity) || 0) + 1,
                 },
                 selected: true,
               }
@@ -2632,10 +2636,10 @@ function CustomerDashboard() {
           item.cartId === cartId
             ? {
                 ...item,
-                quantity: Math.max(1, item.quantity + delta),
+                quantity: Math.max(1, (Number(item.quantity) || 1) + delta),
                 dimensions: {
                   ...(item.dimensions || {}),
-                  quantity: Math.max(1, item.quantity + delta),
+                  quantity: Math.max(1, (Number(item.quantity) || 1) + delta),
                 },
               }
             : item
@@ -4327,7 +4331,7 @@ function CustomerDashboard() {
     deliveryConfirmForm.street_address.trim()
   );
 
-  const cartQuantity = cartItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
+  const cartQuantity = cartItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
   const showFeaturedSection = activeTab === "home";
   const sectionTextClass = darkMode ? "text-slate-100" : "text-slate-900";
   const sectionMutedTextClass = darkMode ? "text-slate-300" : "text-slate-600";

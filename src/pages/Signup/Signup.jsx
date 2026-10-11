@@ -13,7 +13,6 @@ import {
   LoaderCircle,
   LockKeyhole,
   Mail,
-  Map,
   MapPin,
   Phone,
   UserRound,
@@ -260,7 +259,7 @@ function Signup() {
               <div className="mt-2"><Field icon={MapPin} label="Address *" name="street_address" value={formData.street_address} onChange={handleChange} placeholder="Enter your street address" inputClass={inputClass} /></div>
               <div className="mt-2 grid gap-2 md:grid-cols-2">
                 <Field icon={Building2} label="City *" name="city" value={formData.city} onChange={handleChange} placeholder="Enter your city" inputClass={inputClass} />
-                <Field icon={Map} label="Province *" name="province" value={formData.province} onChange={handleChange} placeholder="Enter your province" inputClass={inputClass} />
+                <Field icon={MapPin} label="Province *" name="province" value={formData.province} onChange={handleChange} placeholder="Enter your province" inputClass={inputClass} />
                 <Field icon={Hash} label="Zip Code *" name="zip_code" inputMode="numeric" value={formData.zip_code} onChange={handleChange} placeholder="4000" inputClass={inputClass} />
                 <Field icon={Phone} label="Phone Number *" name="phone" type="tel" inputMode="tel" maxLength={13} value={formData.phone} onChange={handleChange} placeholder="+639171234567 or 09171234567" inputClass={inputClass} />
               </div>
