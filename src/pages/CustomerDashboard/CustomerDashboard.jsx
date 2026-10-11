@@ -7501,7 +7501,10 @@ function CustomerDashboard() {
                           {Array.isArray(order.payment_records) && order.payment_records.length > 0 && (
                             <section className={`mt-4 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-800/70" : "border-slate-200 bg-white"}`}>
                               <h5 className={`text-xs font-black uppercase tracking-wide ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Payment history</h5>
-                              <div className="mt-2 space-y-2">
+                              <div
+                                className={`mt-2 max-h-56 space-y-2 overflow-y-scroll overscroll-contain pr-2 sm:max-h-64 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-thumb]:rounded-full ${darkMode ? "[&::-webkit-scrollbar-track]:bg-slate-800 [&::-webkit-scrollbar-thumb]:bg-slate-500" : "[&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400"}`}
+                                style={{ scrollbarWidth: "thin", scrollbarColor: darkMode ? "#64748b #1e293b" : "#94a3b8 #f1f5f9" }}
+                              >
                                 {[...order.payment_records].sort((first, second) => new Date(second.submitted_at || 0) - new Date(first.submitted_at || 0)).map((record) => {
                                   const changed = record.submitted_amount != null && record.verified_amount != null
                                     && Math.round(Number(record.submitted_amount) * 100) !== Math.round(Number(record.verified_amount) * 100);

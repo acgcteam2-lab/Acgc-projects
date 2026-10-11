@@ -861,7 +861,7 @@ export const getAdminOrders = async (req, res) => {
       ].join(" "),
       notifications: [
         "customer customer_name customer_email customer_phone items total_amount final_project_cost",
-        "status contract_status contractStatus contractSentAt payment_status payment_records payment_proof_submitted_at tracking inspection_status inspection_date createdAt updatedAt",
+        "status contract_status contractStatus contractSentAt payment_status payment_records payment_proof_amount payment_proof_submitted_at tracking inspection_status inspection_date createdAt updatedAt",
       ].join(" "),
       transactions: baseFields,
       site_inspection: baseFields,
