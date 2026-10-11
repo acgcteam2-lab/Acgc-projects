@@ -1066,9 +1066,6 @@ function LandingPage() {
                     <span className="max-w-[70%] truncate rounded-full border border-white/25 bg-slate-950/40 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.1em] text-slate-100 backdrop-blur-sm max-md:hidden">
                       {category}
                     </span>
-                    <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/60 bg-white/90 text-red-700 shadow-lg" aria-hidden="true">
-                      <ArrowRight size={17} />
-                    </span>
                   </div>
                 </div>
 
@@ -1453,7 +1450,7 @@ function LandingPage() {
           <button
             type="button"
             onClick={() => continueProductActionAfterLogin("direct")}
-            className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-5 py-3 text-sm font-bold text-red-700 transition hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+            className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
           >
             Place Order Request <ArrowRight size={16} aria-hidden="true" />
           </button>
