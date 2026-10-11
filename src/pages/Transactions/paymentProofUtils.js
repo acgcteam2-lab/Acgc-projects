@@ -62,6 +62,7 @@ export const getCustomerPaymentProof = (order) => {
     adminReason: latestRecord?.admin_reason || "",
     verifiedAt: latestRecord?.verified_at || order.payment_proof_confirmed_at || null,
     amountHistory: latestRecord?.amount_history || [],
+    downpaymentException: latestRecord?.downpayment_exception || null,
     fileName: latestRecord?.proof_file_name || order.payment_proof_file_name || order.payment_proof_file_url || order.payment_proof || order.proof_of_payment || order.proof_file || "",
     fileUrl: latestRecord?.proof_file_url || order.payment_proof_file_url || order.proof_file_url || order.payment_proof_url || order.proof_url || "",
     paymentMethod: latestRecord?.payment_method || normalizedMethod || "Cash",

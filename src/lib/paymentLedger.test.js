@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getOrderPaymentAmounts,
   getOrderPaymentStatus,
+  getDownpaymentExceptionSummary,
   initializePaymentLedger,
   isPaymentDiscrepancy,
   validatePaymentAmount,
@@ -59,5 +60,28 @@ describe("payment ledger calculations", () => {
     expect(isPaymentDiscrepancy(20_000, 20_000)).toBe(false);
     expect(isPaymentDiscrepancy(20_000, 18_000)).toBe(true);
     expect(isPaymentDiscrepancy(20_000, 22_000)).toBe(true);
+  });
+
+  it("calculates exception shortfall without treating the payment as a completed downpayment", () => {
+    const orderWithPartialPayment = {
+      ...order,
+      payment_ledger_initialized: true,
+      legacy_verified_amount: 0,
+      payment_records: [{ status: "verified", verified_amount: 10000 }],
+    };
+    const exception = getDownpaymentExceptionSummary(orderWithPartialPayment, 10000);
+
+    expect(exception).toEqual({
+      requiredAmount: 50000,
+      acceptedAmount: 10000,
+      totalPaidAtApproval: 20000,
+      shortfall: 30000,
+      eligible: true,
+    });
+    expect(getOrderPaymentStatus({ ...orderWithPartialPayment, amount_paid: exception.totalPaidAtApproval })).toBe("partial_downpayment");
+  });
+
+  it("does not allow an exception after the required downpayment is met", () => {
+    expect(getDownpaymentExceptionSummary({ ...order, amount_paid: 40000 }, 10000).eligible).toBe(false);
   });
 });

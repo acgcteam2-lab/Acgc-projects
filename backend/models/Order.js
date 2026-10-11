@@ -263,7 +263,22 @@ const PaymentAmountChangeSchema = new mongoose.Schema({
   changed_by: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
 }, { _id: false });
 
+const DownpaymentExceptionSchema = new mongoose.Schema({
+  status: { type: String, enum: ["pending", "approved", "rejected", "cancelled"], required: true },
+  accepted_amount: { type: Number, min: 0, required: true },
+  required_amount: { type: Number, min: 0, required: true },
+  shortfall: { type: Number, min: 0, required: true },
+  total_paid_at_approval: { type: Number, min: 0, required: true },
+  reason: { type: String, trim: true, default: "" },
+  requested_at: { type: Date, default: null },
+  requested_by: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+  approved_at: { type: Date, default: null },
+  approved_by: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+}, { _id: false });
+
 const PaymentRecordSchema = new mongoose.Schema({
+  request_id: { type: String, trim: true, default: "" },
+  record_source: { type: String, enum: ["customer_submitted", "admin_recorded"], default: "customer_submitted" },
   submitted_amount: { type: Number, min: 0, default: null },
   verified_amount: { type: Number, min: 0, default: null },
   status: { type: String, enum: ["pending", "verified", "rejected"], default: "pending", index: true },
@@ -272,10 +287,14 @@ const PaymentRecordSchema = new mongoose.Schema({
   proof_file_name: { type: String, trim: true, default: "" },
   proof_file_url: { type: String, trim: true, default: "" },
   submitted_at: { type: Date, default: Date.now },
+  payment_date: { type: Date, default: null },
+  recorded_at: { type: Date, default: null },
+  recorded_by: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   verified_at: { type: Date, default: null },
   rejected_at: { type: Date, default: null },
   verified_by: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   admin_reason: { type: String, trim: true, default: "" },
+  downpayment_exception: { type: DownpaymentExceptionSchema, default: null },
   amount_history: { type: [PaymentAmountChangeSchema], default: [] },
 }, { timestamps: true });
 

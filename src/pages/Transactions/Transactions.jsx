@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   FileText,
@@ -26,7 +26,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { recordActivity } from "@/lib/activityLog";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
-import { getCustomerPaymentProof, getPaymentSummary, isPaymentProofConfirmed } from "./paymentProofUtils";
+import { getCustomerPaymentProof, getPaymentSummary, isPaymentProofConfirmed, validateCustomerPaymentAmount } from "./paymentProofUtils";
+import { uploadFiles } from "@/api/uploads";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import useNotificationHighlight from "@/hooks/useNotificationHighlight";
 
@@ -102,7 +103,12 @@ function Transactions() {
   const [editPaymentReason, setEditPaymentReason] = useState("");
   const [editPaymentAction, setEditPaymentAction] = useState("record");
   const [editPaymentRecordId, setEditPaymentRecordId] = useState("");
+  const [editPaymentDate, setEditPaymentDate] = useState("");
+  const [editPaymentProofFile, setEditPaymentProofFile] = useState(null);
+  const [editPaymentRequestId, setEditPaymentRequestId] = useState("");
+  const [showDownpaymentExceptionModal, setShowDownpaymentExceptionModal] = useState(false);
   const [paymentActionLoading, setPaymentActionLoading] = useState(false);
+  const paymentActionSubmittingRef = useRef(false);
 
   const isCompletedProject = (order) => {
     const status = (order.status || "").toString().toLowerCase();
@@ -452,6 +458,10 @@ function Transactions() {
     setEditPaymentReason("");
     setEditPaymentAction(hasUnconfirmedProof ? "verify" : "record");
     setEditPaymentRecordId(String(latestVerifiedRecord?._id || ""));
+    setEditPaymentDate(new Date().toISOString().slice(0, 10));
+    setEditPaymentProofFile(null);
+    setEditPaymentRequestId(globalThis.crypto?.randomUUID?.() || `payment-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    setShowDownpaymentExceptionModal(false);
     setShowEditPaymentModal(true);
   };
 
@@ -471,15 +481,21 @@ function Transactions() {
     setEditPaymentReason("");
     setEditPaymentAction("record");
     setEditPaymentRecordId("");
+    setEditPaymentDate("");
+    setEditPaymentProofFile(null);
+    setEditPaymentRequestId("");
+    setShowDownpaymentExceptionModal(false);
   };
 
   const handleSavePaymentEdit = async () => {
     if (!editPaymentOrder) return;
-    const nextAmount = Number(editPaymentAmount || 0);
-    if (Number.isNaN(nextAmount) || nextAmount < 0) {
-      toast.error("Please enter a valid payment amount.");
+    if (paymentActionSubmittingRef.current || paymentActionLoading) return;
+    const amountValidation = validateCustomerPaymentAmount(editPaymentAmount, Number.MAX_SAFE_INTEGER);
+    if (!amountValidation.valid) {
+      toast.error(amountValidation.message);
       return;
     }
+    const nextAmount = amountValidation.amount;
 
     const orderId = editPaymentOrder._id || editPaymentOrder.id;
     if (nextAmount <= 0) {
@@ -513,13 +529,25 @@ function Transactions() {
       toast.error("Explain why the verified amount differs from the submitted or previously verified amount.");
       return;
     }
+    const isAdminRecording = !pendingSubmission && !isAdjusting && editPaymentAction === "record";
+    if (isAdminRecording && !editPaymentReason.trim()) {
+      toast.error("Provide an admin note for recording a payment on behalf of the customer.");
+      return;
+    }
+    if (isAdminRecording && (!editPaymentDate || Number.isNaN(new Date(editPaymentDate).getTime()) || new Date(editPaymentDate) > new Date())) {
+      toast.error("Provide a valid payment date that is not in the future.");
+      return;
+    }
 
-    const updatedPaid = existingPaid - amountBeingReplaced + nextAmount;
-    const remainingAfter = Math.max(totalAmount - updatedPaid, 0);
-    const updatedSummary = getPaymentSummary({ ...editPaymentOrder, amount_paid: updatedPaid });
-    const isFullyPaid = updatedSummary.status.key === "paid";
-
+    paymentActionSubmittingRef.current = true;
+    setPaymentActionLoading(true);
     try {
+      let uploadedProof = null;
+      if (isAdminRecording && editPaymentProofFile) {
+        const uploadResult = await uploadFiles([editPaymentProofFile], undefined, { purpose: "payment-proofs" });
+        uploadedProof = uploadResult?.files?.[0];
+        if (!uploadedProof?.url) throw new Error("The payment proof upload did not return a file URL.");
+      }
       const payload = {
         payment_record_action: pendingSubmission
           ? {
@@ -540,6 +568,11 @@ function Transactions() {
               verified_amount: nextAmount,
               payment_method: editPaymentMethod,
               transaction_number: editPaymentTransactionNumber || editPaymentOrder.transaction_number || "",
+              request_id: editPaymentRequestId,
+              payment_date: editPaymentDate,
+              proof_file_url: uploadedProof?.url || "",
+              proof_file_name: uploadedProof?.originalName || "",
+              reason: editPaymentReason.trim(),
             },
       };
 
@@ -552,8 +585,10 @@ function Transactions() {
         payment_method: editPaymentMethod,
       });
 
+      const updatedSummary = getPaymentSummary(updated);
+      const remainingAfter = updatedSummary.remainingAmount;
       toast.success(
-        isFullyPaid
+        updatedSummary.status.key === "paid"
           ? "Payment verified. Customer is now marked as Fully Paid."
           : `${pendingSubmission ? "Payment verified" : isAdjusting ? "Verified payment adjusted" : "Payment recorded"}. Status: ${updatedSummary.status.label}. Remaining balance: ₱${remainingAfter.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       );
@@ -562,6 +597,7 @@ function Transactions() {
       toast.error(error?.data?.message || error?.message || "Unable to save payment update.");
       return;
     } finally {
+      paymentActionSubmittingRef.current = false;
       setPaymentActionLoading(false);
     }
 
@@ -570,12 +606,14 @@ function Transactions() {
 
   const handleRejectPaymentProof = async () => {
     if (!editPaymentOrder) return;
+    if (paymentActionSubmittingRef.current || paymentActionLoading) return;
     const proof = getCustomerPaymentProof(editPaymentOrder);
     if (!editPaymentReason.trim()) {
       toast.error("Provide a reason for rejecting this payment proof.");
       return;
     }
     const orderId = editPaymentOrder._id || editPaymentOrder.id;
+    paymentActionSubmittingRef.current = true;
     setPaymentActionLoading(true);
     try {
       const response = await updateOrderStatus(orderId, {
@@ -591,6 +629,81 @@ function Transactions() {
     } catch (error) {
       toast.error(error?.data?.message || error?.message || "Unable to reject payment proof.");
     } finally {
+      paymentActionSubmittingRef.current = false;
+      setPaymentActionLoading(false);
+    }
+  };
+
+  const handleApproveDownpaymentException = async () => {
+    if (!editPaymentOrder) return;
+    if (paymentActionSubmittingRef.current || paymentActionLoading) return;
+    const proof = getCustomerPaymentProof(editPaymentOrder);
+    if (proof.status !== "pending" || !proof.recordId) {
+      toast.error("The customer payment must be pending verification before an exception can be approved.");
+      return;
+    }
+    if (!editPaymentReason.trim()) {
+      toast.error("Provide a reason for approving the downpayment exception.");
+      return;
+    }
+
+    const orderId = editPaymentOrder._id || editPaymentOrder.id;
+    paymentActionSubmittingRef.current = true;
+    setPaymentActionLoading(true);
+    try {
+      const response = await updateOrderStatus(orderId, {
+        payment_record_action: {
+          action: "accept_downpayment_exception",
+          record_id: proof.recordId,
+          reason: editPaymentReason.trim(),
+        },
+      });
+      const updated = response?.order || {};
+      updateOrderLocally(orderId, updated);
+      const summary = getPaymentSummary(updated);
+      toast.success(`Downpayment exception approved. Remaining project balance: ${formatCurrency(summary.remainingAmount)}.`);
+      closeEditPaymentModal();
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to approve this downpayment exception.");
+    } finally {
+      paymentActionSubmittingRef.current = false;
+      setPaymentActionLoading(false);
+    }
+  };
+
+  const handleRequestDownpaymentException = async () => {
+    if (!editPaymentOrder || paymentActionSubmittingRef.current || paymentActionLoading) return;
+    const proof = getCustomerPaymentProof(editPaymentOrder);
+    if (proof.status !== "pending" || !proof.recordId) {
+      toast.error("A customer payment awaiting verification is required to request an exception.");
+      return;
+    }
+    if (proof.downpaymentException?.status === "pending") {
+      setEditPaymentReason("");
+      setShowDownpaymentExceptionModal(true);
+      return;
+    }
+
+    paymentActionSubmittingRef.current = true;
+    setPaymentActionLoading(true);
+    try {
+      const orderId = editPaymentOrder._id || editPaymentOrder.id;
+      const response = await updateOrderStatus(orderId, {
+        payment_record_action: {
+          action: "request_downpayment_exception",
+          record_id: proof.recordId,
+        },
+      });
+      const updated = response?.order || {};
+      updateOrderLocally(orderId, updated);
+      setEditPaymentOrder(updated);
+      setEditPaymentReason("");
+      setShowDownpaymentExceptionModal(true);
+      toast.success("Exception request recorded. The payment remains unverified until you approve it.");
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to request this downpayment exception.");
+    } finally {
+      paymentActionSubmittingRef.current = false;
       setPaymentActionLoading(false);
     }
   };
@@ -1050,8 +1163,13 @@ function Transactions() {
     const verifiedPaymentRecords = (editPaymentOrder.payment_records || []).filter((record) => record.status === "verified");
     const selectedVerifiedRecord = verifiedPaymentRecords.find((record) => String(record._id) === editPaymentRecordId);
     const adjustingVerifiedPayment = !pendingPaymentProof && editPaymentAction === "adjust";
+    const adminRecordingPayment = !pendingPaymentProof && !adjustingVerifiedPayment && editPaymentAction === "record";
     const maxConfirmableAmount = getPaymentSummary(editPaymentOrder).remainingAmount
       + (adjustingVerifiedPayment ? Number(selectedVerifiedRecord?.verified_amount) || 0 : 0);
+    const paymentSummary = getPaymentSummary(editPaymentOrder);
+    const submittedPaymentAmount = Number(currentProof.submittedAmount ?? currentProof.amount) || 0;
+    const exceptionShortfall = Math.max(paymentSummary.requiredAmount - paymentSummary.paidAmount - submittedPaymentAmount, 0);
+    const canOfferDownpaymentException = pendingPaymentProof && Boolean(currentProof.recordId) && submittedPaymentAmount > 0 && exceptionShortfall > 0;
 
     return (
       <div className={shellClass}>
@@ -1071,6 +1189,14 @@ function Transactions() {
             <div className={alertClass}>
               <Info size={18} className={`mt-0.5 shrink-0 ${alertIconClass}`} />
               <span>You may update the amount paid, payment method, and transaction number.</span>
+            </div>
+            <div className={`${panelClass} mt-3 grid grid-cols-2 gap-3 p-3 text-xs sm:grid-cols-3`}>
+              <div><span className={tertiaryTextClass}>ORDER TRACKING ID</span><p className={`mt-1 font-bold ${strongTextClass}`}>{editPaymentOrder.tracking || editPaymentOrder._id}</p></div>
+              <div><span className={tertiaryTextClass}>TOTAL PROJECT COST</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.totalAmount)}</p></div>
+              <div><span className={tertiaryTextClass}>REQUIRED DOWNPAYMENT ({paymentSummary.requiredPercentage.toFixed(0)}%)</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.requiredAmount)}</p></div>
+              <div><span className={tertiaryTextClass}>AMOUNT ALREADY PAID</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.paidAmount)}</p></div>
+              <div><span className={tertiaryTextClass}>DOWNPAYMENT REMAINING</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(Math.max(paymentSummary.requiredAmount - paymentSummary.paidAmount, 0))}</p></div>
+              <div><span className={tertiaryTextClass}>REMAINING PROJECT BALANCE</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.remainingAmount)}</p></div>
             </div>
           </div>
 
@@ -1264,6 +1390,30 @@ function Transactions() {
               );
             })()}
 
+            {(editPaymentOrder.payment_records || []).length > 0 && (
+              <section className={`${panelClass} px-3 py-3`}>
+                <h3 className={`mb-2 text-[11px] font-extrabold uppercase tracking-[0.16em] ${labelClass}`}>PAYMENT HISTORY</h3>
+                <div className="space-y-2">
+                  {[...editPaymentOrder.payment_records].sort((first, second) => new Date(second.payment_date || second.submitted_at || 0) - new Date(first.payment_date || first.submitted_at || 0)).map((record) => (
+                    <div key={record._id || record.request_id} className={previewCardClass}>
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <strong className={strongTextClass}>{record.record_source === "admin_recorded" ? "Admin-Recorded Payment" : `Customer payment · ${record.status}`}</strong>
+                        <span className={tertiaryTextClass}>{formatDateToMMMDDYYYY(record.payment_date || record.recorded_at || record.verified_at || record.submitted_at)}</span>
+                      </div>
+                      <p className={`mt-1 text-sm ${secondaryTextClass}`}>
+                        {record.submitted_amount != null && <>Submitted {formatCurrency(Number(record.submitted_amount))} · </>}
+                        {record.verified_amount != null && <>Verified {formatCurrency(Number(record.verified_amount))}</>}
+                        {record.payment_method ? ` · ${record.payment_method}` : ""}
+                      </p>
+                      {record.admin_reason && <p className={`mt-1 text-xs ${tertiaryTextClass}`}>Admin note: {record.admin_reason}</p>}
+                      {record.downpayment_exception?.status === "approved" && <p className="mt-1 text-xs font-bold text-amber-600">Downpayment Exception Approved · shortfall {formatCurrency(Number(record.downpayment_exception.shortfall) || 0)} · {record.downpayment_exception.reason}</p>}
+                      {record.proof_file_url && <a href={record.proof_file_url} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-xs font-semibold text-sky-600 underline">View payment proof{record.proof_file_name ? `: ${record.proof_file_name}` : ""}</a>}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
             <div>
               <label className={`mb-2 block text-[11px] font-extrabold uppercase tracking-[0.18em] ${labelClass}`}>AMOUNT CONFIRMED (P)</label>
               <input
@@ -1285,6 +1435,45 @@ function Transactions() {
                 </div>
               )}
             </div>
+
+            {adminRecordingPayment && (
+              <>
+                <div>
+                  <label htmlFor="admin-payment-date" className={`mb-2 block text-[11px] font-extrabold uppercase tracking-[0.18em] ${labelClass}`}>PAYMENT DATE</label>
+                  <input
+                    id="admin-payment-date"
+                    type="date"
+                    max={new Date().toISOString().slice(0, 10)}
+                    value={editPaymentDate}
+                    onChange={(event) => setEditPaymentDate(event.target.value)}
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="admin-payment-proof" className={`mb-2 block text-[11px] font-extrabold uppercase tracking-[0.18em] ${labelClass}`}>PROOF OF PAYMENT <span className={`font-normal normal-case ${tertiaryTextClass}`}>(optional for cash)</span></label>
+                  <input
+                    id="admin-payment-proof"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                    onChange={(event) => setEditPaymentProofFile(event.target.files?.[0] || null)}
+                    className={inputClass}
+                  />
+                  {editPaymentProofFile && <p className={`mt-1 text-xs ${tertiaryTextClass}`}>{editPaymentProofFile.name}</p>}
+                </div>
+                <div>
+                  <label htmlFor="admin-payment-note" className={`mb-2 block text-[11px] font-extrabold uppercase tracking-[0.18em] ${labelClass}`}>ADMIN NOTE / REASON <span className="text-red-500">(required)</span></label>
+                  <textarea
+                    id="admin-payment-note"
+                    value={editPaymentReason}
+                    onChange={(event) => setEditPaymentReason(event.target.value)}
+                    placeholder="Document who received the payment and any receipt or customer agreement details."
+                    rows={3}
+                    maxLength={1000}
+                    className={`${inputClass} resize-y`}
+                  />
+                </div>
+              </>
+            )}
 
               {(pendingPaymentProof || adjustingVerifiedPayment) && (
               <div>
@@ -1339,7 +1528,7 @@ function Transactions() {
               <div>
                 <div className={`mb-2 flex items-center justify-between gap-2 text-[11px] font-extrabold uppercase tracking-[0.18em] ${labelClass}`}>
                   <span>TRANSACTION NUMBER</span>
-                  <span className={darkMode ? "text-slate-500" : "text-slate-400"}>Optional</span>
+                  <span className={darkMode ? "text-slate-500" : "text-slate-400"}>{adminRecordingPayment && !editPaymentProofFile ? "Required unless proof is uploaded" : "Optional"}</span>
                 </div>
                 <input
                   type="text"
@@ -1380,11 +1569,19 @@ function Transactions() {
           </div>
 
           <div className={footerClass}>
-            <button type="button" onClick={closeEditPaymentModal} className={footerCancelClass}>Cancel</button>
+            <button type="button" disabled={paymentActionLoading} onClick={closeEditPaymentModal} className={footerCancelClass}>Cancel</button>
             {pendingPaymentProof && (
-              <button type="button" onClick={handleRejectPaymentProof} className={footerCancelClass}>Reject Proof</button>
+              <button type="button" disabled={paymentActionLoading} onClick={handleRejectPaymentProof} className={footerCancelClass}>Reject Proof</button>
             )}
-            <button type="button" onClick={handleSavePaymentEdit} className={footerSaveClass}>Save Changes</button>
+            {canOfferDownpaymentException && (
+              <button
+                type="button"
+                onClick={handleRequestDownpaymentException}
+                disabled={paymentActionLoading}
+                className={footerCancelClass}
+              >Accept Below Required Downpayment</button>
+            )}
+            <button type="button" disabled={paymentActionLoading} onClick={handleSavePaymentEdit} className={footerSaveClass}>{paymentActionLoading ? "Saving..." : "Save Changes"}</button>
           </div>
         </div>
       </div>
@@ -1751,6 +1948,62 @@ function Transactions() {
           )}
 
           {editPaymentModalContent}
+
+          {showDownpaymentExceptionModal && editPaymentOrder && (() => {
+            const proof = getCustomerPaymentProof(editPaymentOrder);
+            const summary = getPaymentSummary(editPaymentOrder);
+            const acceptedAmount = Number(proof.submittedAmount ?? proof.amount) || 0;
+            const shortfallAfterApproval = Math.max(summary.requiredAmount - summary.paidAmount - acceptedAmount, 0);
+            const balanceAfterApproval = Math.max(summary.remainingAmount - acceptedAmount, 0);
+            const exceptionInputClass = darkMode
+              ? "w-full rounded-xl border border-slate-600 bg-[#1d2f45] px-3 py-2.5 text-base text-slate-100 outline-none focus:border-red-400 focus:ring-2 focus:ring-red-500/30"
+              : "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base text-slate-900 outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100";
+            const exceptionFooterClass = darkMode
+              ? "flex justify-end gap-3 border-t border-slate-700 bg-[#1d2f45] px-5 py-4"
+              : "flex justify-end gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4";
+            const exceptionCancelClass = darkMode
+              ? "rounded-xl border border-slate-600 bg-[#15263f] px-5 py-2.5 text-sm font-medium text-slate-200 transition hover:bg-slate-700"
+              : "rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100";
+            const exceptionApproveClass = darkMode
+              ? "rounded-xl border border-red-500/50 bg-red-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-500 disabled:opacity-60"
+              : "rounded-xl border border-red-200 bg-red-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-500 disabled:opacity-60";
+            return (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-4" role="presentation">
+                <section className={`w-full max-w-xl rounded-2xl border shadow-2xl ${darkMode ? "border-slate-700 bg-[#132238] text-slate-100" : "border-slate-200 bg-white text-slate-900"}`} role="dialog" aria-modal="true" aria-labelledby="downpayment-exception-title">
+                  <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-700">
+                    <h2 id="downpayment-exception-title" className="text-base font-black">Approve Downpayment Exception</h2>
+                    <p className="mt-2 text-sm font-semibold">The customer's payment is below the required downpayment. Do you approve accepting this amount as an exception to the configured payment terms?</p>
+                  </div>
+                  <div className="space-y-3 px-5 py-4 text-sm">
+                    <p className="text-xs font-semibold text-slate-500">Order {editPaymentOrder.tracking || editPaymentOrder._id}</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div><span className="text-xs text-slate-500">Required downpayment ({summary.requiredPercentage.toFixed(0)}%)</span><p className="mt-1 font-bold">{formatCurrency(summary.requiredAmount)}</p></div>
+                      <div><span className="text-xs text-slate-500">Customer's submitted payment</span><p className="mt-1 font-bold">{formatCurrency(acceptedAmount)}</p></div>
+                      <div><span className="text-xs text-slate-500">Amount already paid</span><p className="mt-1 font-bold">{formatCurrency(summary.paidAmount)}</p></div>
+                      <div><span className="text-xs text-slate-500">Shortfall after this payment</span><p className="mt-1 font-bold text-amber-600">{formatCurrency(shortfallAfterApproval)}</p></div>
+                      <div><span className="text-xs text-slate-500">Remaining balance before</span><p className="mt-1 font-bold">{formatCurrency(summary.remainingAmount)}</p></div>
+                      <div><span className="text-xs text-slate-500">Remaining balance after</span><p className="mt-1 font-bold">{formatCurrency(balanceAfterApproval)}</p></div>
+                    </div>
+                    <p className={`rounded-lg px-3 py-2 text-xs ${darkMode ? "bg-amber-500/10 text-amber-200" : "bg-amber-50 text-amber-900"}`}>The configured downpayment remains unchanged. Approval verifies only the submitted amount; it does not mark the downpayment completed.</p>
+                    <label htmlFor="downpayment-exception-reason" className="block text-xs font-bold">Reason for approving this exception <span className="text-red-500">(required)</span></label>
+                    <textarea
+                      id="downpayment-exception-reason"
+                      value={editPaymentReason}
+                      onChange={(event) => setEditPaymentReason(event.target.value)}
+                      placeholder="Record the customer agreement and why the lower amount is accepted."
+                      rows={3}
+                      maxLength={1000}
+                      className={exceptionInputClass}
+                    />
+                  </div>
+                  <div className={exceptionFooterClass}>
+                    <button type="button" disabled={paymentActionLoading} onClick={() => { setShowDownpaymentExceptionModal(false); setEditPaymentReason(""); }} className={exceptionCancelClass}>Cancel</button>
+                    <button type="button" disabled={paymentActionLoading} onClick={handleApproveDownpaymentException} className={exceptionApproveClass}>{paymentActionLoading ? "Approving..." : "Approve Exception"}</button>
+                  </div>
+                </section>
+              </div>
+            );
+          })()}
 
           {showFullContractModal && contractPreviewOrder && contractPreviewData && (
             <ContractModal

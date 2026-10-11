@@ -83,3 +83,20 @@ export const validatePaymentAmount = (value, remainingAmount) => {
 export const isPaymentDiscrepancy = (submittedAmount, verifiedAmount) => (
   toCents(submittedAmount) !== toCents(verifiedAmount)
 );
+
+export const getDownpaymentExceptionSummary = (order, acceptedAmount, replacedVerifiedAmount = 0) => {
+  const { totalAmount, requiredAmount, paidAmount } = getOrderPaymentAmounts(order);
+  const projectedPaidAmount = Math.min(
+    Math.max(paidAmount - Math.max(Number(replacedVerifiedAmount) || 0, 0) + Math.max(Number(acceptedAmount) || 0, 0), 0),
+    totalAmount,
+  );
+  const shortfall = Math.max(requiredAmount - projectedPaidAmount, 0);
+
+  return {
+    requiredAmount,
+    acceptedAmount: Math.max(Number(acceptedAmount) || 0, 0),
+    totalPaidAtApproval: projectedPaidAmount,
+    shortfall,
+    eligible: acceptedAmount > 0 && requiredAmount > 0 && toCents(projectedPaidAmount) < toCents(requiredAmount),
+  };
+};

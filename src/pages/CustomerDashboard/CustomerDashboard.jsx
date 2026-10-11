@@ -643,13 +643,23 @@ function CustomerDashboard() {
       order.payment_records.forEach((record) => {
         const recordId = record._id || `${new Date(record.submitted_at || record.createdAt || 0).getTime()}`;
         if (record.status === "pending") {
-          notifications.unshift({
-            ...order,
-            paymentRecord: record,
-            notificationType: "payment",
-            notificationId: `${orderId}-payment-${recordId}-submitted`,
-            notificationDate: record.submitted_at || record.createdAt,
-          });
+          if (record.downpayment_exception?.status !== "pending") {
+            notifications.unshift({
+              ...order,
+              paymentRecord: record,
+              notificationType: "payment",
+              notificationId: `${orderId}-payment-${recordId}-submitted`,
+              notificationDate: record.submitted_at || record.createdAt,
+            });
+          } else {
+            notifications.unshift({
+              ...order,
+              paymentRecord: record,
+              notificationType: "downpayment_exception_pending",
+              notificationId: `${orderId}-payment-${recordId}-exception-pending-${new Date(record.downpayment_exception.requested_at || 0).getTime()}`,
+              notificationDate: record.downpayment_exception.requested_at || record.updatedAt,
+            });
+          }
         } else if (record.status === "rejected") {
           notifications.unshift({
             ...order,
@@ -660,7 +670,15 @@ function CustomerDashboard() {
           });
         } else if (record.status === "verified") {
           const adjustments = Array.isArray(record.amount_history) ? record.amount_history : [];
-          if (adjustments.length > 0) {
+          if (record.record_source === "admin_recorded") {
+            notifications.unshift({
+              ...order,
+              paymentRecord: record,
+              notificationType: "admin_payment_recorded",
+              notificationId: `${orderId}-payment-${recordId}-admin-recorded-${new Date(record.recorded_at || record.verified_at || 0).getTime()}`,
+              notificationDate: record.recorded_at || record.verified_at || record.updatedAt,
+            });
+          } else if (adjustments.length > 0) {
             adjustments.forEach((adjustment, adjustmentIndex) => {
               notifications.unshift({
                 ...order,
@@ -671,13 +689,22 @@ function CustomerDashboard() {
                 notificationDate: adjustment.changed_at || record.verified_at,
               });
             });
-          } else {
+          } else if (record.downpayment_exception?.status !== "approved") {
             notifications.unshift({
               ...order,
               paymentRecord: record,
               notificationType: "payment_confirmed",
               notificationId: `${orderId}-payment-${recordId}-verified-${new Date(record.verified_at || 0).getTime()}`,
               notificationDate: record.verified_at || record.updatedAt,
+            });
+          }
+          if (record.downpayment_exception?.status === "approved") {
+            notifications.unshift({
+              ...order,
+              paymentRecord: record,
+              notificationType: "downpayment_exception_approved",
+              notificationId: `${orderId}-payment-${recordId}-exception-approved-${new Date(record.downpayment_exception.approved_at || record.verified_at || 0).getTime()}`,
+              notificationDate: record.downpayment_exception.approved_at || record.verified_at || record.updatedAt,
             });
           }
         }
@@ -4500,8 +4527,8 @@ function CustomerDashboard() {
                             const isRead = readNotificationIds.has(order.notificationId);
                             const status = normalizeOrderStatusKey(order?.status);
                             const contractStatus = normalizeOrderStatusKey(order?.contract_status);
-                            const isPaymentNotification = ["payment", "payment_confirmed", "payment_amount_updated", "payment_rejected"].includes(order.notificationType);
-                            const isPaymentConfirmationNotification = ["payment_confirmed", "payment_amount_updated"].includes(order.notificationType);
+                            const isPaymentNotification = ["payment", "payment_confirmed", "payment_amount_updated", "payment_rejected", "admin_payment_recorded", "downpayment_exception_approved", "downpayment_exception_pending"].includes(order.notificationType);
+                            const isPaymentConfirmationNotification = ["payment_confirmed", "payment_amount_updated", "admin_payment_recorded", "downpayment_exception_approved"].includes(order.notificationType);
                             const isDelayNotification = order.notificationType === "delay";
                             const isContractReady =
                               status === "contract_sent" ||
@@ -4516,6 +4543,24 @@ function CustomerDashboard() {
                                 };
                               }
                               if (isPaymentNotification) {
+                                if (order.notificationType === "admin_payment_recorded") {
+                                  return {
+                                    title: "Payment Recorded by Admin",
+                                    message: `${formatCurrency(order.paymentRecord?.verified_amount)} was recorded for order ${order.tracking}. Payment status: ${getPaymentSummary(order).status.label}. Remaining project balance: ${formatCurrency(getPaymentSummary(order).remainingAmount)}.`,
+                                    color: "text-emerald-600",
+                                  };
+                                }
+                                if (["downpayment_exception_approved", "downpayment_exception_pending"].includes(order.notificationType)) {
+                                  const exception = order.paymentRecord?.downpayment_exception || {};
+                                  const approved = order.notificationType === "downpayment_exception_approved";
+                                  return {
+                                    title: approved ? "Downpayment Exception Approved" : "Awaiting Admin Approval",
+                                    message: approved
+                                      ? `The admin approved accepting ${formatCurrency(exception.accepted_amount)} below the required downpayment. Payment status: ${getPaymentSummary(order).status.label}. Remaining balance: ${formatCurrency(getPaymentSummary(order).remainingAmount)}. ${exception.reason || ""}`
+                                      : `An exception was requested for ${formatCurrency(exception.accepted_amount)} against the required downpayment of ${formatCurrency(exception.required_amount)}. Shortfall if accepted: ${formatCurrency(exception.shortfall)}. Remaining project balance: ${formatCurrency(getPaymentSummary(order).remainingAmount)}. This payment is not verified yet.`,
+                                    color: approved ? "text-amber-600" : "text-sky-600",
+                                  };
+                                }
                                 if (order.notificationType === "payment_amount_updated") {
                                   const adjustment = order.paymentAdjustment || {};
                                   const difference = (Number(adjustment.new_amount) || 0) - (Number(adjustment.previous_amount) || 0);
@@ -7404,21 +7449,38 @@ function CustomerDashboard() {
                               <h5 className={`text-xs font-black uppercase tracking-wide ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Payment history</h5>
                               <div className="mt-2 space-y-2">
                                 {[...order.payment_records].sort((first, second) => new Date(second.submitted_at || 0) - new Date(first.submitted_at || 0)).map((record) => {
-                                  const changed = Math.round(Number(record.submitted_amount || 0) * 100) !== Math.round(Number(record.verified_amount || 0) * 100);
+                                  const changed = record.submitted_amount != null && record.verified_amount != null
+                                    && Math.round(Number(record.submitted_amount) * 100) !== Math.round(Number(record.verified_amount) * 100);
                                   return (
                                     <div key={record._id || record.submitted_at} className={`rounded-lg border px-3 py-2 text-xs ${darkMode ? "border-slate-700" : "border-slate-100 bg-slate-50"}`}>
                                       <div className="flex flex-wrap items-center justify-between gap-2">
                                         <span className={`font-bold ${record.status === "verified" ? "text-emerald-600" : record.status === "rejected" ? "text-red-600" : "text-amber-600"}`}>
-                                          {record.status === "verified" ? "Verified" : record.status === "rejected" ? "Rejected" : "Awaiting verification"}
+                                          {record.record_source === "admin_recorded" ? "Admin-Recorded Payment" : record.status === "verified" ? "Verified" : record.status === "rejected" ? "Rejected" : "Awaiting verification"}
                                         </span>
-                                        <span className={darkMode ? "text-slate-400" : "text-slate-500"}>{formatDateTimeToMMMDDYYYY(record.verified_at || record.rejected_at || record.submitted_at)}</span>
+                                        <span className={darkMode ? "text-slate-400" : "text-slate-500"}>{formatDateTimeToMMMDDYYYY(record.payment_date || record.recorded_at || record.verified_at || record.rejected_at || record.submitted_at)}</span>
                                       </div>
                                       <p className={`mt-1 ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
                                         {record.submitted_amount != null && <>Submitted: <strong>{formatCurrency(record.submitted_amount)}</strong></>}
                                         {record.verified_amount != null && <> · Verified: <strong>{formatCurrency(record.verified_amount)}</strong></>}
                                       </p>
                                       {changed && record.status === "verified" && <p className="mt-1 font-bold text-amber-600">Amount changed by {formatCurrency(Math.abs(Number(record.verified_amount) - Number(record.submitted_amount)))} {Number(record.verified_amount) < Number(record.submitted_amount) ? "lower" : "higher"}.</p>}
+                                      {record.downpayment_exception?.status === "approved" && (
+                                        <div className={`mt-2 rounded-md border px-2 py-1.5 ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                                          <strong>Downpayment Exception Approved</strong>: {formatCurrency(record.downpayment_exception.accepted_amount)} accepted; original requirement {formatCurrency(record.downpayment_exception.required_amount)}; shortfall at approval {formatCurrency(record.downpayment_exception.shortfall)}.
+                                          {record.downpayment_exception.reason && <span className="block mt-1">Reason: {record.downpayment_exception.reason}</span>}
+                                        </div>
+                                      )}
+                                      {record.downpayment_exception?.status === "pending" && (
+                                        <p className="mt-1 font-bold text-sky-600">
+                                          Awaiting Admin Approval. Proposed amount: {formatCurrency(record.downpayment_exception.accepted_amount)}; original requirement: {formatCurrency(record.downpayment_exception.required_amount)}; shortfall if accepted: {formatCurrency(record.downpayment_exception.shortfall)}. Payment remains unverified.
+                                        </p>
+                                      )}
                                       {(record.admin_reason || record.status === "rejected") && <p className={`mt-1 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Admin note: {record.admin_reason || "No reason provided."}</p>}
+                                      {record.proof_file_url && (
+                                        <a href={ensureAbsoluteUrl(record.proof_file_url)} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-semibold text-sky-700 underline underline-offset-2">
+                                          View payment proof{record.proof_file_name ? `: ${record.proof_file_name}` : ""}
+                                        </a>
+                                      )}
                                     </div>
                                   );
                                 })}
@@ -8429,8 +8491,8 @@ function CustomerDashboard() {
                     const isRead = readNotificationIds.has(order.notificationId);
                     const status = normalizeOrderStatusKey(order?.status);
                     const contractStatus = normalizeOrderStatusKey(order?.contract_status);
-                    const isPaymentNotification = ["payment", "payment_confirmed", "payment_amount_updated", "payment_rejected"].includes(order.notificationType);
-                    const isPaymentConfirmationNotification = ["payment_confirmed", "payment_amount_updated"].includes(order.notificationType);
+                      const isPaymentNotification = ["payment", "payment_confirmed", "payment_amount_updated", "payment_rejected", "admin_payment_recorded", "downpayment_exception_approved", "downpayment_exception_pending"].includes(order.notificationType);
+                      const isPaymentConfirmationNotification = ["payment_confirmed", "payment_amount_updated", "admin_payment_recorded", "downpayment_exception_approved"].includes(order.notificationType);
                     const isDelayNotification = order.notificationType === "delay";
                     const isContractReady =
                       status === "contract_sent" ||
@@ -8445,6 +8507,15 @@ function CustomerDashboard() {
                     const notificationMessage = () => {
                       if (isDelayNotification) return getDelayNotificationMessage(order);
                       if (isPaymentNotification) {
+                        if (order.notificationType === "admin_payment_recorded") {
+                          return `Our team recorded ${formatCurrency(order.paymentRecord?.verified_amount)} for order ${order.tracking}. Payment status: ${getPaymentSummary(order).status.label}. Remaining project balance: ${formatCurrency(getPaymentSummary(order).remainingAmount)}.`;
+                        }
+                        if (["downpayment_exception_approved", "downpayment_exception_pending"].includes(order.notificationType)) {
+                          const exception = order.paymentRecord?.downpayment_exception || {};
+                          return order.notificationType === "downpayment_exception_approved"
+                            ? `The admin approved accepting ${formatCurrency(exception.accepted_amount)} below the required downpayment. Payment status: ${getPaymentSummary(order).status.label}. Remaining balance: ${formatCurrency(getPaymentSummary(order).remainingAmount)}. ${exception.reason || ""}`
+                            : `An exception was requested for ${formatCurrency(exception.accepted_amount)} against the required downpayment of ${formatCurrency(exception.required_amount)}. Shortfall if accepted: ${formatCurrency(exception.shortfall)}. Remaining project balance: ${formatCurrency(getPaymentSummary(order).remainingAmount)}. This payment is not verified yet.`;
+                        }
                         if (order.notificationType === "payment_amount_updated") {
                           const adjustment = order.paymentAdjustment || {};
                           const difference = (Number(adjustment.new_amount) || 0) - (Number(adjustment.previous_amount) || 0);
@@ -8464,10 +8535,20 @@ function CustomerDashboard() {
 
                       return getCustomerOrderNotificationMessage(order);
                     };
+                    const paymentNotificationTitle = {
+                      payment: "Payment proof submitted",
+                      payment_confirmed: "Payment confirmed",
+                      payment_amount_updated: "Payment Amount Updated",
+                      payment_rejected: "Payment Proof Rejected",
+                      admin_payment_recorded: "Payment Recorded by Admin",
+                      downpayment_exception_approved: "Downpayment Exception Approved",
+                      downpayment_exception_pending: "Awaiting Admin Approval",
+                    }[order.notificationType];
 
                     const notificationIcon = () => {
                       if (order.notificationType === "payment_rejected") return "text-red-600";
                       if (order.notificationType === "payment_amount_updated") return "text-amber-600";
+                      if (["downpayment_exception_approved", "downpayment_exception_pending"].includes(order.notificationType)) return "text-amber-600";
                       if (isPaymentNotification) return "text-emerald-600";
                       if (normalizeOrderStatusKey(order?.status) === "completed") return "text-emerald-600";
                       if (normalizeOrderStatusKey(order?.status) === "cancelled") return "text-red-600";
@@ -8493,7 +8574,7 @@ function CustomerDashboard() {
                             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <h3 className={`text-sm font-bold break-words sm:text-base ${darkMode ? "text-white" : "text-slate-950"}`}>{product.name || "Project Update"}</h3>
+                                  <h3 className={`text-sm font-bold break-words sm:text-base ${darkMode ? "text-white" : "text-slate-950"}`}>{paymentNotificationTitle || product.name || "Project Update"}</h3>
                                   {!isRead && <span className="rounded-full bg-red-100 px-2 py-0.5 text-[9px] font-bold uppercase text-red-700">New</span>}
                                 </div>
                                 <p className={`mt-1 text-xs leading-5 sm:text-sm ${isRead ? darkMode ? "text-slate-400" : "text-slate-500" : darkMode ? "text-slate-200" : "text-slate-700"}`}>{notificationMessage()}</p>
