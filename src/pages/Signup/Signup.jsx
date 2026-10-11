@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { preservePendingProductRedirect } from "@/lib/pendingProductAction";
 import { getPhilippinePhoneError, isValidPhilippinePhone, normalizePhoneInput } from "@/lib/phoneValidation";
 import logo from "../../assets/images/ACGCLOGO1.png";
 import {
@@ -100,6 +101,7 @@ const getPasswordStrength = (password) => {
 
 function Signup() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { register, authError, setAuthError, adminExists, adminLoading } = useAuth();
   const [formData, setFormData] = useState({
     first_name: "",
@@ -207,9 +209,13 @@ function Signup() {
         phone: formData.phone,
         password: formData.password,
       });
+      preservePendingProductRedirect(location.state?.from);
       navigate("/login", {
         replace: true,
-        state: { message: response.message || `Verification email sent to ${formData.email}.` },
+        state: {
+          from: location.state?.from,
+          message: response.message || `Verification email sent to ${formData.email}.`,
+        },
       });
     } catch (err) {
       setError(err.data?.message || err.message || "Sign up failed.");

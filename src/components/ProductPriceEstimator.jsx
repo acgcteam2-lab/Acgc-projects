@@ -80,6 +80,7 @@ export const getProductEstimatorState = (product, form = {}) => {
   const selectedFrame = frameTypes.find((frame) => frame.name === form.frame_type) || frameTypes[0] || null;
   const width = Number(form.width) || 0;
   const height = Number(form.height) || 0;
+  const quantity = Math.max(1, Number(form.quantity) || 1);
   const minimumBlades = Math.max(1, Number(product.minimum_blades) || 1);
   const maximumBlades = Number(product.maximum_blades) || 0;
   const selectedFrameBladeCount = Number(selectedFrame?.blade_count) || 0;
@@ -92,7 +93,7 @@ export const getProductEstimatorState = (product, form = {}) => {
     width,
     height,
     measurement_unit: form.unit || product.measurement_unit || "in",
-    quantity: 1,
+    quantity,
     customized: true,
     blade_glass_type: selectedGlass?.name || form.blade_glass_type,
     sale_mode: form.sale_mode || product.default_sale_mode || "blades_only",
@@ -108,7 +109,7 @@ export const getProductEstimatorState = (product, form = {}) => {
     width,
     height,
     measurementUnit: item.measurement_unit,
-    quantity: 1,
+    quantity,
     blade_count: bladeCount || product.blade_count || 0,
     base_price: product.base_price || undefined,
     overrideRate: getProductEstimateRate(product, form),
@@ -267,6 +268,18 @@ function ProductPriceEstimator({ product, form, onFormChange, darkMode = false, 
         </div>
       ))}
 
+      <label className="mt-4 block">
+        <span className={labelClass}>Quantity</span>
+        <input
+          type="number"
+          min="1"
+          step="1"
+          value={form.quantity ?? 1}
+          onChange={(event) => updateForm({ quantity: event.target.value })}
+          className={fieldClass}
+        />
+      </label>
+
       {isBladeEstimator && (
         <div className={compact ? "mt-4 space-y-3" : `mt-4 space-y-3 rounded-lg border p-3 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-50"}`}>
           <label className="block">
@@ -336,6 +349,36 @@ function ProductPriceEstimator({ product, form, onFormChange, darkMode = false, 
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {!isBladeEstimator && (product.extra_charges || []).some((charge) => charge.is_optional && charge.is_active !== false) && (
+        <div className="mt-4 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <p className={labelClass}>Optional charges</p>
+          {(product.extra_charges || []).map((charge, index) => {
+            if (!charge.is_optional || charge.is_active === false) return null;
+            const selectedCharge = form.extra_charges?.[index];
+            const checked = selectedCharge?.is_selected ?? charge.is_default_selected !== false;
+            return (
+              <label key={`${charge.name || charge.label}-${index}`} className={`flex items-center justify-between gap-2 text-xs ${textClass}`}>
+                <span className="flex min-w-0 items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(event) => {
+                      const charges = (form.extra_charges?.length ? form.extra_charges : getDefaultExtraChargeSelections(product)).map((item, itemIndex) => (
+                        itemIndex === index ? { ...item, is_selected: event.target.checked } : item
+                      ));
+                      updateForm({ extra_charges: charges });
+                    }}
+                    className="accent-red-700"
+                  />
+                  <span className="truncate">{charge.name || charge.label}</span>
+                </span>
+                <strong className={strongClass}>{currency(charge.amount)}</strong>
+              </label>
+            );
+          })}
         </div>
       )}
 

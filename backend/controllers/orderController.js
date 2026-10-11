@@ -425,7 +425,7 @@ export const createOrder = async (req, res) => {
     }
 
     const products = productIds.length
-      ? await Product.find({ _id: { $in: productIds } })
+      ? await Product.find({ _id: { $in: productIds }, is_active: { $ne: false } })
           .select("pricing_method unit unit_price base_price price_per_sqft price_per_blade blade_count blade_glass_types sell_blades_only sell_with_frame blade_frame_types allow_custom_frame_size custom_frame_price minimum_blades maximum_blades customer_can_choose_blade_count default_blade_glass_type default_sale_mode default_frame_type show_price_per_blade customization customization_fee extra_charges estimated_price estimated_price_override width height measurement_unit")
           .lean()
       : [];

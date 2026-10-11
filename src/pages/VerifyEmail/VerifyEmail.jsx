@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { CheckCircle2, LoaderCircle, XCircle } from "lucide-react";
 import { verifyEmail } from "@/api/auth";
+import { consumePendingProductRedirect } from "@/lib/pendingProductAction";
 
 function VerifyEmail() {
   const [searchParams] = useSearchParams();
@@ -15,9 +16,13 @@ function VerifyEmail() {
 
     verifyEmail(token)
       .then((response) => {
+        const from = consumePendingProductRedirect();
         navigate("/login", {
           replace: true,
-          state: { message: response.message || "Email verified successfully. You can now log in." },
+          state: {
+            ...(from ? { from } : {}),
+            message: response.message || "Email verified successfully. You can now log in.",
+          },
         });
       })
       .catch((error) => {

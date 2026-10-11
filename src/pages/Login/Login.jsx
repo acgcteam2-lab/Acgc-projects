@@ -66,9 +66,7 @@ function Login() {
           ? requestedPath
           : "/dashboard";
       setRedirecting(true);
-      window.setTimeout(() => {
-        navigate(destination, { replace: true });
-      }, 2500);
+      navigate(destination, { replace: true });
     } catch (err) {
       setError(err.data?.message || err.message || "Login failed.");
     }
@@ -261,6 +259,7 @@ function Login() {
                   <span className="text-slate-500">Don't have an account?</span>
                   <Link
                     to="/signup"
+                    state={location.state}
                     className="font-bold text-brand transition-opacity hover:opacity-80"
                   >
                     Sign Up

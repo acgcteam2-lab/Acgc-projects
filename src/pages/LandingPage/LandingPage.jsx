@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   X,
@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import OrderProgressTimeline from "@/components/OrderProgressTimeline";
 import ProductPriceEstimator from "@/components/ProductPriceEstimator";
+import { getProductEstimatorState } from "@/components/ProductPriceEstimator";
 import { getPaymentSummary } from "@/pages/Transactions/paymentProofUtils";
 import { getProducts } from "../../api/products";
 import { getProductReviewSummary, trackOrder } from "../../api/orders";
@@ -32,13 +33,16 @@ import { calculateEstimate } from "@/lib/estimator";
 import { getFinalProjectCost } from "@/lib/orderPricing";
 import { resolveBackendImageUrl } from "../../lib/resolveBackendImageUrl";
 import { getDefaultProductLineTotal, getProductLineTotal } from "../../lib/productPricing";
+import { getDefaultExtraChargeSelections } from "@/lib/productPricing";
+import { savePendingProductAction } from "@/lib/pendingProductAction";
 import { useIsMobile } from "@/hooks/useIsMobile";
 
 function LandingPage() {
+  const navigate = useNavigate();
   const isMobile = useIsMobile();
   const [active, setActive] = useState("home");
   const [selectedProduct, setSelectedProduct] = useState(null);
-  const [productEstimatorForm, setProductEstimatorForm] = useState({ unit: "in", width: "0", height: "0", blade_glass_type: "", sale_mode: "blades_only", frame_type: "", custom_frame_size: false, blade_count: 1 });
+  const [productEstimatorForm, setProductEstimatorForm] = useState({ unit: "in", width: "0", height: "0", quantity: 1, blade_glass_type: "", sale_mode: "blades_only", frame_type: "", custom_frame_size: false, blade_count: 1 });
   const [featuredProducts, setFeaturedProducts] = useState([]);
   const [catalogProducts, setCatalogProducts] = useState([]);
   const [productSearch, setProductSearch] = useState("");
@@ -59,6 +63,7 @@ function LandingPage() {
   const [trackingError, setTrackingError] = useState("");
   const [trackingLoading, setTrackingLoading] = useState(false);
   const [showAllTrackedItems, setShowAllTrackedItems] = useState(false);
+  const [pendingActionError, setPendingActionError] = useState("");
   const trackingPaymentSummary = trackingResult ? getPaymentSummary(trackingResult) : null;
   const scrollToSection = (sectionId) => {
     setActive(sectionId);
@@ -352,7 +357,7 @@ function LandingPage() {
     width: productEstimatorWidth,
     height: productEstimatorHeight,
     measurementUnit: productEstimatorForm.unit,
-    quantity: 1,
+    quantity: Math.max(1, Number(productEstimatorForm.quantity) || 1),
     blade_count: isBladeProduct(selectedProduct) ? effectiveBladeCount : selectedProduct.blade_count || 0,
     base_price: selectedProduct.base_price || undefined,
     overrideRate: getProductEstimateRate(selectedProduct),
@@ -364,7 +369,7 @@ function LandingPage() {
       ? {
           estimated_price: getProductLineTotal(selectedProduct, {
             ...productEstimatorForm,
-            quantity: 1,
+            quantity: Math.max(1, Number(productEstimatorForm.quantity) || 1),
             blade_count: effectiveBladeCount,
           }),
           rate: getProductEstimateRate(selectedProduct),
@@ -376,14 +381,89 @@ function LandingPage() {
             width: productEstimatorWidth,
             height: productEstimatorHeight,
             measurement_unit: productEstimatorForm.unit,
-            quantity: 1,
+            quantity: Math.max(1, Number(productEstimatorForm.quantity) || 1),
             customized: true,
           }),
         }
     : null;
+  const selectedEstimatorState = selectedProduct
+    ? getProductEstimatorState(selectedProduct, productEstimatorForm)
+    : null;
   const selectedProductRating = selectedProduct
     ? featuredProductStats[selectedProduct._id || selectedProduct.id] || { averageRating: 0, ratingsCount: 0 }
     : { averageRating: 0, ratingsCount: 0 };
+
+  const continueProductActionAfterLogin = (actionType) => {
+    if (!selectedProduct) return;
+    const productId = String(selectedProduct._id || selectedProduct.id || "");
+    if (!productId) {
+      setPendingActionError("This product cannot be requested right now. Please refresh and try again.");
+      return;
+    }
+
+    const defaultDimensions = getProductDefaultDimensions(selectedProduct);
+    const hasCustomWidth = Number(productEstimatorForm.width) > 0;
+    const hasCustomHeight = Number(productEstimatorForm.height) > 0;
+    const hasCustomDimensions = hasCustomWidth || hasCustomHeight;
+    const selection = {
+      width: actionType === "direct" && !hasCustomWidth ? defaultDimensions.width : productEstimatorForm.width,
+      height: actionType === "direct" && !hasCustomHeight ? defaultDimensions.height : productEstimatorForm.height,
+      unit: actionType === "direct" && !hasCustomDimensions
+        ? defaultDimensions.unit || productEstimatorForm.unit || "in"
+        : productEstimatorForm.unit || defaultDimensions.unit || "in",
+      quantity: Math.max(1, Number(productEstimatorForm.quantity) || 1),
+      notes: "",
+      customized: actionType === "estimate" || hasCustomDimensions,
+      variant: selectedProduct.variant || selectedProduct.color || "",
+      blade_glass_type: productEstimatorForm.blade_glass_type || "",
+      sale_mode: productEstimatorForm.sale_mode || "blades_only",
+      frame_type: productEstimatorForm.frame_type || "",
+      custom_frame_size: Boolean(productEstimatorForm.custom_frame_size),
+      blade_count: productEstimatorForm.blade_count,
+      extra_charges: productEstimatorForm.extra_charges?.length
+        ? productEstimatorForm.extra_charges
+        : getDefaultExtraChargeSelections(selectedProduct),
+    };
+    const savedAction = savePendingProductAction({
+      actionType,
+      productId,
+      productSnapshot: {
+        ...selectedProduct,
+        name: selectedProduct.name || selectedProduct.product_name || "Product",
+        product_name: selectedProduct.product_name || selectedProduct.name || "Product",
+        product_type: selectedProduct.product_type || selectedProduct.type || "",
+        category: selectedProduct.category || "",
+        variant: selection.variant,
+        image_url: getProductImage(selectedProduct),
+        pricing_method: selectedProduct.pricing_method || selectedProduct.unit || "",
+      },
+      pricingConfiguration: {
+        pricing_method: selectedProduct.pricing_method || selectedProduct.unit || "",
+        price_per_sqft: Number(selectedProduct.price_per_sqft) || 0,
+        price_per_blade: Number(selectedProduct.price_per_blade) || 0,
+        unit_price: Number(selectedProduct.unit_price) || 0,
+        base_price: Number(selectedProduct.base_price) || 0,
+      },
+      selection,
+      estimate: actionType === "estimate" ? {
+        estimated_price: selectedEstimatorState?.result?.estimated_price || productEstimatorResult?.estimated_price || 0,
+        estimated_area: selectedEstimatorState?.result?.estimated_area || 0,
+        rate: selectedEstimatorState?.result?.rate || productEstimatorResult?.rate || 0,
+        area_display: selectedEstimatorState?.result?.areaDisplay || productEstimatorResult?.areaDisplay || "",
+      } : null,
+    });
+
+    if (!savedAction) {
+      setPendingActionError("We couldn't save your product details. Check browser storage and try again.");
+      return;
+    }
+
+    setPendingActionError("");
+    setSelectedProduct(null);
+    navigate("/login", {
+      state: { from: { pathname: "/customer-dashboard", search: "?resumeLandingProduct=1" } },
+    });
+  };
 
   const handleTrackOrder = async (event) => {
     event.preventDefault();
@@ -1308,12 +1388,18 @@ function LandingPage() {
               Final pricing is subject to negotiation during shop discussion or on-site inspection.
             </p>
           </section>}
-          <Link
-            to="/login"
-            className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+          {pendingActionError && (
+            <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {pendingActionError}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => continueProductActionAfterLogin("direct")}
+            className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-5 py-3 text-sm font-bold text-red-700 transition hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
           >
             Place Order Request <ArrowRight size={16} aria-hidden="true" />
-          </Link>
+          </button>
         </aside>
       </div>
     </section>

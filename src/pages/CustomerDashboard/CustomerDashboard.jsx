@@ -54,7 +54,7 @@ import {
 } from "lucide-react";
 import logo from "../../assets/images/ACGCLOGO1.png";
 import { useAuth } from "@/contexts/AuthContext";
-import { getProducts } from "@/api/products";
+import { getProduct, getProducts } from "@/api/products";
 import { API_BASE, apiFetch } from "@/api/client";
 import { resolveBackendImageUrl } from "@/lib/resolveBackendImageUrl";
 import {
@@ -93,6 +93,7 @@ import {
 } from "./orderStatusUtils";
 import { getPaymentSummary, isPaymentProofConfirmed } from "@/pages/Transactions/paymentProofUtils";
 import { buildProductPriceSnapshot, getDefaultBladeCount, getDefaultExtraChargeSelections, getDefaultProductLineTotal, getProductLineBreakdown, getProductLineTotal } from "@/lib/productPricing";
+import { clearPendingProductAction, getPendingProductAction } from "@/lib/pendingProductAction";
 import { getFinalProjectCost } from "@/lib/orderPricing";
 import { getPhilippinePhoneError, isValidPhilippinePhone, normalizePhoneInput } from "@/lib/phoneValidation";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
@@ -342,6 +343,7 @@ function CustomerDashboard() {
     frame_type: "",
     custom_frame_size: false,
     blade_count: 1,
+    is_estimate: true,
   });
   const [estimateFormErrors, setEstimateFormErrors] = useState({});
   const [cartActionError, setCartActionError] = useState("");
@@ -381,6 +383,9 @@ function CustomerDashboard() {
   const [contractPreviewOrder, setContractPreviewOrder] = useState(null);
   const [contractNotificationRecordId, setContractNotificationRecordId] = useState(null);
   const autoOpenedContractRef = useRef("");
+  const landingResumeAttemptRef = useRef("");
+  const pendingLandingActionIdRef = useRef("");
+  const resumeProductRefreshRef = useRef(null);
   const [contractConfirmModal, setContractConfirmModal] = useState({
     open: false,
     action: null,
@@ -417,6 +422,8 @@ function CustomerDashboard() {
   const [batchReviewSession, setBatchReviewSession] = useState(null);
   const [estimateFlowType, setEstimateFlowType] = useState(null);
   const [showDeliveryConfirmModal, setShowDeliveryConfirmModal] = useState(false);
+  const [resumeProductRefreshing, setResumeProductRefreshing] = useState(false);
+  const [resumeProductRefreshError, setResumeProductRefreshError] = useState("");
   const [deliveryConfirmMode, setDeliveryConfirmMode] = useState("estimate");
   const [deliveryConfirmForm, setDeliveryConfirmForm] = useState({
     phone: "",
@@ -1613,7 +1620,9 @@ function CustomerDashboard() {
       }),
       extra_charges: options.extra_charges || product?.extra_charges || getDefaultExtraChargeSelections(product),
       estimated_price: Number(options.estimated_price) || 0,
-      is_estimate: Boolean(options.is_estimate || dimensions.customized),
+      is_estimate: options.is_estimate == null
+        ? Boolean(dimensions.customized)
+        : Boolean(options.is_estimate),
     };
     return {
       ...orderItem,
@@ -1639,6 +1648,161 @@ function CustomerDashboard() {
       extra_charges: getDefaultExtraChargeSelections(product),
     };
   };
+
+  useEffect(() => {
+    const search = new URLSearchParams(location.search);
+    if (search.get("resumeLandingProduct") !== "1" || loading || !user?.id || !canRequestOrders) return;
+
+    const pendingAction = getPendingProductAction();
+    if (!pendingAction || pendingLandingActionIdRef.current === pendingAction.id) return;
+
+    const selection = pendingAction.selection || {};
+    const snapshot = pendingAction.productSnapshot || {};
+    const product = {
+      ...snapshot,
+      ...(pendingAction.pricingConfiguration || {}),
+      _id: snapshot._id || pendingAction.productId,
+      id: snapshot.id || pendingAction.productId,
+      name: snapshot.name || snapshot.product_name || "Product",
+      product_name: snapshot.product_name || snapshot.name || "Product",
+    };
+    const bladeDefaults = getDefaultBladeSelections(product);
+    const savedCharges = Array.isArray(selection.extra_charges) ? selection.extra_charges : [];
+    const extraCharges = getDefaultExtraChargeSelections(product).map((charge) => {
+      const savedCharge = savedCharges.find((saved) => saved.name === charge.name);
+      return savedCharge ? { ...charge, is_selected: savedCharge.is_selected !== false } : charge;
+    });
+
+    pendingLandingActionIdRef.current = pendingAction.id;
+    setCartDecisionProduct(product);
+    setEstimateForm({
+      unit: selection.unit || product.measurement_unit || "in",
+      width: String(selection.width ?? product.width ?? ""),
+      height: String(selection.height ?? product.height ?? ""),
+      quantity: Math.max(1, Number(selection.quantity) || 1),
+      notes: selection.notes || "",
+      customized: Boolean(selection.customized),
+      is_estimate: pendingAction.actionType === "estimate",
+      blade_glass_type: selection.blade_glass_type || bladeDefaults.blade_glass_type,
+      sale_mode: selection.sale_mode || bladeDefaults.sale_mode,
+      frame_type: selection.frame_type || bladeDefaults.frame_type,
+      custom_frame_size: Boolean(selection.custom_frame_size),
+      blade_count: selection.blade_count || bladeDefaults.blade_count,
+      extra_charges: extraCharges,
+    });
+    setEstimateFormErrors({});
+    setDeliveryConfirmMode("estimate");
+    setDeliveryConfirmForm({
+      phone: profileForm.phone || user.phone || "",
+      street_address: profileForm.street_address || user.street_address || "",
+      city: profileForm.city || user.city || "",
+      province: profileForm.province || user.province || "",
+      zip_code: profileForm.zip_code || user.zip_code || "",
+    });
+    setDeliveryConfirmNotes(selection.notes || "");
+    setDeliveryConfirmError("");
+    setCartActionError("");
+    setOrderReviewAgreed(false);
+    setActiveTab("products");
+    setResumeProductRefreshing(true);
+    setResumeProductRefreshError("");
+    setShowDeliveryConfirmModal(true);
+  }, [canRequestOrders, location.search, loading, profileForm.city, profileForm.phone, profileForm.province, profileForm.street_address, profileForm.zip_code, user?.city, user?.id, user?.phone, user?.province, user?.street_address, user?.zip_code]);
+
+  useEffect(() => {
+    const search = new URLSearchParams(location.search);
+    if (search.get("resumeLandingProduct") !== "1" || loading || !user?.id || landingResumeAttemptRef.current) return undefined;
+
+    const pendingAction = getPendingProductAction();
+    if (!pendingAction) {
+      search.delete("resumeLandingProduct");
+      navigate(`${location.pathname}${search.size ? `?${search}` : ""}`, { replace: true });
+      return undefined;
+    }
+
+    let active = true;
+
+    const resumeLandingProduct = async () => {
+      setResumeProductRefreshing(true);
+      setResumeProductRefreshError("");
+      try {
+        const response = await getProduct(pendingAction.productId);
+        if (!active || pendingLandingActionIdRef.current !== pendingAction.id) return;
+
+        const product = response.product;
+        if (!product || product.is_active === false) {
+          toast.error("This product is no longer available. Please choose another product.");
+          setShowDeliveryConfirmModal(false);
+          setCartDecisionProduct(null);
+          setResumeProductRefreshing(false);
+          setResumeProductRefreshError("");
+          clearPendingProductAction(pendingAction.id);
+          pendingLandingActionIdRef.current = "";
+          search.delete("resumeLandingProduct");
+          navigate(`${location.pathname}${search.size ? `?${search}` : ""}`, { replace: true });
+          return;
+        }
+
+        if (!canRequestOrders) {
+          showPermissionNotice("Order requests are disabled for your account.");
+          return;
+        }
+
+        if (landingResumeAttemptRef.current === pendingAction.id) return;
+
+        const selection = pendingAction.selection || {};
+        const savedCharges = Array.isArray(selection.extra_charges) ? selection.extra_charges : [];
+        const currentCharges = getDefaultExtraChargeSelections(product).map((charge) => {
+          const savedCharge = savedCharges.find((saved) => saved.name === charge.name);
+          return savedCharge ? { ...charge, is_selected: savedCharge.is_selected !== false } : charge;
+        });
+
+        setCartDecisionProduct(product);
+        setEstimateForm((current) => {
+          const bladeDefaults = getDefaultBladeSelections(product);
+          const isGlassAvailable = product.blade_glass_types?.some((glass) => glass.name === current.blade_glass_type);
+          const isFrameAvailable = product.blade_frame_types?.some((frame) => frame.name === current.frame_type);
+          return {
+            ...current,
+            unit: current.unit || product.measurement_unit || "in",
+            width: String(current.width ?? selection.width ?? product.width ?? ""),
+            height: String(current.height ?? selection.height ?? product.height ?? ""),
+            quantity: Math.max(1, Number(current.quantity) || 1),
+            blade_glass_type: isGlassAvailable ? current.blade_glass_type : selection.blade_glass_type || bladeDefaults.blade_glass_type,
+            sale_mode: current.sale_mode === "frame" && !product.sell_with_frame ? bladeDefaults.sale_mode : current.sale_mode,
+            frame_type: isFrameAvailable ? current.frame_type : selection.frame_type || bladeDefaults.frame_type,
+            blade_count: current.blade_count || selection.blade_count || bladeDefaults.blade_count,
+            extra_charges: currentCharges.map((charge) => {
+              const currentSelection = current.extra_charges?.find((item) => item.name === charge.name);
+              return currentSelection ? { ...charge, is_selected: currentSelection.is_selected !== false } : charge;
+            }),
+          };
+        });
+        setActiveTab("products");
+        setShowDeliveryConfirmModal(true);
+
+        landingResumeAttemptRef.current = pendingAction.id;
+        pendingLandingActionIdRef.current = "";
+        setResumeProductRefreshing(false);
+        setResumeProductRefreshError("");
+        clearPendingProductAction(pendingAction.id);
+        search.delete("resumeLandingProduct");
+        navigate(`${location.pathname}${search.size ? `?${search}` : ""}`, { replace: true });
+      } catch (error) {
+        if (!active) return;
+        landingResumeAttemptRef.current = "";
+        setResumeProductRefreshing(false);
+        setResumeProductRefreshError(error.data?.message || error.message || "Unable to verify current pricing. Retry to continue.");
+      }
+    };
+
+    resumeProductRefreshRef.current = resumeLandingProduct;
+    resumeLandingProduct();
+    return () => {
+      active = false;
+      if (resumeProductRefreshRef.current === resumeLandingProduct) resumeProductRefreshRef.current = null;
+    };
+  }, [canRequestOrders, location.pathname, location.search, loading, navigate, profileForm.city, profileForm.phone, profileForm.province, profileForm.street_address, profileForm.zip_code, user?.city, user?.id, user?.phone, user?.province, user?.street_address, user?.zip_code]);
 
   const handleAddToCart = async (product, extraCharges = getDefaultExtraChargeSelections(product)) => {
     if (!canRequestOrders) {
@@ -2040,7 +2204,7 @@ function CustomerDashboard() {
           area: estimationResult.estimated_area || 0,
           estimated_price: estimatedPrice,
           notes: estimateForm.notes || "",
-          is_estimate: true,
+          is_estimate: estimateForm.is_estimate !== false,
           ...bladeSelections,
         });
 
@@ -2283,6 +2447,7 @@ function CustomerDashboard() {
       notes: "",
       ...getDefaultBladeSelections(product),
       ...productEstimatorForm,
+      is_estimate: true,
     });
     setEstimateFormErrors({});
     setDeliveryConfirmMode("estimate");
@@ -2386,15 +2551,21 @@ function CustomerDashboard() {
   const handleCancelDeliveryConfirm = () => {
     setDeliveryConfirmError("");
     setShowDeliveryConfirmModal(false);
+    if (pendingLandingActionIdRef.current) {
+      clearPendingProductAction(pendingLandingActionIdRef.current);
+      pendingLandingActionIdRef.current = "";
+      landingResumeAttemptRef.current = "";
+      setResumeProductRefreshing(false);
+      setResumeProductRefreshError("");
+      const search = new URLSearchParams(location.search);
+      search.delete("resumeLandingProduct");
+      navigate(`${location.pathname}${search.size ? `?${search}` : ""}`, { replace: true });
+    }
     if (deliveryConfirmMode === "orderNow") {
       setShowOrderNowModal(false);
       setOrderNowProduct(null);
     } else if (deliveryConfirmMode === "estimate") {
-      setProductEstimatorForm({
-        unit: estimateForm.unit,
-        width: estimateForm.width,
-        height: estimateForm.height,
-      });
+      setProductEstimatorForm((current) => ({ ...current, ...estimateForm }));
       setSelectedProduct(cartDecisionProduct);
       setCartDecisionProduct(null);
     }
@@ -5668,6 +5839,23 @@ function CustomerDashboard() {
                   </div>
 
                   <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                    {resumeProductRefreshing && (
+                      <p role="status" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">
+                        Verifying current product pricing...
+                      </p>
+                    )}
+                    {resumeProductRefreshError && (
+                      <div role="alert" className="flex flex-wrap items-center justify-between gap-2 border-b border-red-200 bg-red-50 px-5 py-2 text-sm text-red-800">
+                        <span>{resumeProductRefreshError}</span>
+                        <button
+                          type="button"
+                          onClick={() => resumeProductRefreshRef.current?.()}
+                          className="font-semibold underline underline-offset-2"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    )}
                     <div className={`grid gap-5 p-5 min-h-0 lg:grid-cols-[1.2fr_0.9fr] ${darkMode ? "bg-slate-950" : "bg-slate-50"}`}>
                       <div className={`space-y-4 rounded-3xl border p-5 shadow-sm ${darkMode ? "border-slate-700 bg-slate-900" : "border-gray-200 bg-white"}`}>
                         <div className="flex items-center justify-between gap-4">
@@ -5807,6 +5995,16 @@ function CustomerDashboard() {
                             </div>
                           </div>
 
+                          {deliveryConfirmMode === "estimate" && (
+                            <ProductPriceEstimator
+                              product={confirmProduct}
+                              form={estimateForm}
+                              onFormChange={setEstimateForm}
+                              darkMode={darkMode}
+                              formatCurrency={formatCurrency}
+                            />
+                          )}
+
                           <div className={`rounded-3xl p-4 border ${darkMode ? "border-slate-700 bg-slate-800" : "bg-slate-50 border-slate-200"}`}>
                             <p className={`text-sm font-semibold mb-3 ${darkMode ? "text-slate-200" : "text-gray-700"}`}>Pricing Breakdown</p>
                             <div className={`space-y-3 text-sm ${darkMode ? "text-slate-300" : "text-gray-700"}`}>
@@ -5870,7 +6068,7 @@ function CustomerDashboard() {
                     <button
                       type="button"
                       onClick={handleConfirmAndContinue}
-                      disabled={!isDeliveryConfirmValid || orderRequestLoading}
+                      disabled={!isDeliveryConfirmValid || orderRequestLoading || resumeProductRefreshing || Boolean(resumeProductRefreshError)}
                       className="w-full rounded-xl bg-gradient-to-r from-red-600 to-red-700 px-5 py-3 text-sm font-semibold text-white transition shadow-lg hover:from-red-700 hover:to-red-800 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                     >
                       Submit Order Request
