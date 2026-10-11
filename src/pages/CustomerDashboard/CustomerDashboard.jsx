@@ -10,7 +10,6 @@ import {
   Info,
   User,
   Building2,
-  Map,
   Hash,
   LockKeyhole,
   LogOut,
