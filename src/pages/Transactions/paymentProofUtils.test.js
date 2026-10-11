@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getCustomerPaymentProof, getPaymentSummary, isPaymentProofConfirmed } from "@/pages/Transactions/paymentProofUtils";
+import { getCustomerPaymentProof, getPaymentSummary, isPaymentProofConfirmed, validateCustomerPaymentAmount } from "@/pages/Transactions/paymentProofUtils";
 
 describe("getCustomerPaymentProof", () => {
   it("detects submitted proof and prefers customer proof fields", () => {
@@ -12,7 +12,7 @@ describe("getCustomerPaymentProof", () => {
       payment_amount: 1000,
     };
 
-    expect(getCustomerPaymentProof(order)).toEqual({
+    expect(getCustomerPaymentProof(order)).toMatchObject({
       submitted: true,
       amount: 1250,
       fileName: "proof.png",
@@ -29,7 +29,7 @@ describe("getCustomerPaymentProof", () => {
       downpayment_amount: 0,
     };
 
-    expect(getCustomerPaymentProof(order)).toEqual({
+    expect(getCustomerPaymentProof(order)).toMatchObject({
       submitted: false,
       amount: 0,
       fileName: "",
@@ -58,6 +58,16 @@ describe("isPaymentProofConfirmed", () => {
   });
 });
 
+describe("validateCustomerPaymentAmount", () => {
+  it.each(["20000", "50000", "60000", "100000"])("accepts a valid amount within the outstanding balance: %s", (amount) => {
+    expect(validateCustomerPaymentAmount(amount, 100000).valid).toBe(true);
+  });
+
+  it.each(["0", "-1", "abc", "1,000", "₱1000", "1.234", "100000.01"])("rejects invalid or over-balance input: %s", (amount) => {
+    expect(validateCustomerPaymentAmount(amount, 100000).valid).toBe(false);
+  });
+});
+
 describe("getPaymentSummary", () => {
   const order = {
     total_amount: 20000,
@@ -66,6 +76,17 @@ describe("getPaymentSummary", () => {
 
   it("shows pending until any payment is confirmed", () => {
     expect(getPaymentSummary(order).status.label).toBe("Pending");
+  });
+
+  it("uses legacy verified totals when the payment-record list is empty", () => {
+    const summary = getPaymentSummary({
+      ...order,
+      payment_records: [],
+      amount_paid: 5000,
+    });
+
+    expect(summary.paidAmount).toBe(5000);
+    expect(summary.status.label).toBe("Partial Downpayment");
   });
 
   it("does not count an unconfirmed payment proof as paid", () => {
@@ -85,11 +106,11 @@ describe("getPaymentSummary", () => {
   });
 
   it("shows downpayment once the required amount is met", () => {
-    expect(getPaymentSummary({ ...order, amount_paid: 10000 }).status.label).toBe("Downpayment Paid");
+    expect(getPaymentSummary({ ...order, amount_paid: 10000 }).status.label).toBe("Downpayment Completed");
   });
 
   it("shows partial after additional payment beyond the downpayment", () => {
-    expect(getPaymentSummary({ ...order, amount_paid: 15000 }).status.label).toBe("Partial");
+    expect(getPaymentSummary({ ...order, amount_paid: 15000 }).status.label).toBe("Partial Payment");
   });
 
   it("deducts the actual confirmed amount above the required downpayment", () => {
@@ -115,7 +136,7 @@ describe("getPaymentSummary", () => {
     });
 
     expect(summary.totalAmount).toBe(20000);
-    expect(summary.status.label).toBe("Downpayment Paid");
+    expect(summary.status.label).toBe("Downpayment Completed");
   });
 
   it("uses the default downpayment when legacy fields contain zero", () => {

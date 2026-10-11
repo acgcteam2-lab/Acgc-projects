@@ -10,8 +10,15 @@ import { sendMail } from "../config/mailer.js";
 import { formatOrderEmailDate, getCurrentCustomerContact, sendOrderNotification } from "../services/orderEmails.js";
 import { applyInstallationWarranty, isCompletedInstallationStage } from "../services/warranty.js";
 import { buildProductPriceSnapshot, getMeasuredProductLineTotal } from "../../src/lib/productPricing.js";
-import { calculateRequiredDownpayment, getFinalProjectCost, getRequiredDownpayment, isProjectPriceLocked } from "../../src/lib/orderPricing.js";
+import { calculateRequiredDownpayment, getFinalProjectCost, isProjectPriceLocked } from "../../src/lib/orderPricing.js";
 import { getInstallationDateError } from "../../src/lib/installationSchedule.js";
+import {
+  getOrderPaymentAmounts,
+  getOrderPaymentStatus,
+  initializePaymentLedger,
+  isPaymentDiscrepancy,
+  validatePaymentAmount,
+} from "../services/paymentLedger.js";
 
 const isWithinReviewEditWindow = (submittedAt) => {
   if (!submittedAt) return false;
@@ -307,40 +314,6 @@ const generateTrackingNumber = () => {
   return `TRK-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 };
 
-const getOrderPaymentAmounts = (order) => {
-  const totalAmount = getFinalProjectCost(order);
-  const requiredAmount = getRequiredDownpayment(order);
-
-  let paidAmount = Number(order.amount_paid);
-  if (order.amount_paid === undefined || order.amount_paid === null || !Number.isFinite(paidAmount)) {
-    if (order.payment_proof_confirmed_at) {
-      paidAmount = Number(order.payment_proof_amount) || 0;
-    } else if (order.payment_status === "paid" && !order.payment_proof_submitted_at) {
-      paidAmount = totalAmount;
-    } else if (order.downpayment_received) {
-      paidAmount = requiredAmount;
-    } else {
-      paidAmount = 0;
-    }
-  }
-
-  paidAmount = Math.min(Math.max(paidAmount, 0), totalAmount);
-  return { totalAmount, requiredAmount, paidAmount };
-};
-
-const getOrderPaymentStatus = (order) => {
-  const { totalAmount, requiredAmount, paidAmount } = getOrderPaymentAmounts(order);
-  const paidCents = Math.round(paidAmount * 100);
-  const requiredCents = Math.round(requiredAmount * 100);
-  const totalCents = Math.round(totalAmount * 100);
-  if (totalCents > 0 && paidCents >= totalCents) return "paid";
-  if (paidAmount <= 0) return "pending";
-  if (order.payment_terms === "full_payment") return "partial";
-  if (paidCents < requiredCents) return "partial_downpayment";
-  if (paidCents === requiredCents) return "downpayment";
-  return "partial";
-};
-
 const getInstallationPlan = (order) => {
   const stages = Array.isArray(order?.progress_stages) ? order.progress_stages : [];
   const stage = stages.find((entry) => {
@@ -387,7 +360,8 @@ export const listOrders = async (req, res) => {
     const orders = await Order.find(filter)
       .sort({ createdAt: -1 })
       .populate("customer", "first_name last_name email phone street_address city province zip_code")
-      .populate("items.product_id", "image_url image images name product_name category product_type unit pricing_method unit_price base_price price_per_sqft price_per_blade blade_count estimated_price estimated_price_override width height measurement_unit standard_size");
+      .populate("items.product_id", "image_url image images name product_name category product_type unit pricing_method unit_price base_price price_per_sqft price_per_blade blade_count estimated_price estimated_price_override width height measurement_unit standard_size")
+      .lean();
 
     res.json({ success: true, orders });
   } catch (error) {
@@ -770,6 +744,7 @@ export const updateOrderStatus = async (req, res) => {
       required_downpayment_amount,
       payment_proof_amount,
       payment_proof_confirmed_at,
+      payment_record_action,
       payment_method,
       transaction_number,
       inspection_notes,
@@ -847,8 +822,113 @@ export const updateOrderStatus = async (req, res) => {
       });
     }
 
+    let paymentActionResult = null;
+    if (payment_record_action) {
+      initializePaymentLedger(order);
+      const action = String(payment_record_action.action || "").toLowerCase();
+      const record = payment_record_action.record_id
+        ? order.payment_records.id(payment_record_action.record_id)
+        : order.payment_records.find((entry) => entry.status === "pending");
+
+      if (action === "verify" || action === "reject" || action === "adjust") {
+        const expectedRecordStatus = action === "adjust" ? "verified" : "pending";
+        if (!record || record.status !== expectedRecordStatus) {
+          return res.status(409).json({ success: false, message: "This payment is no longer awaiting verification." });
+        }
+        const reason = String(payment_record_action.reason || "").trim();
+        if (action === "reject") {
+          if (!reason) return res.status(400).json({ success: false, message: "Provide a reason for rejecting this payment proof." });
+          record.status = "rejected";
+          record.rejected_at = new Date();
+          record.verified_by = req.user.id;
+          record.admin_reason = reason;
+          paymentActionResult = { action, recordId: record._id, submittedAmount: record.submitted_amount, reason };
+          order.payment_proof_confirmed_at = null;
+        } else {
+          const oldVerifiedAmount = Number(record.verified_amount) || 0;
+          const submittedAmount = action === "adjust" ? oldVerifiedAmount : Number(record.submitted_amount) || 0;
+          const allowedRemainingAmount = getOrderPaymentAmounts(order).remainingAmount + (action === "adjust" ? oldVerifiedAmount : 0);
+          const validation = validatePaymentAmount(
+            payment_record_action.verified_amount,
+            allowedRemainingAmount,
+          );
+          if (!validation.valid) return res.status(400).json({ success: false, message: validation.message });
+          const verifiedAmount = validation.amount;
+          const amountChanged = isPaymentDiscrepancy(submittedAmount, verifiedAmount);
+          if (action === "adjust" && !amountChanged) {
+            return res.status(400).json({ success: false, message: "The replacement amount must differ from the current verified amount." });
+          }
+          if ((amountChanged || action === "adjust") && !reason) {
+            return res.status(400).json({ success: false, message: "Provide a reason when the verified amount differs from the customer's submitted amount." });
+          }
+          if (amountChanged || action === "adjust") {
+            record.amount_history.push({
+              previous_amount: submittedAmount,
+              new_amount: verifiedAmount,
+              reason,
+              changed_at: new Date(),
+              changed_by: req.user.id,
+            });
+          }
+          record.status = "verified";
+          record.verified_amount = verifiedAmount;
+          record.verified_at = new Date();
+          record.verified_by = req.user.id;
+          record.admin_reason = reason;
+          order.payment_proof_amount = verifiedAmount;
+          order.payment_proof_confirmed_at = record.verified_at;
+          order.payment_method = record.payment_method || order.payment_method || "Cash";
+          order.transaction_number = record.transaction_number || order.transaction_number || "";
+          order.amount_paid = getOrderPaymentAmounts(order).paidAmount;
+          paymentActionResult = {
+            action: action === "adjust" ? "adjust" : "verify",
+            recordId: record._id,
+            submittedAmount: action === "adjust" ? Number(record.submitted_amount) || oldVerifiedAmount : submittedAmount,
+            previousAmount: submittedAmount,
+            verifiedAmount,
+            difference: Math.round((verifiedAmount - submittedAmount) * 100) / 100,
+            amountChanged,
+            wasAdjustment: action === "adjust",
+            reason,
+          };
+        }
+        order.payment_proof_file_name = record.proof_file_name || order.payment_proof_file_name;
+        order.payment_proof_file_url = record.proof_file_url || order.payment_proof_file_url;
+      } else if (action === "record") {
+        if (order.payment_records.some((entry) => entry.status === "pending")) {
+          return res.status(409).json({ success: false, message: "Verify or reject the submitted proof before recording another payment." });
+        }
+        const validation = validatePaymentAmount(
+          payment_record_action.verified_amount,
+          getOrderPaymentAmounts(order).remainingAmount,
+        );
+        if (!validation.valid) return res.status(400).json({ success: false, message: validation.message });
+        const verifiedAt = new Date();
+        const manualRecord = order.payment_records.create({
+          submitted_amount: null,
+          verified_amount: validation.amount,
+          status: "verified",
+          payment_method: payment_record_action.payment_method || payment_method || "Cash",
+          transaction_number: payment_record_action.transaction_number || transaction_number || "",
+          submitted_at: verifiedAt,
+          verified_at: verifiedAt,
+          verified_by: req.user.id,
+          admin_reason: String(payment_record_action.reason || "Admin-recorded payment").trim(),
+        });
+        order.payment_records.push(manualRecord);
+        order.payment_method = manualRecord.payment_method;
+        order.transaction_number = manualRecord.transaction_number;
+        order.amount_paid = getOrderPaymentAmounts(order).paidAmount;
+        paymentActionResult = { action, recordId: manualRecord._id, verifiedAmount: validation.amount };
+      } else {
+        return res.status(400).json({ success: false, message: "Invalid payment action." });
+      }
+    } else if (payment_proof_amount !== undefined || payment_proof_confirmed_at !== undefined) {
+      return res.status(400).json({ success: false, message: "Payment proofs must be verified through a payment record action." });
+    }
+
     const requestedPaidAmount = amount_paid ?? payment_amount;
-    if (requestedPaidAmount !== undefined) {
+    if (requestedPaidAmount !== undefined && !paymentActionResult) {
       const totalAmount = getOrderPaymentAmounts(order).totalAmount;
       if (Math.round(Number(requestedPaidAmount) * 100) > Math.round(totalAmount * 100)) {
         return res.status(400).json({ success: false, message: "Payment cannot exceed the project total." });
@@ -872,11 +952,19 @@ export const updateOrderStatus = async (req, res) => {
       order.required_downpayment_amount = nextRequiredAmount;
       order.downpayment_amount = nextRequiredAmount;
     }
-    if (amount_paid !== undefined) order.amount_paid = Math.max(Number(amount_paid) || 0, 0);
-    if (payment_amount !== undefined) order.amount_paid = Math.max(Number(payment_amount) || 0, 0);
-    if (payment_proof_amount !== undefined) order.payment_proof_amount = Number(payment_proof_amount) || 0;
-    if (payment_proof_confirmed_at !== undefined) {
-      order.payment_proof_confirmed_at = payment_proof_confirmed_at ? new Date(payment_proof_confirmed_at) : null;
+    if ((amount_paid !== undefined || payment_amount !== undefined) && !paymentActionResult) {
+      const nextPaidAmount = Math.max(Number(requestedPaidAmount) || 0, 0);
+      if (order.payment_ledger_initialized) {
+        const verifiedRecordAmount = (order.payment_records || []).reduce((sum, record) => (
+          record.status === "verified" ? sum + (Number(record.verified_amount) || 0) : sum
+        ), 0);
+        if (Math.round(nextPaidAmount * 100) < Math.round(verifiedRecordAmount * 100)) {
+          return res.status(400).json({ success: false, message: "Total paid cannot be lower than the verified payment records." });
+        }
+        order.legacy_verified_amount = Math.max(0, nextPaidAmount - verifiedRecordAmount);
+      } else {
+        order.amount_paid = nextPaidAmount;
+      }
     }
     if (payment_method !== undefined) order.payment_method = payment_method || order.payment_method || "Cash";
     if (transaction_number !== undefined) order.transaction_number = transaction_number || "";
@@ -921,7 +1009,39 @@ export const updateOrderStatus = async (req, res) => {
     const currentPaidAmount = getOrderPaymentAmounts(order).paidAmount;
     const paymentProofJustConfirmed = Boolean(order.payment_proof_confirmed_at && !hadConfirmedPaymentProof);
     const confirmedPaymentAmount = Math.max(currentPaidAmount - previousPaidAmount, 0) || Number(order.payment_proof_amount) || 0;
-    if (paymentProofJustConfirmed) {
+    if (paymentActionResult?.action === "reject") {
+      void sendOrderNotification("payment_proof_rejected", order, {
+        customerEmail: order.customer_email || order.customer?.email,
+        paymentRecordId: String(paymentActionResult.recordId),
+        submittedAmount: paymentActionResult.submittedAmount,
+        reason: paymentActionResult.reason,
+      });
+    } else if ((paymentActionResult?.action === "verify" && paymentActionResult.amountChanged) || paymentActionResult?.action === "adjust") {
+      void sendOrderNotification("payment_amount_updated", order, {
+        customerEmail: order.customer_email || order.customer?.email,
+        paymentRecordId: String(paymentActionResult.recordId),
+        submittedAmount: paymentActionResult.submittedAmount,
+        previousAmount: paymentActionResult.previousAmount,
+        confirmedAmount: paymentActionResult.verifiedAmount,
+        difference: paymentActionResult.difference,
+        wasAdjustment: paymentActionResult.wasAdjustment,
+        reason: paymentActionResult.reason,
+      });
+    } else if (paymentActionResult?.action === "verify") {
+      void sendOrderNotification("payment_proof_confirmed", order, {
+        customerEmail: order.customer_email || order.customer?.email,
+        previousStatus: previousPaymentStatus,
+        confirmedAmount: paymentActionResult.verifiedAmount,
+        paymentRecordId: String(paymentActionResult.recordId),
+      });
+    } else if (paymentActionResult?.action === "record") {
+      void sendOrderNotification("transaction_update", order, {
+        customerEmail: order.customer_email || order.customer?.email,
+        previousStatus: previousPaymentStatus,
+        confirmedAmount: paymentActionResult.verifiedAmount,
+        paymentRecordId: String(paymentActionResult.recordId),
+      });
+    } else if (paymentProofJustConfirmed) {
       void sendOrderNotification("payment_proof_confirmed", order, {
         customerEmail: order.customer_email || order.customer?.email,
         previousStatus: previousPaymentStatus,
@@ -1326,11 +1446,6 @@ export const submitCustomerPaymentProof = async (req, res) => {
     const { orderId } = req.params;
     const { amount, payment_method, transaction_number, proof_file_name, proof_file_url } = req.body || {};
 
-    const normalizedAmount = Number(amount);
-    if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
-      return res.status(400).json({ success: false, message: "Please enter a valid payment amount." });
-    }
-
     const order = await Order.findById(orderId);
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found." });
@@ -1340,33 +1455,39 @@ export const submitCustomerPaymentProof = async (req, res) => {
       return res.status(403).json({ success: false, message: "Not authorized to update payment proof for this order." });
     }
 
-    if (order.payment_proof_submitted_at && !order.payment_proof_confirmed_at) {
+    initializePaymentLedger(order);
+    if ((order.payment_records || []).some((record) => record.status === "pending")) {
       return res.status(409).json({
         success: false,
         message: "Your previous payment is awaiting confirmation before another payment can be submitted.",
       });
     }
 
-    const { totalAmount, paidAmount } = getOrderPaymentAmounts(order);
-    const remainingAmount = Math.max(totalAmount - paidAmount, 0);
-    if (normalizedAmount > remainingAmount) {
-      const formattedRemainingAmount = remainingAmount.toLocaleString("en-PH", {
-        minimumFractionDigits: Number.isInteger(remainingAmount) ? 0 : 2,
-        maximumFractionDigits: 2,
-      });
-      return res.status(400).json({
-        success: false,
-        message: `Payment cannot exceed the remaining balance of ₱${formattedRemainingAmount}.`,
-      });
-    }
+    const { remainingAmount } = getOrderPaymentAmounts(order);
+    const validation = validatePaymentAmount(amount, remainingAmount);
+    if (!validation.valid) return res.status(400).json({ success: false, message: validation.message });
+    const normalizedAmount = validation.amount;
 
+    const submittedAt = new Date();
+    const paymentRecord = {
+      submitted_amount: normalizedAmount,
+      verified_amount: null,
+      status: "pending",
+      payment_method: payment_method || order.payment_method || "Cash",
+      transaction_number: transaction_number || "",
+      proof_file_name: proof_file_name || "",
+      proof_file_url: proof_file_url || "",
+      submitted_at: submittedAt,
+    };
+    order.payment_records.push(paymentRecord);
     order.payment_proof_amount = normalizedAmount;
-    order.payment_proof_submitted_at = new Date();
+    order.payment_proof_submitted_at = submittedAt;
     order.payment_proof_confirmed_at = null;
-    order.payment_proof_file_name = proof_file_name || order.payment_proof_file_name || "";
-    order.payment_proof_file_url = proof_file_url || order.payment_proof_file_url || "";
-    order.payment_method = payment_method || order.payment_method || "Cash";
-    order.transaction_number = transaction_number || order.transaction_number || "";
+    order.payment_proof_file_name = paymentRecord.proof_file_name;
+    order.payment_proof_file_url = paymentRecord.proof_file_url;
+    order.payment_method = paymentRecord.payment_method;
+    order.transaction_number = paymentRecord.transaction_number;
+    order.amount_paid = getOrderPaymentAmounts(order).paidAmount;
     order.payment_status = getOrderPaymentStatus(order);
 
     await order.save();

@@ -99,6 +99,10 @@ function Transactions() {
   const [editPaymentMethod, setEditPaymentMethod] = useState("Cash");
   const [editPaymentAmount, setEditPaymentAmount] = useState("0.00");
   const [editPaymentTransactionNumber, setEditPaymentTransactionNumber] = useState("");
+  const [editPaymentReason, setEditPaymentReason] = useState("");
+  const [editPaymentAction, setEditPaymentAction] = useState("record");
+  const [editPaymentRecordId, setEditPaymentRecordId] = useState("");
+  const [paymentActionLoading, setPaymentActionLoading] = useState(false);
 
   const isCompletedProject = (order) => {
     const status = (order.status || "").toString().toLowerCase();
@@ -333,6 +337,7 @@ function Transactions() {
     if (!orderId) return;
 
     setFeedbackDeleting(true);
+    setPaymentActionLoading(true);
     try {
       const response = await deleteOrderReview(orderId, feedbackDeleteOrder.reviewItemIndex);
       setOrders((previous) => previous.map((order) =>
@@ -435,14 +440,18 @@ function Transactions() {
     if (!order) return;
     const proof = getCustomerPaymentProof(order);
     const method = proof.paymentMethod || order.payment_method || (order.acceptance_method === "online" ? "Online" : "Cash");
-    const hasUnconfirmedProof = Boolean(
-      order.payment_proof_submitted_at && !isPaymentProofConfirmed(order),
+    const hasUnconfirmedProof = proof.status === "pending" || (
+      !(order.payment_records || []).length && Boolean(order.payment_proof_submitted_at && !isPaymentProofConfirmed(order))
     );
+    const latestVerifiedRecord = [...(order.payment_records || [])].reverse().find((record) => record.status === "verified");
 
     setEditPaymentOrder(order);
     setEditPaymentMethod(method);
     setEditPaymentAmount(hasUnconfirmedProof && proof.amount > 0 ? String(proof.amount) : "");
     setEditPaymentTransactionNumber(proof.transactionNumber || order.transaction_number || order.transactionNumber || "");
+    setEditPaymentReason("");
+    setEditPaymentAction(hasUnconfirmedProof ? "verify" : "record");
+    setEditPaymentRecordId(String(latestVerifiedRecord?._id || ""));
     setShowEditPaymentModal(true);
   };
 
@@ -459,6 +468,9 @@ function Transactions() {
     setEditPaymentMethod("Cash");
     setEditPaymentAmount("0.00");
     setEditPaymentTransactionNumber("");
+    setEditPaymentReason("");
+    setEditPaymentAction("record");
+    setEditPaymentRecordId("");
   };
 
   const handleSavePaymentEdit = async () => {
@@ -478,24 +490,57 @@ function Transactions() {
     const existingSummary = getPaymentSummary(editPaymentOrder);
     const totalAmount = existingSummary.totalAmount;
     const existingPaid = existingSummary.paidAmount;
-    if (Math.round(nextAmount * 100) > Math.round(existingSummary.remainingAmount * 100)) {
-      toast.error("Payment cannot exceed the remaining balance.");
+    const proof = getCustomerPaymentProof(editPaymentOrder);
+    const pendingSubmission = proof.status === "pending" || (
+      !(editPaymentOrder.payment_records || []).length && Boolean(editPaymentOrder.payment_proof_submitted_at && !isPaymentProofConfirmed(editPaymentOrder))
+    );
+    const selectedRecord = (editPaymentOrder.payment_records || []).find((record) => String(record._id) === editPaymentRecordId);
+    const isAdjusting = !pendingSubmission && editPaymentAction === "adjust";
+    const amountBeingReplaced = isAdjusting ? Number(selectedRecord?.verified_amount) || 0 : 0;
+    const maxAllowedAmount = existingSummary.remainingAmount + amountBeingReplaced;
+    if (Math.round(nextAmount * 100) > Math.round(maxAllowedAmount * 100)) {
+      toast.error("Payment cannot exceed the remaining project balance.");
       return;
     }
-    const updatedPaid = existingPaid + nextAmount;
+    if (isAdjusting && !selectedRecord) {
+      toast.error("Select the verified payment record to adjust.");
+      return;
+    }
+    const submittedAmount = Number(proof.submittedAmount ?? proof.amount) || 0;
+    const amountChanged = (pendingSubmission && Math.round(nextAmount * 100) !== Math.round(submittedAmount * 100))
+      || (isAdjusting && Math.round(nextAmount * 100) !== Math.round(amountBeingReplaced * 100));
+    if ((pendingSubmission || isAdjusting) && amountChanged && !editPaymentReason.trim()) {
+      toast.error("Explain why the verified amount differs from the submitted or previously verified amount.");
+      return;
+    }
+
+    const updatedPaid = existingPaid - amountBeingReplaced + nextAmount;
     const remainingAfter = Math.max(totalAmount - updatedPaid, 0);
     const updatedSummary = getPaymentSummary({ ...editPaymentOrder, amount_paid: updatedPaid });
     const isFullyPaid = updatedSummary.status.key === "paid";
 
     try {
       const payload = {
-        amount_paid: updatedPaid,
-        payment_status: updatedSummary.status.key,
-        payment_method: editPaymentMethod,
-        transaction_number: editPaymentTransactionNumber || editPaymentOrder.transaction_number || "",
-        ...(editPaymentOrder.payment_proof_submitted_at && !isPaymentProofConfirmed(editPaymentOrder)
-          ? { payment_proof_confirmed_at: new Date().toISOString() }
-          : {}),
+        payment_record_action: pendingSubmission
+          ? {
+              action: "verify",
+              ...(proof.recordId ? { record_id: proof.recordId } : {}),
+              verified_amount: nextAmount,
+              reason: editPaymentReason.trim(),
+            }
+          : isAdjusting
+            ? {
+                action: "adjust",
+                record_id: editPaymentRecordId,
+                verified_amount: nextAmount,
+                reason: editPaymentReason.trim(),
+              }
+          : {
+              action: "record",
+              verified_amount: nextAmount,
+              payment_method: editPaymentMethod,
+              transaction_number: editPaymentTransactionNumber || editPaymentOrder.transaction_number || "",
+            },
       };
 
       const response = await updateOrderStatus(orderId, payload);
@@ -509,16 +554,45 @@ function Transactions() {
 
       toast.success(
         isFullyPaid
-          ? "Payment confirmed. Customer is now marked as Fully Paid."
-          : `Payment saved. Status: ${updatedSummary.status.label}. Remaining balance: ₱${remainingAfter.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          ? "Payment verified. Customer is now marked as Fully Paid."
+          : `${pendingSubmission ? "Payment verified" : isAdjusting ? "Verified payment adjusted" : "Payment recorded"}. Status: ${updatedSummary.status.label}. Remaining balance: ₱${remainingAfter.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       );
     } catch (error) {
       console.error("Save payment edit failed", error);
       toast.error(error?.data?.message || error?.message || "Unable to save payment update.");
       return;
+    } finally {
+      setPaymentActionLoading(false);
     }
 
     closeEditPaymentModal();
+  };
+
+  const handleRejectPaymentProof = async () => {
+    if (!editPaymentOrder) return;
+    const proof = getCustomerPaymentProof(editPaymentOrder);
+    if (!editPaymentReason.trim()) {
+      toast.error("Provide a reason for rejecting this payment proof.");
+      return;
+    }
+    const orderId = editPaymentOrder._id || editPaymentOrder.id;
+    setPaymentActionLoading(true);
+    try {
+      const response = await updateOrderStatus(orderId, {
+        payment_record_action: {
+          action: "reject",
+          ...(proof.recordId ? { record_id: proof.recordId } : {}),
+          reason: editPaymentReason.trim(),
+        },
+      });
+      updateOrderLocally(orderId, response?.order || {});
+      toast.success("Payment proof rejected. The customer was notified.");
+      closeEditPaymentModal();
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to reject payment proof.");
+    } finally {
+      setPaymentActionLoading(false);
+    }
   };
 
   const openFullContractModal = () => {
@@ -969,6 +1043,15 @@ function Transactions() {
     const proofLinkClass = darkMode
       ? "flex items-center gap-2 rounded-lg border border-slate-700 bg-[#1d2f45] px-3 py-2 text-sm text-slate-200 transition hover:bg-slate-700 hover:text-white"
       : "flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 hover:text-slate-900";
+    const currentProof = getCustomerPaymentProof(editPaymentOrder);
+    const pendingPaymentProof = currentProof.status === "pending" || (
+      !(editPaymentOrder.payment_records || []).length && Boolean(editPaymentOrder.payment_proof_submitted_at && !isPaymentProofConfirmed(editPaymentOrder))
+    );
+    const verifiedPaymentRecords = (editPaymentOrder.payment_records || []).filter((record) => record.status === "verified");
+    const selectedVerifiedRecord = verifiedPaymentRecords.find((record) => String(record._id) === editPaymentRecordId);
+    const adjustingVerifiedPayment = !pendingPaymentProof && editPaymentAction === "adjust";
+    const maxConfirmableAmount = getPaymentSummary(editPaymentOrder).remainingAmount
+      + (adjustingVerifiedPayment ? Number(selectedVerifiedRecord?.verified_amount) || 0 : 0);
 
     return (
       <div className={shellClass}>
@@ -992,6 +1075,53 @@ function Transactions() {
           </div>
 
           <div className={bodyClass}>
+            {!pendingPaymentProof && verifiedPaymentRecords.length > 0 && (
+              <div>
+                <label htmlFor="payment-action-mode" className={`mb-2 block text-[11px] font-extrabold uppercase tracking-[0.18em] ${labelClass}`}>PAYMENT ACTION</label>
+                <select
+                  id="payment-action-mode"
+                  value={editPaymentAction}
+                  onChange={(event) => {
+                    const nextAction = event.target.value;
+                    setEditPaymentAction(nextAction);
+                    if (nextAction === "adjust") {
+                      const record = verifiedPaymentRecords.find((entry) => String(entry._id) === editPaymentRecordId) || verifiedPaymentRecords.at(-1);
+                      setEditPaymentRecordId(String(record?._id || ""));
+                      setEditPaymentAmount(String(record?.verified_amount ?? ""));
+                    } else {
+                      setEditPaymentAmount("");
+                    }
+                    setEditPaymentReason("");
+                  }}
+                  className={inputClass}
+                >
+                  <option value="record">Record a new payment</option>
+                  <option value="adjust">Correct a verified payment</option>
+                </select>
+              </div>
+            )}
+            {adjustingVerifiedPayment && (
+              <div>
+                <label htmlFor="payment-record-to-adjust" className={`mb-2 block text-[11px] font-extrabold uppercase tracking-[0.18em] ${labelClass}`}>VERIFIED PAYMENT TO CORRECT</label>
+                <select
+                  id="payment-record-to-adjust"
+                  value={editPaymentRecordId}
+                  onChange={(event) => {
+                    setEditPaymentRecordId(event.target.value);
+                    const record = verifiedPaymentRecords.find((entry) => String(entry._id) === event.target.value);
+                    setEditPaymentAmount(String(record?.verified_amount ?? ""));
+                    setEditPaymentReason("");
+                  }}
+                  className={inputClass}
+                >
+                  {verifiedPaymentRecords.map((record) => (
+                    <option key={record._id} value={record._id}>
+                      {formatDateToMMMDDYYYY(record.verified_at)} · ₱{Number(record.verified_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             {(() => {
               const proof = getCustomerPaymentProof(editPaymentOrder);
               if (proof.submitted) {
@@ -1140,7 +1270,7 @@ function Transactions() {
                 id="edit-payment-amount-field"
                 type="number"
                 min="0"
-                max={getPaymentSummary(editPaymentOrder).remainingAmount}
+                max={maxConfirmableAmount}
                 step="0.01"
                 value={editPaymentAmount}
                 onChange={(e) => setEditPaymentAmount(e.target.value)}
@@ -1155,6 +1285,22 @@ function Transactions() {
                 </div>
               )}
             </div>
+
+              {(pendingPaymentProof || adjustingVerifiedPayment) && (
+              <div>
+                <label htmlFor="payment-verification-reason" className={`mb-2 block text-[11px] font-extrabold uppercase tracking-[0.18em] ${labelClass}`}>
+                  Verification / rejection reason
+                </label>
+                <textarea
+                  id="payment-verification-reason"
+                  value={editPaymentReason}
+                  onChange={(event) => setEditPaymentReason(event.target.value)}
+                  placeholder="Required if the verified amount differs or you reject the proof."
+                  rows={3}
+                  className={`${inputClass} resize-y`}
+                />
+              </div>
+            )}
 
             <div>
               <div className={`mb-2 text-[11px] font-extrabold uppercase tracking-[0.18em] ${labelClass}`}>PAYMENT METHOD</div>
@@ -1210,7 +1356,9 @@ function Transactions() {
                 const paymentSummary = getPaymentSummary(editPaymentOrder);
                 const preview = getPaymentSummary({
                   ...editPaymentOrder,
-                  amount_paid: paymentSummary.paidAmount + (Number(editPaymentAmount) || 0),
+                  amount_paid: paymentSummary.paidAmount
+                    - (adjustingVerifiedPayment ? Number(selectedVerifiedRecord?.verified_amount) || 0 : 0)
+                    + (Number(editPaymentAmount) || 0),
                 });
                 return (
               <div className="flex items-center justify-between gap-3 text-sm">
@@ -1225,7 +1373,7 @@ function Transactions() {
               <div className="flex items-center justify-between gap-3">
                 <span className={darkMode ? "text-sm text-slate-300" : "text-sm text-slate-600"}>Remaining Balance After This Payment</span>
                 <span className={darkMode ? "text-sm font-bold text-red-400" : "text-sm font-bold text-red-600"}>
-                  ₱{Math.max(getPaymentSummary(editPaymentOrder).remainingAmount - (Number(editPaymentAmount || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  ₱{Math.max(getPaymentSummary(editPaymentOrder).remainingAmount + (adjustingVerifiedPayment ? Number(selectedVerifiedRecord?.verified_amount) || 0 : 0) - (Number(editPaymentAmount || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
             </div>
@@ -1233,6 +1381,9 @@ function Transactions() {
 
           <div className={footerClass}>
             <button type="button" onClick={closeEditPaymentModal} className={footerCancelClass}>Cancel</button>
+            {pendingPaymentProof && (
+              <button type="button" onClick={handleRejectPaymentProof} className={footerCancelClass}>Reject Proof</button>
+            )}
             <button type="button" onClick={handleSavePaymentEdit} className={footerSaveClass}>Save Changes</button>
           </div>
         </div>
@@ -1373,7 +1524,9 @@ function Transactions() {
                       const projectCategory = isCompletedProject(order) ? "Completed" : "In Progress";
                       const statusLabel = paymentSummary.status.label;
                       const isFullyPaid = paymentSummary.status.key === "paid";
-                      const showNeedsConfirmation = Boolean(order.payment_proof_submitted_at && !isPaymentProofConfirmed(order));
+                      const showNeedsConfirmation = (order.payment_records || []).length > 0
+                        ? order.payment_records.some((record) => record.status === "pending")
+                        : Boolean(order.payment_proof_submitted_at && !isPaymentProofConfirmed(order));
                       const warrantyStatus = getWarrantyStatus(order);
 
                       return (

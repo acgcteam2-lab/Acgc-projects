@@ -1,6 +1,7 @@
 import process from "node:process";
 import { sendMail } from "../config/mailer.js";
 import User from "../models/User.js";
+import { getOrderPaymentAmounts } from "./paymentLedger.js";
 
 const escapeHtml = (value) => String(value ?? "")
   .replace(/&/g, "&amp;")
@@ -56,9 +57,7 @@ const paymentTotals = (order) => {
       : asNumber(configuredRequired),
     0,
   ));
-  let paid = order?.amount_paid === undefined || order?.amount_paid === null
-    ? (order?.payment_proof_confirmed_at ? asNumber(order?.payment_proof_amount) : 0)
-    : asNumber(order.amount_paid);
+  let paid = getOrderPaymentAmounts(order).paidAmount;
   if (order?.payment_status === "paid" && !order?.payment_proof_submitted_at && paid === 0) paid = total;
   return { total, required, paid, balance: Math.max(total - paid, 0) };
 };
@@ -85,6 +84,44 @@ const getEventContent = (event, order, audience, extra) => {
         ["Total order amount", money(total)],
         ["Required downpayment", money(required)],
         ["Current order status", statusLabel(order?.status || "Submitted")],
+      ],
+    },
+    payment_amount_updated: {
+      title: "Payment Amount Updated",
+      summary: "Your submitted payment amount differs from the amount verified by the admin. Please review the details below.",
+      subject: `Payment amount updated - ${orderIdOf(order)}`,
+      status: "Amount Updated",
+      action: "Review payment details",
+      path: "customer-dashboard?tab=orders",
+      next: balance > 0 ? `Your verified payment was applied. Downpayment remaining: ${money(Math.max(required - paid, 0))}. Remaining project balance: ${money(balance)}.` : "Your order is fully paid.",
+      fields: [
+        ["Order reference", order?.tracking || orderIdOf(order)],
+        [extra.wasAdjustment ? "Previously verified amount" : "Customer-submitted amount", money(extra.wasAdjustment ? extra.previousAmount : extra.submittedAmount)],
+        ["Admin-verified amount", money(extra.confirmedAmount)],
+        ["Difference", `${asNumber(extra.difference) < 0 ? "Lower by " : "Higher by "}${money(Math.abs(asNumber(extra.difference)))}`],
+        ["Verified on", dateTime(order?.payment_records?.id?.(extra.paymentRecordId)?.verified_at || order?.payment_proof_confirmed_at || new Date())],
+        ...(extra.reason ? [["Admin explanation", extra.reason]] : []),
+        ["Total project cost", money(total)],
+        ["Verified amount paid", money(paid)],
+        ["Remaining project balance", money(balance)],
+      ],
+    },
+    payment_proof_rejected: {
+      title: "Payment Proof Rejected",
+      summary: "The admin reviewed your payment proof and could not verify it. The submitted amount has not been counted as paid.",
+      subject: `Payment proof rejected - ${orderIdOf(order)}`,
+      status: "Rejected",
+      action: "Review order and resubmit payment proof",
+      path: "customer-dashboard?tab=orders",
+      next: extra.reason || "Please review your payment details and submit a new proof of payment when ready.",
+      fields: [
+        ["Order reference", order?.tracking || orderIdOf(order)],
+        ["Submitted amount", money(extra.submittedAmount)],
+        ["Rejected on", dateTime(order?.payment_records?.id?.(extra.paymentRecordId)?.rejected_at || new Date())],
+        ...(extra.reason ? [["Admin explanation", extra.reason]] : []),
+        ["Verified amount paid", money(paid)],
+        ["Downpayment remaining", money(Math.max(required - paid, 0))],
+        ["Remaining project balance", money(balance)],
       ],
     },
     order_cancelled: {

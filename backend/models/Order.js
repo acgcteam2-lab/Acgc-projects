@@ -255,6 +255,30 @@ const OrderItemSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const PaymentAmountChangeSchema = new mongoose.Schema({
+  previous_amount: { type: Number, min: 0, required: true },
+  new_amount: { type: Number, min: 0, required: true },
+  reason: { type: String, trim: true, required: true },
+  changed_at: { type: Date, default: Date.now },
+  changed_by: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+}, { _id: false });
+
+const PaymentRecordSchema = new mongoose.Schema({
+  submitted_amount: { type: Number, min: 0, default: null },
+  verified_amount: { type: Number, min: 0, default: null },
+  status: { type: String, enum: ["pending", "verified", "rejected"], default: "pending", index: true },
+  payment_method: { type: String, trim: true, default: "Cash" },
+  transaction_number: { type: String, trim: true, default: "" },
+  proof_file_name: { type: String, trim: true, default: "" },
+  proof_file_url: { type: String, trim: true, default: "" },
+  submitted_at: { type: Date, default: Date.now },
+  verified_at: { type: Date, default: null },
+  rejected_at: { type: Date, default: null },
+  verified_by: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+  admin_reason: { type: String, trim: true, default: "" },
+  amount_history: { type: [PaymentAmountChangeSchema], default: [] },
+}, { timestamps: true });
+
 const OrderSchema = new mongoose.Schema(
   {
     customer: {
@@ -322,6 +346,19 @@ const OrderSchema = new mongoose.Schema(
     },
     payment_proof_amount: {
       type: Number,
+      default: 0,
+    },
+    payment_records: {
+      type: [PaymentRecordSchema],
+      default: [],
+    },
+    payment_ledger_initialized: {
+      type: Boolean,
+      default: false,
+    },
+    legacy_verified_amount: {
+      type: Number,
+      min: 0,
       default: 0,
     },
     amount_paid: {
@@ -717,5 +754,7 @@ const OrderSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+OrderSchema.index({ customer: 1, createdAt: -1 });
 
 export default mongoose.model("Order", OrderSchema);

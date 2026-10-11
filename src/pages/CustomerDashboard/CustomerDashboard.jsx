@@ -91,7 +91,7 @@ import {
   normalizeOrderStatus,
   normalizeOrderStatusKey,
 } from "./orderStatusUtils";
-import { getPaymentSummary, isPaymentProofConfirmed } from "@/pages/Transactions/paymentProofUtils";
+import { getCustomerPaymentProof, getPaymentSummary, isPaymentProofConfirmed, validateCustomerPaymentAmount } from "@/pages/Transactions/paymentProofUtils";
 import { buildProductPriceSnapshot, getDefaultBladeCount, getDefaultExtraChargeSelections, getDefaultProductLineTotal, getProductLineBreakdown, getProductLineTotal } from "@/lib/productPricing";
 import { clearPendingProductAction, clearPendingProductWorkflowState, getPendingProductAction, getPendingProductWorkflowState, savePendingProductWorkflowState, updatePendingProductAction } from "@/lib/pendingProductAction";
 import { getOptimizedProductImageUrl, getProductImageSource, getProductImageSrcSet, handleProductImageError, handleProductImageLoad } from "@/lib/productImageUtils";
@@ -419,6 +419,7 @@ function CustomerDashboard() {
   const [paymentProofError, setPaymentProofError] = useState("");
   const [paymentProofLoading, setPaymentProofLoading] = useState(false);
   const [paymentProofSuccessByOrder, setPaymentProofSuccessByOrder] = useState({});
+  const paymentProofSubmittingRef = useRef(false);
   const [showCustomerReviewModal, setShowCustomerReviewModal] = useState(false);
   const [reviewDetailsOrder, setReviewDetailsOrder] = useState(null);
   const [showProductReviewModal, setShowProductReviewModal] = useState(false);
@@ -638,7 +639,50 @@ function CustomerDashboard() {
         : order.updatedAt || order.createdAt,
     }];
 
-    if (order.payment_proof_submitted_at) {
+    if (Array.isArray(order.payment_records) && order.payment_records.length > 0) {
+      order.payment_records.forEach((record) => {
+        const recordId = record._id || `${new Date(record.submitted_at || record.createdAt || 0).getTime()}`;
+        if (record.status === "pending") {
+          notifications.unshift({
+            ...order,
+            paymentRecord: record,
+            notificationType: "payment",
+            notificationId: `${orderId}-payment-${recordId}-submitted`,
+            notificationDate: record.submitted_at || record.createdAt,
+          });
+        } else if (record.status === "rejected") {
+          notifications.unshift({
+            ...order,
+            paymentRecord: record,
+            notificationType: "payment_rejected",
+            notificationId: `${orderId}-payment-${recordId}-rejected-${new Date(record.rejected_at || 0).getTime()}`,
+            notificationDate: record.rejected_at || record.updatedAt,
+          });
+        } else if (record.status === "verified") {
+          const adjustments = Array.isArray(record.amount_history) ? record.amount_history : [];
+          if (adjustments.length > 0) {
+            adjustments.forEach((adjustment, adjustmentIndex) => {
+              notifications.unshift({
+                ...order,
+                paymentRecord: record,
+                paymentAdjustment: adjustment,
+                notificationType: "payment_amount_updated",
+                notificationId: `${orderId}-payment-${recordId}-adjusted-${new Date(adjustment.changed_at || 0).getTime()}-${adjustmentIndex}`,
+                notificationDate: adjustment.changed_at || record.verified_at,
+              });
+            });
+          } else {
+            notifications.unshift({
+              ...order,
+              paymentRecord: record,
+              notificationType: "payment_confirmed",
+              notificationId: `${orderId}-payment-${recordId}-verified-${new Date(record.verified_at || 0).getTime()}`,
+              notificationDate: record.verified_at || record.updatedAt,
+            });
+          }
+        }
+      });
+    } else if (order.payment_proof_submitted_at) {
       notifications.unshift({
         ...order,
         notificationType: "payment",
@@ -1523,7 +1567,7 @@ function CustomerDashboard() {
     };
 
     fetchOrders();
-    const refreshInterval = window.setInterval(refreshOrders, 15000);
+    const refreshInterval = window.setInterval(refreshOrders, 60000);
     window.addEventListener("focus", refreshOrders);
     document.addEventListener("visibilitychange", refreshOrders);
 
@@ -3069,23 +3113,21 @@ function CustomerDashboard() {
   };
 
   const submitPaymentProof = async (order) => {
-    const normalizedAmount = Number(String(paymentProofForm.amount).replace(/[^\d.]/g, ""));
-
-    if (!paymentProofForm.amount || !Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
-      setPaymentProofError("Please enter the amount you paid.");
-      return;
-    }
+    if (paymentProofSubmittingRef.current) return;
 
     const paymentSummary = getPaymentSummary(order);
-    if (Math.round(normalizedAmount * 100) > Math.round(paymentSummary.remainingAmount * 100)) {
-      setPaymentProofError(`Payment cannot exceed the remaining balance of ${formatRequiredPaymentAmount(paymentSummary.remainingAmount)}.`);
+    const amountValidation = validateCustomerPaymentAmount(paymentProofForm.amount, paymentSummary.remainingAmount);
+    if (!amountValidation.valid) {
+      setPaymentProofError(amountValidation.message);
       return;
     }
-    if (order.payment_proof_submitted_at && !isPaymentProofConfirmed(order)) {
+    const normalizedAmount = amountValidation.amount;
+    if (getCustomerPaymentProof(order).status === "pending" || (!order.payment_ledger_initialized && order.payment_proof_submitted_at && !isPaymentProofConfirmed(order))) {
       setPaymentProofError("Your previous payment is awaiting confirmation before another payment can be submitted.");
       return;
     }
 
+    paymentProofSubmittingRef.current = true;
     setPaymentProofLoading(true);
     setPaymentProofError("");
 
@@ -3171,6 +3213,7 @@ function CustomerDashboard() {
     } catch (error) {
       setPaymentProofError(error?.message || "Unable to submit payment proof.");
     } finally {
+      paymentProofSubmittingRef.current = false;
       setPaymentProofLoading(false);
     }
   };
@@ -4457,8 +4500,8 @@ function CustomerDashboard() {
                             const isRead = readNotificationIds.has(order.notificationId);
                             const status = normalizeOrderStatusKey(order?.status);
                             const contractStatus = normalizeOrderStatusKey(order?.contract_status);
-                            const isPaymentNotification = ["payment", "payment_confirmed"].includes(order.notificationType);
-                            const isPaymentConfirmationNotification = order.notificationType === "payment_confirmed";
+                            const isPaymentNotification = ["payment", "payment_confirmed", "payment_amount_updated", "payment_rejected"].includes(order.notificationType);
+                            const isPaymentConfirmationNotification = ["payment_confirmed", "payment_amount_updated"].includes(order.notificationType);
                             const isDelayNotification = order.notificationType === "delay";
                             const isContractReady =
                               status === "contract_sent" ||
@@ -4473,16 +4516,32 @@ function CustomerDashboard() {
                                 };
                               }
                               if (isPaymentNotification) {
+                                if (order.notificationType === "payment_amount_updated") {
+                                  const adjustment = order.paymentAdjustment || {};
+                                  const difference = (Number(adjustment.new_amount) || 0) - (Number(adjustment.previous_amount) || 0);
+                                  return {
+                                    title: "Payment Amount Updated",
+                                    message: `Submitted ${formatCurrency(adjustment.previous_amount)}; verified ${formatCurrency(adjustment.new_amount)} (${difference < 0 ? "lower" : "higher"} by ${formatCurrency(Math.abs(difference))}). ${adjustment.reason || ""}`,
+                                    color: "text-amber-600",
+                                  };
+                                }
+                                if (order.notificationType === "payment_rejected") {
+                                  return {
+                                    title: "Payment Proof Rejected",
+                                    message: order.paymentRecord?.admin_reason || "Review the payment details and submit a new proof when ready.",
+                                    color: "text-red-600",
+                                  };
+                                }
                                 if (isPaymentConfirmationNotification) {
                                   return {
                                     title: "Payment confirmed",
-                                    message: `Your payment of ${formatCurrency(order.payment_proof_amount)} has been confirmed by our team.`,
+                                    message: `Your payment of ${formatCurrency(order.paymentRecord?.verified_amount ?? order.payment_proof_amount)} has been confirmed by our team.`,
                                     color: "text-emerald-600",
                                   };
                                 }
                                 return {
                                   title: "Payment proof submitted",
-                                  message: `Your payment proof for ${formatCurrency(order.payment_proof_amount)} has been sent for confirmation.`,
+                                  message: `Your payment proof for ${formatCurrency(order.paymentRecord?.submitted_amount ?? order.payment_proof_amount)} has been sent for confirmation.`,
                                   color: "text-emerald-600",
                                 };
                               }
@@ -4526,7 +4585,7 @@ function CustomerDashboard() {
                             );
                             const NotificationIcon = isPaymentConfirmationNotification
                               ? CheckCircle
-                              : order.notificationType === "payment"
+                              : isPaymentNotification
                                 ? CreditCard
                                 : isDelayNotification
                                   ? AlertTriangle
@@ -7065,8 +7124,9 @@ function CustomerDashboard() {
                   const isOnlineContractAccepted = order.acceptedByCustomer === true || (order.contract_status === "accepted" && order.acceptance_method === "online");
                   const isProjectFinished = isOrderCompletedAndReviewable(order);
                   const isOrderCancelled = String(order.status || "").toLowerCase() === "cancelled";
-                  const paymentProofSubmission = paymentProofSuccessByOrder[orderId];
-                  const lastPaymentProofUrl = paymentProofSubmission?.fileUrl || order.payment_proof_file_url || order.proof_file_url || "";
+                    const paymentProofSubmission = paymentProofSuccessByOrder[orderId];
+                    const latestPaymentProof = getCustomerPaymentProof(order);
+                    const lastPaymentProofUrl = paymentProofSubmission?.fileUrl || latestPaymentProof.fileUrl || "";
 
                   return (
                     <div
@@ -7307,19 +7367,28 @@ function CustomerDashboard() {
                             </div>
                           </div>
 
-                          <div className={`mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-y py-4 sm:grid-cols-4 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                          <div className={`mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-y py-4 sm:grid-cols-3 xl:grid-cols-6 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                             <div className="flex flex-col gap-1">
-                              <span className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Final project cost</span>
+                              <span className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Total project cost</span>
                               <span className="text-lg font-bold text-red-600">{formatCurrency(orderTotal)}</span>
-                              <span className={`text-[10px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Estimated cost: {formatCurrency(Number(order.estimated_cost) || orderTotal)}</span>
+                              <span className={`text-[10px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Confirmed order total</span>
+                            </div>
+                            <div className={`flex flex-col gap-1 rounded-lg px-2 py-1 ${darkMode ? "bg-red-950/30" : "bg-red-50"}`}>
+                              <span className={`text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-red-300" : "text-red-700"}`}>Required downpayment ({paymentSummary.requiredPercentage.toFixed(0)}%)</span>
+                              <span className={`text-lg font-black ${darkMode ? "text-red-300" : "text-red-700"}`}>{formatCurrency(requiredPaymentAmount)}</span>
+                              <span className={`text-[10px] ${darkMode ? "text-slate-400" : "text-slate-600"}`}>From this order's saved payment terms</span>
                             </div>
                             <div className="flex flex-col gap-1">
-                              <span className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Amount paid</span>
+                              <span className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Amount already paid</span>
                               <span className="text-lg font-bold text-emerald-600">{formatCurrency(downpaymentAmount)}</span>
-                              <span className={`text-[10px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{paymentBalanceMessage}</span>
+                              <span className={`text-[10px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Verified payments only</span>
                             </div>
                             <div className="flex flex-col gap-1">
-                              <span className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Balance</span>
+                              <span className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Downpayment remaining</span>
+                              <span className={`text-lg font-bold ${downpaymentBalance > 0 ? "text-amber-600" : "text-emerald-600"}`}>{formatCurrency(downpaymentBalance)}</span>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <span className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Remaining project balance</span>
                               <span className={`text-lg font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{formatCurrency(balanceAmount)}</span>
                             </div>
                             <div className="flex flex-col gap-1">
@@ -7329,6 +7398,33 @@ function CustomerDashboard() {
                               </span>
                             </div>
                           </div>
+
+                          {Array.isArray(order.payment_records) && order.payment_records.length > 0 && (
+                            <section className={`mt-4 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-800/70" : "border-slate-200 bg-white"}`}>
+                              <h5 className={`text-xs font-black uppercase tracking-wide ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Payment history</h5>
+                              <div className="mt-2 space-y-2">
+                                {[...order.payment_records].sort((first, second) => new Date(second.submitted_at || 0) - new Date(first.submitted_at || 0)).map((record) => {
+                                  const changed = Math.round(Number(record.submitted_amount || 0) * 100) !== Math.round(Number(record.verified_amount || 0) * 100);
+                                  return (
+                                    <div key={record._id || record.submitted_at} className={`rounded-lg border px-3 py-2 text-xs ${darkMode ? "border-slate-700" : "border-slate-100 bg-slate-50"}`}>
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <span className={`font-bold ${record.status === "verified" ? "text-emerald-600" : record.status === "rejected" ? "text-red-600" : "text-amber-600"}`}>
+                                          {record.status === "verified" ? "Verified" : record.status === "rejected" ? "Rejected" : "Awaiting verification"}
+                                        </span>
+                                        <span className={darkMode ? "text-slate-400" : "text-slate-500"}>{formatDateTimeToMMMDDYYYY(record.verified_at || record.rejected_at || record.submitted_at)}</span>
+                                      </div>
+                                      <p className={`mt-1 ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+                                        {record.submitted_amount != null && <>Submitted: <strong>{formatCurrency(record.submitted_amount)}</strong></>}
+                                        {record.verified_amount != null && <> · Verified: <strong>{formatCurrency(record.verified_amount)}</strong></>}
+                                      </p>
+                                      {changed && record.status === "verified" && <p className="mt-1 font-bold text-amber-600">Amount changed by {formatCurrency(Math.abs(Number(record.verified_amount) - Number(record.submitted_amount)))} {Number(record.verified_amount) < Number(record.submitted_amount) ? "lower" : "higher"}.</p>}
+                                      {(record.admin_reason || record.status === "rejected") && <p className={`mt-1 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Admin note: {record.admin_reason || "No reason provided."}</p>}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </section>
+                          )}
 
                           {isOrderCancelled ? (
                             <div className={`mt-6 rounded-xl border px-4 py-3 text-sm font-semibold ${darkMode ? "border-red-900/60 bg-red-950/30 text-red-200" : "border-red-200 bg-red-50 text-red-700"}`}>
@@ -7350,10 +7446,10 @@ function CustomerDashboard() {
                                   </a>
                                 )}
                               </div>
-                            ) : (paymentProofSubmission || lastPaymentProofUrl) && !isPaymentProofConfirmed(order) ? (
+                            ) : latestPaymentProof.status === "pending" ? (
                               <div className={`rounded-xl border px-4 py-3 text-sm font-medium sm:col-span-2 ${darkMode ? "border-sky-800 bg-sky-950/50 text-sky-200" : "border-sky-200 bg-sky-50 text-sky-800"}`}>
                                 <p>
-                                  We've notified admin that you paid {formatCurrency(paymentProofSubmission?.amount ?? order.payment_proof_amount ?? 0)}. This is pending confirmation — we'll notify you here once it's verified.
+                                  We've notified admin that you paid {formatCurrency(paymentProofSubmission?.amount ?? latestPaymentProof.submittedAmount ?? order.payment_proof_amount ?? 0)}. This is pending confirmation — we'll notify you here once it's verified.
                                 </p>
                                 <p className="mt-2 text-xs">
                                   Current remaining balance: {formatCurrency(balanceAmount)}. You can submit another payment after this proof is confirmed.
@@ -7369,6 +7465,12 @@ function CustomerDashboard() {
                                     View your last uploaded proof
                                   </a>
                                 )}
+                              </div>
+                            ) : latestPaymentProof.status === "rejected" ? (
+                              <div className={`rounded-xl border px-4 py-3 text-sm sm:col-span-2 ${darkMode ? "border-red-800 bg-red-950/40 text-red-200" : "border-red-200 bg-red-50 text-red-800"}`}>
+                                <p className="font-bold">Payment proof rejected</p>
+                                <p className="mt-1">{latestPaymentProof.adminReason || "Please review your payment details and submit a new proof."}</p>
+                                {lastPaymentProofUrl && <a href={ensureAbsoluteUrl(lastPaymentProofUrl)} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 font-bold underline underline-offset-2"><Paperclip size={14} />View rejected proof</a>}
                               </div>
                             ) : paymentProofOpenOrderId === orderId ? (
                               <div className={`sm:col-span-2 rounded-xl border p-3 sm:p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
@@ -8327,8 +8429,8 @@ function CustomerDashboard() {
                     const isRead = readNotificationIds.has(order.notificationId);
                     const status = normalizeOrderStatusKey(order?.status);
                     const contractStatus = normalizeOrderStatusKey(order?.contract_status);
-                    const isPaymentNotification = ["payment", "payment_confirmed"].includes(order.notificationType);
-                    const isPaymentConfirmationNotification = order.notificationType === "payment_confirmed";
+                    const isPaymentNotification = ["payment", "payment_confirmed", "payment_amount_updated", "payment_rejected"].includes(order.notificationType);
+                    const isPaymentConfirmationNotification = ["payment_confirmed", "payment_amount_updated"].includes(order.notificationType);
                     const isDelayNotification = order.notificationType === "delay";
                     const isContractReady =
                       status === "contract_sent" ||
@@ -8343,10 +8445,18 @@ function CustomerDashboard() {
                     const notificationMessage = () => {
                       if (isDelayNotification) return getDelayNotificationMessage(order);
                       if (isPaymentNotification) {
-                        if (isPaymentConfirmationNotification) {
-                          return `Your payment of ${formatCurrency(order.payment_proof_amount)} has been confirmed by our team.`;
+                        if (order.notificationType === "payment_amount_updated") {
+                          const adjustment = order.paymentAdjustment || {};
+                          const difference = (Number(adjustment.new_amount) || 0) - (Number(adjustment.previous_amount) || 0);
+                          return `Submitted ${formatCurrency(adjustment.previous_amount)}; verified ${formatCurrency(adjustment.new_amount)} (${difference < 0 ? "lower" : "higher"} by ${formatCurrency(Math.abs(difference))}). ${adjustment.reason || ""}`;
                         }
-                        return `Your payment proof for ${formatCurrency(order.payment_proof_amount)} has been sent for confirmation.`;
+                        if (order.notificationType === "payment_rejected") {
+                          return order.paymentRecord?.admin_reason || "Your payment proof was rejected. Review the payment details and submit a new proof when ready.";
+                        }
+                        if (isPaymentConfirmationNotification) {
+                          return `Your payment of ${formatCurrency(order.paymentRecord?.verified_amount ?? order.payment_proof_amount)} has been confirmed by our team.`;
+                        }
+                        return `Your payment proof for ${formatCurrency(order.paymentRecord?.submitted_amount ?? order.payment_proof_amount)} has been sent for confirmation.`;
                       }
                       if (isContractReady) {
                         return "A contract has been sent for your review and acceptance.";
@@ -8356,6 +8466,8 @@ function CustomerDashboard() {
                     };
 
                     const notificationIcon = () => {
+                      if (order.notificationType === "payment_rejected") return "text-red-600";
+                      if (order.notificationType === "payment_amount_updated") return "text-amber-600";
                       if (isPaymentNotification) return "text-emerald-600";
                       if (normalizeOrderStatusKey(order?.status) === "completed") return "text-emerald-600";
                       if (normalizeOrderStatusKey(order?.status) === "cancelled") return "text-red-600";
