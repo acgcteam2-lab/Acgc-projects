@@ -419,6 +419,7 @@ function CustomerDashboard() {
   const [paymentProofError, setPaymentProofError] = useState("");
   const [paymentProofLoading, setPaymentProofLoading] = useState(false);
   const [paymentProofSuccessByOrder, setPaymentProofSuccessByOrder] = useState({});
+  const [customerPaymentProofPreview, setCustomerPaymentProofPreview] = useState(null);
   const paymentProofSubmittingRef = useRef(false);
   const [showCustomerReviewModal, setShowCustomerReviewModal] = useState(false);
   const [reviewDetailsOrder, setReviewDetailsOrder] = useState(null);
@@ -3183,6 +3184,16 @@ function CustomerDashboard() {
       file,
       fileName: file ? file.name : "",
     }));
+  };
+
+  const openCustomerPaymentProofPreview = (proofUrl, fileName = "Payment proof") => {
+    const url = ensureAbsoluteUrl(proofUrl);
+    if (!url) return;
+    setCustomerPaymentProofPreview({
+      url,
+      fileName,
+      isPdf: /\.pdf(?:$|[?#])/i.test(`${fileName} ${url}`),
+    });
   };
 
   const submitPaymentProof = async (order) => {
@@ -7520,9 +7531,9 @@ function CustomerDashboard() {
                                       )}
                                       {(record.admin_reason || record.status === "rejected") && <p className={`mt-1 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Admin note: {record.admin_reason || "No reason provided."}</p>}
                                       {record.proof_file_url && (
-                                        <a href={ensureAbsoluteUrl(record.proof_file_url)} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-semibold text-sky-700 underline underline-offset-2">
+                                        <button type="button" onClick={() => openCustomerPaymentProofPreview(record.proof_file_url, record.proof_file_name || "Payment proof")} className="mt-2 inline-flex font-semibold text-sky-700 underline underline-offset-2">
                                           View payment proof{record.proof_file_name ? `: ${record.proof_file_name}` : ""}
-                                        </a>
+                                        </button>
                                       )}
                                     </div>
                                   );
@@ -7540,15 +7551,14 @@ function CustomerDashboard() {
                               <div className={`rounded-xl border px-4 py-3 text-sm font-bold sm:col-span-2 ${darkMode ? "border-emerald-800 bg-emerald-950/40 text-emerald-300" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
                                 <p>Payment is fully paid. No additional payment submission is needed.</p>
                                 {lastPaymentProofUrl && (
-                                  <a
-                                    href={ensureAbsoluteUrl(lastPaymentProofUrl)}
-                                    target="_blank"
-                                    rel="noreferrer"
+                                  <button
+                                    type="button"
+                                    onClick={() => openCustomerPaymentProofPreview(lastPaymentProofUrl, paymentProofSubmission?.fileName || latestPaymentProof.fileName || "Payment proof")}
                                     className={`mt-2 inline-flex items-center gap-1.5 font-bold underline underline-offset-2 ${darkMode ? "text-emerald-200 hover:text-white" : "text-emerald-800 hover:text-emerald-950"}`}
                                   >
                                     <Paperclip size={14} aria-hidden="true" />
                                     View payment proof
-                                  </a>
+                                  </button>
                                 )}
                               </div>
                             ) : latestPaymentProof.status === "pending" ? (
@@ -7560,26 +7570,32 @@ function CustomerDashboard() {
                                   Current remaining balance: {formatCurrency(balanceAmount)}. You can submit another payment after this proof is confirmed.
                                 </p>
                                 {lastPaymentProofUrl && (
-                                  <a
-                                    href={ensureAbsoluteUrl(lastPaymentProofUrl)}
-                                    target="_blank"
-                                    rel="noreferrer"
+                                  <button
+                                    type="button"
+                                    onClick={() => openCustomerPaymentProofPreview(lastPaymentProofUrl, paymentProofSubmission?.fileName || latestPaymentProof.fileName || "Payment proof")}
                                     className={`mt-2 inline-flex items-center gap-1.5 font-bold underline underline-offset-2 ${darkMode ? "text-sky-200 hover:text-white" : "text-sky-800 hover:text-sky-950"}`}
                                   >
                                     <Paperclip size={14} aria-hidden="true" />
                                     View your last uploaded proof
-                                  </a>
+                                  </button>
                                 )}
                               </div>
-                            ) : latestPaymentProof.status === "rejected" ? (
+                            ) : latestPaymentProof.status === "rejected" && paymentProofOpenOrderId !== orderId ? (
                               <div className={`rounded-xl border px-4 py-3 text-sm sm:col-span-2 ${darkMode ? "border-red-800 bg-red-950/40 text-red-200" : "border-red-200 bg-red-50 text-red-800"}`}>
                                 <p className="font-bold">Payment proof rejected</p>
                                 <p className="mt-1">{latestPaymentProof.adminReason || "Please review your payment details and submit a new proof."}</p>
-                                {lastPaymentProofUrl && <a href={ensureAbsoluteUrl(lastPaymentProofUrl)} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 font-bold underline underline-offset-2"><Paperclip size={14} />View rejected proof</a>}
+                                {lastPaymentProofUrl && <button type="button" onClick={() => openCustomerPaymentProofPreview(lastPaymentProofUrl, paymentProofSubmission?.fileName || latestPaymentProof.fileName || "Payment proof")} className="mt-2 inline-flex items-center gap-1 font-bold underline underline-offset-2"><Paperclip size={14} />View rejected proof</button>}
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenPaymentProofForm(orderId)}
+                                  className={`mt-3 block w-full rounded-lg px-4 py-2.5 text-sm font-bold text-white transition sm:w-auto ${darkMode ? "bg-emerald-600 hover:bg-emerald-500" : "bg-emerald-700 hover:bg-emerald-800"}`}
+                                >
+                                  Submit new proof
+                                </button>
                               </div>
                             ) : paymentProofOpenOrderId === orderId ? (
                               <div className={`sm:col-span-2 rounded-xl border p-3 sm:p-4 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
-                                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                                <div className="grid w-full max-w-2xl gap-3">
                                   <div>
                                     <label htmlFor={`payment-amount-${orderId}`} className={`mb-1.5 block text-xs font-bold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
                                       Amount paid <span className="text-red-500">(required)</span>
@@ -7599,16 +7615,16 @@ function CustomerDashboard() {
                                       className={`w-full rounded-lg border px-3 py-2.5 text-sm font-semibold outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 ${darkMode ? "border-slate-600 bg-slate-800 text-white placeholder:text-slate-400" : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400"}`}
                                     />
                                   </div>
-                                  <div>
+                                  <div className="w-full max-w-xs">
                                     <div className={`mb-1.5 text-xs font-bold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
                                       Payment proof <span className={`font-normal ${darkMode ? "text-slate-400" : "text-slate-500"}`}>(optional)</span>
                                     </div>
                                     <label
                                       htmlFor={`payment-proof-${orderId}`}
-                                      className={`flex min-h-[42px] cursor-pointer items-center gap-2 rounded-lg border border-dashed px-3 py-2 transition focus-within:ring-2 focus-within:ring-emerald-500 ${darkMode ? "border-slate-600 bg-slate-800 hover:border-slate-500" : "border-slate-300 bg-slate-50 hover:border-emerald-400 hover:bg-emerald-50/50"}`}
+                                      className={`flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-dashed px-2.5 py-1.5 transition focus-within:ring-2 focus-within:ring-emerald-500 ${darkMode ? "border-slate-600 bg-slate-800 hover:border-slate-500" : "border-slate-300 bg-slate-50 hover:border-emerald-400 hover:bg-emerald-50/50"}`}
                                     >
-                                      <FileText size={17} className="shrink-0 text-emerald-600" aria-hidden="true" />
-                                      <span className={`min-w-0 flex-1 truncate text-xs font-medium ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                                      <FileText size={15} className="shrink-0 text-emerald-600" aria-hidden="true" />
+                                      <span className={`min-w-0 flex-1 truncate text-[11px] font-medium ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                                         {paymentProofForm.fileName || "Choose an image or PDF"}
                                       </span>
                                       <input
@@ -9598,6 +9614,52 @@ function CustomerDashboard() {
             </div>
           </div>
           </footer>
+        )}
+
+        {customerPaymentProofPreview && (
+          <div
+            className="mobile-fullscreen-overlay fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/75 p-0 backdrop-blur-sm sm:p-4"
+            role="presentation"
+            onClick={(event) => event.target === event.currentTarget && setCustomerPaymentProofPreview(null)}
+          >
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="customer-payment-proof-title"
+              className={`mobile-fullscreen-dialog flex h-[100dvh] max-h-[100dvh] w-full flex-col overflow-hidden sm:h-[min(90vh,54rem)] sm:max-h-[90vh] sm:max-w-4xl sm:rounded-xl sm:border ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+            >
+              <header className={`flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                <div className="min-w-0">
+                  <h2 id="customer-payment-proof-title" className="text-sm font-bold">Payment proof</h2>
+                  <p className={`truncate text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`} title={customerPaymentProofPreview.fileName}>{customerPaymentProofPreview.fileName}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCustomerPaymentProofPreview(null)}
+                  aria-label="Close payment proof preview"
+                  title="Close preview"
+                  className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition ${darkMode ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 hover:bg-slate-100"}`}
+                >
+                  <X size={18} aria-hidden="true" />
+                </button>
+              </header>
+              <div className={`flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 sm:p-5 ${darkMode ? "bg-slate-950" : "bg-slate-100"}`}>
+                {customerPaymentProofPreview.isPdf ? (
+                  <iframe
+                    src={customerPaymentProofPreview.url}
+                    title={`Payment proof: ${customerPaymentProofPreview.fileName}`}
+                    className="h-full min-h-0 w-full rounded-lg border border-slate-500/20 bg-white"
+                  />
+                ) : (
+                  <img
+                    src={customerPaymentProofPreview.url}
+                    alt={`Payment proof: ${customerPaymentProofPreview.fileName}`}
+                    className="max-h-full max-w-full rounded-lg object-contain"
+                  />
+                )}
+              </div>
+            </section>
+          </div>
         )}
 
         <ContractModal

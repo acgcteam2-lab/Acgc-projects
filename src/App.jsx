@@ -21,8 +21,21 @@ import { RealtimeProvider } from "@/contexts/RealtimeProvider";
 import { useAuth } from "@/contexts/AuthContext";
 import { AdminThemeProvider, useAdminTheme } from "@/contexts/AdminThemeContext";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
+import Sidebar from "@/components/layout/Sidebar";
+import AdminNavigationContext from "@/contexts/AdminNavigationContext";
 import { LoaderCircle, RefreshCw } from "lucide-react";
 import logo from "./assets/images/ACGCLOGO1.png";
+
+const ADMIN_ROUTE_PATHS = new Set([
+  "/dashboard",
+  "/site-inspection",
+  "/notifications",
+  "/transactions",
+  "/progress-monitor",
+  "/product",
+  "/profile",
+  "/settings",
+]);
 
 
 function LogoutLoadingScreen() {
@@ -72,13 +85,24 @@ function AppRoutes() {
     "/track-order",
   ]);
   const isPublicLightRoute = publicLightRoutes.has(location.pathname);
+  const routePath = location.pathname.replace(/\/+$/, "") || "/";
+  const isAdminRoute = Boolean(user && ["admin", "skilled_worker"].includes(user.role)) && ADMIN_ROUTE_PATHS.has(routePath);
   const usesAdminTheme = !isPublicLightRoute && (user?.role === "admin" || user?.role === "skilled_worker");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const stored = localStorage.getItem("sidebarOpen");
+    return stored !== null ? JSON.parse(stored) : true;
+  });
   const [pullDistance, setPullDistance] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const pullDistanceRef = useRef(0);
   const touchStartY = useRef(null);
   const touchStartX = useRef(null);
   const refreshTriggered = useRef(false);
+
+  useEffect(() => {
+    localStorage.setItem("sidebarOpen", JSON.stringify(isSidebarOpen));
+  }, [isSidebarOpen]);
 
   useEffect(() => {
     const isBlockedTarget = (target) =>
@@ -152,7 +176,15 @@ function AppRoutes() {
       if (pullDistanceRef.current >= 72 && !refreshTriggered.current) {
         refreshTriggered.current = true;
         setRefreshing(true);
-        window.setTimeout(() => window.location.reload(), 180);
+        window.dispatchEvent(new CustomEvent("acgc:realtime", {
+          detail: { area: "all", action: "reconcile", timestamp: new Date().toISOString() },
+        }));
+        window.setTimeout(() => {
+          pullDistanceRef.current = 0;
+          refreshTriggered.current = false;
+          setPullDistance(0);
+          setRefreshing(false);
+        }, 400);
       } else {
         pullDistanceRef.current = 0;
         setPullDistance(0);
@@ -187,7 +219,7 @@ function AppRoutes() {
   }
 
   return (
-    <div className={`admin-theme-shell relative ${isPublicLightRoute ? "public-light-theme" : ""} ${usesAdminTheme ? (darkMode ? "admin-theme-dark" : "admin-theme-light") : ""}`}>
+    <div className={`admin-theme-shell relative ${isAdminRoute ? "flex h-screen overflow-hidden" : ""} ${isPublicLightRoute ? "public-light-theme" : ""} ${usesAdminTheme ? (darkMode ? "admin-theme-dark" : "admin-theme-light") : ""}`}>
       {(pullDistance > 0 || refreshing) && (
         <div
           aria-live="polite"
@@ -216,6 +248,9 @@ function AppRoutes() {
         </div>
       )}
       <AdminCreationModal />
+      <AdminNavigationContext.Provider value={isAdminRoute}>
+      {isAdminRoute && <Sidebar key="shared-admin-sidebar" forceRender isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((open) => !open)} />}
+      <div key="admin-route-content" className={isAdminRoute ? "min-h-0 min-w-0 flex-1" : ""}>
       <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-slate-50"><LoaderCircle className="animate-spin text-red-600" size={40} aria-label="Loading page" /></div>}>
       <Routes>
           <Route path="/" element={<LandingPage />} />
@@ -301,6 +336,8 @@ function AppRoutes() {
           />
       </Routes>
       </Suspense>
+      </div>
+      </AdminNavigationContext.Provider>
     </div>
   );
 }

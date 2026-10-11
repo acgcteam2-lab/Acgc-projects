@@ -11,6 +11,7 @@ import {
   X,
   Info,
   Paperclip,
+  LoaderCircle,
 } from "lucide-react";
 import { toPng } from "html-to-image";
 import jsPDF from "jspdf";
@@ -113,8 +114,14 @@ function Transactions() {
   const [editPaymentRequestId, setEditPaymentRequestId] = useState("");
   const [showDownpaymentExceptionModal, setShowDownpaymentExceptionModal] = useState(false);
   const [paymentActionLoading, setPaymentActionLoading] = useState(false);
+  const [paymentDocumentPreview, setPaymentDocumentPreview] = useState(null);
+  const [paymentDocumentLoading, setPaymentDocumentLoading] = useState(false);
   const [transactionApprovalOrderId, setTransactionApprovalOrderId] = useState("");
   const paymentActionSubmittingRef = useRef(false);
+
+  useEffect(() => () => {
+    if (paymentDocumentPreview?.url) URL.revokeObjectURL(paymentDocumentPreview.url);
+  }, [paymentDocumentPreview?.url]);
 
   useEffect(() => {
     if (!editPaymentProofPreviewUrl) return undefined;
@@ -523,28 +530,33 @@ function Transactions() {
     setShowDownpaymentExceptionModal(false);
   };
 
-  const viewAdminPaymentSupportingDocument = async (orderId, recordId, documentId) => {
-    const previewWindow = window.open("about:blank", "_blank");
-    if (!previewWindow) {
-      toast.error("Allow pop-ups to view this payment document.");
-      return;
-    }
+  const viewAdminPaymentSupportingDocument = async (orderId, recordId, document) => {
+    if (paymentDocumentLoading) return;
+    const documentType = document.format === "pdf" ? "application/pdf" : `image/${document.format === "jpg" ? "jpeg" : document.format}`;
+    setPaymentDocumentPreview({ url: null, name: document.original_name, type: documentType, loading: true });
+    setPaymentDocumentLoading(true);
     try {
       const token = localStorage.getItem("token");
       const response = await fetch(
-        `${API_BASE}/orders/admin/${encodeURIComponent(orderId)}/payment-records/${encodeURIComponent(recordId)}/documents/${encodeURIComponent(documentId)}`,
+        `${API_BASE}/orders/admin/${encodeURIComponent(orderId)}/payment-records/${encodeURIComponent(recordId)}/documents/${encodeURIComponent(document._id)}`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} },
       );
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
         throw new Error(error.message || "Unable to view the payment document.");
       }
-      const documentUrl = URL.createObjectURL(await response.blob());
-      previewWindow.location.replace(documentUrl);
-      window.setTimeout(() => URL.revokeObjectURL(documentUrl), 60_000);
+      const blob = await response.blob();
+      setPaymentDocumentPreview({
+        url: URL.createObjectURL(blob),
+        name: document.original_name,
+        type: documentType || blob.type,
+        loading: false,
+      });
     } catch (error) {
-      previewWindow.close();
+      setPaymentDocumentPreview(null);
       toast.error(error.message || "Unable to view the payment document.");
+    } finally {
+      setPaymentDocumentLoading(false);
     }
   };
 
@@ -1321,6 +1333,7 @@ function Transactions() {
     const submittedPaymentAmount = Number(currentProof.submittedAmount ?? currentProof.amount) || 0;
     const exceptionShortfall = Math.max(paymentSummary.requiredAmount - paymentSummary.paidAmount - submittedPaymentAmount, 0);
     const canOfferDownpaymentException = pendingPaymentProof && Boolean(currentProof.recordId) && submittedPaymentAmount > 0 && exceptionShortfall > 0;
+    const orderId = editPaymentOrder._id || editPaymentOrder.id;
     const supportingDocuments = (editPaymentOrder.payment_records || []).flatMap((record) => (
       (record.supporting_documents || []).map((document) => ({
         ...document,
@@ -1566,10 +1579,11 @@ function Transactions() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => viewAdminPaymentSupportingDocument(orderId, document.paymentRecordId, document._id)}
-                    className="shrink-0 rounded-lg border border-slate-500/30 px-3 py-2 text-xs font-semibold text-sky-500 transition hover:bg-sky-500/10"
+                    disabled={paymentDocumentLoading}
+                    onClick={() => viewAdminPaymentSupportingDocument(orderId, document.paymentRecordId, document)}
+                    className="shrink-0 rounded-lg border border-slate-500/30 px-3 py-2 text-xs font-semibold text-sky-500 transition hover:bg-sky-500/10 disabled:cursor-wait disabled:opacity-60"
                   >
-                    View Proof
+                    {paymentDocumentLoading ? "Loading..." : "View Proof"}
                   </button>
                 </div>
               ))}
@@ -2163,6 +2177,62 @@ function Transactions() {
           )}
 
           {editPaymentModalContent}
+
+          {paymentDocumentPreview && (
+            <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/75 p-0 backdrop-blur-sm sm:p-4">
+              <section
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="payment-document-preview-title"
+                className={`flex h-[100dvh] max-h-[100dvh] w-full flex-col overflow-hidden sm:h-[min(90vh,54rem)] sm:max-h-[90vh] sm:max-w-4xl sm:rounded-xl sm:border ${darkMode ? "border-slate-700 bg-[#17283d] text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+              >
+                <header className={`flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                  <div className="min-w-0">
+                    <h2 id="payment-document-preview-title" className="truncate text-sm font-bold">Payment proof</h2>
+                    <p className={`truncate text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`} title={paymentDocumentPreview.name}>{paymentDocumentPreview.name}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentDocumentPreview(null)}
+                    aria-label="Close payment proof preview"
+                    title="Close preview"
+                    className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition ${darkMode ? "text-slate-300 hover:bg-slate-700" : "text-slate-600 hover:bg-slate-100"}`}
+                  >
+                    <X size={18} aria-hidden="true" />
+                  </button>
+                </header>
+                <div className={`flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 sm:p-5 ${darkMode ? "bg-[#0f1b2c]" : "bg-slate-100"}`}>
+                  {paymentDocumentPreview.loading ? (
+                    <div className={`flex flex-col items-center gap-3 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`} role="status" aria-live="polite">
+                      <LoaderCircle size={28} className="animate-spin text-red-500" aria-hidden="true" />
+                      Loading payment document...
+                    </div>
+                  ) : paymentDocumentPreview.type === "application/pdf" ? (
+                    <iframe
+                      src={paymentDocumentPreview.url}
+                      title={`Payment proof: ${paymentDocumentPreview.name}`}
+                      className="h-full min-h-0 w-full rounded-lg border border-slate-500/20 bg-white"
+                    />
+                  ) : (
+                    <img
+                      src={paymentDocumentPreview.url}
+                      alt={`Payment proof: ${paymentDocumentPreview.name}`}
+                      className="max-h-full max-w-full rounded-lg object-contain"
+                    />
+                  )}
+                </div>
+                <footer className={`flex shrink-0 justify-end border-t px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700 bg-[#17283d]" : "border-slate-200 bg-white"}`}>
+                  <a
+                    href={paymentDocumentPreview.url}
+                    download={paymentDocumentPreview.name}
+                    className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}
+                  >
+                    Download
+                  </a>
+                </footer>
+              </section>
+            </div>
+          )}
 
           {showDownpaymentExceptionModal && editPaymentOrder && (() => {
             const proof = getCustomerPaymentProof(editPaymentOrder);

@@ -3,6 +3,7 @@ import { apiFetch } from "./client";
 export const getOrders = () => apiFetch("/orders", { cache: "no-store" });
 
 const inFlightAdminOrderRequests = new Map();
+const inFlightAdminOrderDetails = new Map();
 
 export const getAdminOrders = (params = {}) => {
   const query = new URLSearchParams(params).toString();
@@ -19,7 +20,15 @@ export const getAdminOrders = (params = {}) => {
 
 export const getAdminOrder = (orderId, module) => {
   const query = module ? `?module=${encodeURIComponent(module)}` : "";
-  return apiFetch(`/orders/admin/${orderId}${query}`, { cache: "no-store" });
+  const path = `/orders/admin/${encodeURIComponent(orderId)}${query}`;
+  const existingRequest = inFlightAdminOrderDetails.get(path);
+  if (existingRequest) return existingRequest;
+
+  const request = apiFetch(path, { cache: "no-store" }).finally(() => {
+    inFlightAdminOrderDetails.delete(path);
+  });
+  inFlightAdminOrderDetails.set(path, request);
+  return request;
 };
 
 export const getProductReviews = (productId) => apiFetch(`/orders/reviews/product/${encodeURIComponent(productId)}`);

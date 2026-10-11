@@ -16,6 +16,7 @@ export function RealtimeProvider({ children }) {
   const { user, loading } = useAuth();
   const [connected, setConnected] = useState(false);
   const accountId = user?._id || user?.id;
+  const staffAccessSignature = JSON.stringify(user?.staff_access || {});
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -116,7 +117,7 @@ export function RealtimeProvider({ children }) {
       document.removeEventListener("visibilitychange", reconcileOnFocus);
       setConnected(false);
     };
-  }, [accountId, loading, user?.role, user?.staff_access]);
+  }, [accountId, loading, user?.role, staffAccessSignature]);
 
   return (
     <RealtimeContext.Provider value={{ connected }}>

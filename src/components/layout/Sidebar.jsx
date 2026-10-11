@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import logo from "../../assets/images/ACGCLOGO1.png";
@@ -18,9 +18,11 @@ import {
 } from "lucide-react";
 
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
+import AdminNavigationContext from "@/contexts/AdminNavigationContext";
 import { prefetchAdminRoute } from "@/lib/adminRoutePrefetch";
 
-function Sidebar({ isOpen, onToggle }) {
+function Sidebar({ isOpen, onToggle, forceRender = false }) {
+  const isProvidedByAppShell = useContext(AdminNavigationContext);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const location = useLocation();
@@ -31,6 +33,8 @@ function Sidebar({ isOpen, onToggle }) {
     user.staff_access?.modules?.[moduleKey]?.enabled === true &&
     user.staff_access?.modules?.[moduleKey]?.actions?.view === true
   );
+
+  if (isProvidedByAppShell && !forceRender) return null;
 
   const handleLogout = () => {
     setShowLogoutModal(false);
@@ -200,6 +204,7 @@ function Sidebar({ isOpen, onToggle }) {
             aria-current={active ? "page" : undefined}
             title={label}
             onPointerEnter={() => prefetchAdminRoute(to)}
+            onPointerDown={() => prefetchAdminRoute(to)}
             onFocus={() => prefetchAdminRoute(to)}
             className={`group flex h-[58px] min-w-0 flex-1 flex-col items-center justify-center rounded-lg px-0.5 text-center transition-[transform,background-color,color] duration-200 ease-out hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.94] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand motion-reduce:transform-none motion-reduce:transition-none ${active ? darkMode ? "text-white" : "text-slate-900" : darkMode ? "text-slate-400 hover:bg-slate-800 hover:text-slate-100" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}
           >
@@ -277,6 +282,7 @@ function MenuItem({
       to={to}
       title={label}
       onPointerEnter={onIntent}
+      onPointerDown={onIntent}
       onFocus={onIntent}
       className={`group relative grid min-h-10 w-full items-center rounded-lg px-3 py-2 text-sm transition-[grid-template-columns,gap,background-color,color,transform] duration-200 ease-out hover:translate-x-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 motion-reduce:transition-none motion-reduce:hover:translate-x-0 ${
         active

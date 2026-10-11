@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import {
   User,
   Mail,
@@ -24,6 +24,29 @@ import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
+import { subscribeToRealtime } from "@/lib/realtimeEvents";
+
+const createProfileDraft = (user) => ({
+  first_name: user.first_name || "",
+  last_name: user.last_name || "",
+  email: user.email || "",
+  username: user.username || "",
+  role: user.role === "skilled_worker" ? user.staff_access?.subrole || "Staff" : user.role || "admin",
+  phone: user.phone || "",
+  street_address: user.street_address || "",
+  city: user.city || "",
+  province: user.province || "",
+  zip_code: user.zip_code || "",
+  current_password: "",
+  new_password: "",
+  confirm_password: "",
+});
+
+const getVisibleActivityLog = (user) => readActivityLog(user).filter(
+  (activity) =>
+    !activity.description.startsWith("Updated profile information") &&
+    !activity.description.startsWith("Visited "),
+);
 
 function AdminProfile() {
   const isMobile = useIsMobile();
@@ -37,12 +60,13 @@ function AdminProfile() {
   const { user, loading, updateProfile } = useAuth();
   const isStaff = user?.role === "skilled_worker";
   const profileType = isStaff ? "Staff" : "Admin";
-  const [profile, setProfile] = useState(null);
+  const [profile, setProfile] = useState(() => user ? createProfileDraft(user) : null);
+  const profileAccountIdRef = useRef(user?.id || user?._id || "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [activeTab, setActiveTab] = useState("profile");
-  const [activityLog, setActivityLog] = useState([]);
+  const [activityLog, setActivityLog] = useState(() => getVisibleActivityLog(user));
   const [activityPage, setActivityPage] = useState(1);
   const [activityDateFilter, setActivityDateFilter] = useState("");
   const [activityCategoryFilter, setActivityCategoryFilter] = useState("all");
@@ -55,23 +79,11 @@ function AdminProfile() {
   }, [isSidebarOpen]);
 
   useEffect(() => {
-    if (!loading && user) {
+    const accountId = user?.id || user?._id || "";
+    if (!loading && user && profileAccountIdRef.current !== accountId) {
+      profileAccountIdRef.current = accountId;
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setProfile({
-        first_name: user.first_name || "",
-        last_name: user.last_name || "",
-        email: user.email || "",
-        username: user.username || "",
-        role: isStaff ? user.staff_access?.subrole || "Staff" : user.role || "admin",
-        phone: user.phone || "",
-        street_address: user.street_address || "",
-        city: user.city || "",
-        province: user.province || "",
-        zip_code: user.zip_code || "",
-        current_password: "",
-        new_password: "",
-        confirm_password: "",
-      });
+      setProfile(createProfileDraft(user));
     }
   }, [loading, user]);
 
@@ -79,12 +91,12 @@ function AdminProfile() {
     if (!user) return;
 
     let cancelled = false;
+    let requestInFlight = false;
     const loadActivityLog = async () => {
-      const storedActivityLog = readActivityLog(user).filter(
-        (activity) =>
-          !activity.description.startsWith("Updated profile information") &&
-          !activity.description.startsWith("Visited "),
-      );
+      if (requestInFlight) return;
+      requestInFlight = true;
+      try {
+      const storedActivityLog = getVisibleActivityLog(user);
       const orderActivityPrefixes = /^(Approved order|Rejected order|Cancelled site inspection|Restored site inspection|Updated site inspection|Generated contract for order|Created warranty for order|Approved transaction|Cancelled transaction|Updated progress for project|Cancelled project) /;
       const legacyEntries = storedActivityLog.filter((activity) =>
         orderActivityPrefixes.test(activity.description) &&
@@ -208,11 +220,18 @@ function AdminProfile() {
       if (!cancelled) {
         setActivityLog(resolvedActivityLog);
       }
+      } finally {
+        requestInFlight = false;
+      }
     };
 
     loadActivityLog();
+    const unsubscribeRealtime = subscribeToRealtime(["orders"], () => {
+      void loadActivityLog();
+    });
     return () => {
       cancelled = true;
+      unsubscribeRealtime();
     };
   }, [user]);
 

@@ -13,7 +13,6 @@ import { normalizeUserProfile } from "@/lib/userProfile";
 import { recordActivity } from "@/lib/activityLog";
 import { subscribeToRealtime } from "@/lib/realtimeEvents";
 
-let authInitializationStarted = false;
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
@@ -30,6 +29,8 @@ export function AuthProvider({ children }) {
   const [loginLoading, setLoginLoading] = useState(false);
   const [logoutLoading, setLogoutLoading] = useState(false);
   const adminStatusFetching = useRef(false);
+  const authInitializationStarted = useRef(false);
+  const refreshUserRequestRef = useRef(null);
 
   const setToken = (token) => {
     if (token) {
@@ -69,16 +70,6 @@ export function AuthProvider({ children }) {
     return () => window.removeEventListener("auth:session-revoked", handleSessionRevoked);
   }, [clearAuth, navigate]);
 
-  const accountId = user?._id || user?.id;
-  useEffect(() => {
-    if (!accountId || !localStorage.getItem("token")) return undefined;
-
-    const sessionCheck = window.setInterval(() => {
-      getMe().catch(() => {});
-    }, 60_000);
-    return () => window.clearInterval(sessionCheck);
-  }, [accountId]);
-
   const normalizeAndPersistUser = (userData) => {
     const normalized = normalizeUserProfile(userData);
     setUserAndPersist(normalized);
@@ -114,25 +105,35 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const refreshUser = useCallback(async () => {
-    try {
-      const response = await getMe();
-      const normalized = normalizeUserProfile(response.user);
-      localStorage.setItem("user", JSON.stringify(normalized));
-      setUser(normalized);
-      return normalized;
-    } catch (error) {
-      const status = error.response?.status;
-      const message = error.data?.message || error.message || "";
+  const refreshUser = useCallback(() => {
+    if (refreshUserRequestRef.current) return refreshUserRequestRef.current;
 
-      if (!(status === 401 || status === 404 || /invalid|expired|not found/i.test(message))) {
-        console.error("Failed to refresh current user", error);
+    const request = (async () => {
+      try {
+        const response = await getMe();
+        const normalized = normalizeUserProfile(response.user);
+        const serialized = JSON.stringify(normalized);
+        localStorage.setItem("user", serialized);
+        setUser((current) => JSON.stringify(current) === serialized ? current : normalized);
+        return normalized;
+      } catch (error) {
+        const status = error.response?.status;
+        const message = error.data?.message || error.message || "";
+
+        if (!(status === 401 || status === 404 || /invalid|expired|not found/i.test(message))) {
+          console.error("Failed to refresh current user", error);
+        }
+
+        throw error;
       }
-
-      throw error;
-    }
+    })();
+    refreshUserRequestRef.current = request.finally(() => {
+      refreshUserRequestRef.current = null;
+    });
+    return refreshUserRequestRef.current;
   }, []);
 
+  const accountId = user?._id || user?.id;
   useEffect(() => {
     if (!accountId || loading) return undefined;
     return subscribeToRealtime("profile", () => {
@@ -173,14 +174,17 @@ export function AuthProvider({ children }) {
   };
 
   useEffect(() => {
-    if (authInitializationStarted) return;
-    authInitializationStarted = true;
+    if (authInitializationStarted.current) return;
+    authInitializationStarted.current = true;
 
     const initAuth = async () => {
       setLoading(true);
-      await loadUser();
-      await loadAdminStatus();
-      setLoading(false);
+      try {
+        await loadUser();
+      } finally {
+        setLoading(false);
+        void loadAdminStatus();
+      }
     };
 
     initAuth();
