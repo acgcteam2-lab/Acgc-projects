@@ -3980,16 +3980,6 @@ function CustomerDashboard() {
     const notificationId = notification?.notificationId || notificationOrId;
     markCustomerNotificationRead(notificationId);
 
-    if (notification?.notificationType === "contract") {
-      setContractHistoryTab("accepted");
-      setWarrantyHistoryTab(null);
-      setTimelineNotificationTarget(null);
-      setSelectedOrderForModal(null);
-      setActiveTab("contracts");
-      openContractModal(order, orderIdentifier);
-      return;
-    }
-
     const myOrders = orders.filter((entry) =>
       !["installation", "completed", "cancelled"].includes(normalizeOrderStatus(entry?.status)),
     );
@@ -8592,7 +8582,7 @@ function CustomerDashboard() {
                                 onClick={() => openOrderDetailsFromNotification(order, order)}
                                 className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${darkMode ? "text-red-300 hover:bg-red-950/40" : "text-red-700 hover:bg-red-50"}`}
                               >
-                                {isContractNotification ? "View Contract" : "View Order"}
+                                View Order
                                 <ArrowUpRight size={14} aria-hidden="true" />
                               </button>
                             </div>
