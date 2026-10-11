@@ -237,6 +237,7 @@ const OrderItemSchema = new mongoose.Schema(
       rating: { type: Number, min: 1, max: 5, default: null },
       title: { type: String, trim: true, default: "" },
       comment: { type: String, trim: true, default: "" },
+      tags: { type: [String], default: [] },
       photos: { type: [String], default: [] },
       submittedAt: { type: Date, default: null },
       updatedAt: { type: Date, default: null },
@@ -762,6 +763,10 @@ const OrderSchema = new mongoose.Schema(
         type: String,
         trim: true,
         default: "",
+      },
+      tags: {
+        type: [String],
+        default: [],
       },
       photos: {
         type: [String],

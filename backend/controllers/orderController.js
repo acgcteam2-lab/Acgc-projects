@@ -1496,12 +1496,27 @@ export const deleteOrderReview = async (req, res) => {
 export const submitOrderReview = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { rating, title, comment, photos = [], itemIndex: rawItemIndex } = req.body;
+    const { rating, title, comment, tags = [], photos = [], itemIndex: rawItemIndex } = req.body;
 
     if (!rating || typeof rating !== "number" || rating < 1 || rating > 5) {
       return res.status(400).json({ success: false, message: "Rating must be a number between 1 and 5." });
     }
-    if (!comment || typeof comment !== "string" || comment.trim().length < 10 || comment.trim().length > 500) {
+    if (!Array.isArray(tags)) {
+      return res.status(400).json({ success: false, message: "Review tags must be an array." });
+    }
+    if (!comment || typeof comment !== "string" || comment.trim().length > 500) {
+      return res.status(400).json({ success: false, message: "Comment must be between 10 and 500 characters." });
+    }
+    const reviewTagLabels = {
+      quality: "Product Quality",
+      service: "Professional Service",
+      installation: "Installation Experience",
+    };
+    const reviewTags = [...new Set(tags.filter((tag) => typeof tag === "string" && reviewTagLabels[tag]))];
+    const commentBody = reviewTags.reduce((body, tag) => (
+      body.replace(new RegExp(`^${reviewTagLabels[tag]}:\\s*`, "gim"), "")
+    ), comment.trim()).trim();
+    if (commentBody.length < 10) {
       return res.status(400).json({ success: false, message: "Comment must be between 10 and 500 characters." });
     }
     if (!Array.isArray(photos)) {
@@ -1559,6 +1574,7 @@ export const submitOrderReview = async (req, res) => {
       rating,
       title: title?.trim() || "",
       comment: comment.trim(),
+      tags: reviewTags,
       photos: photos.slice(0, 5).map((photo) => (typeof photo === "string" ? photo : "")).filter(Boolean),
       submittedAt: existingReview || now,
       updatedAt: now,
@@ -1670,6 +1686,7 @@ export const getProductReviews = async (req, res) => {
               rating: review.rating || 0,
               title: review.title || "",
               comment: review.comment || "",
+              tags: review.tags || [],
               photos: review.photos || [],
               submittedAt: review.submittedAt || null,
               itemIndex,

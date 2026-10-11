@@ -44,6 +44,8 @@ export default function TimelineStage({
   notificationItemIndex,
   darkMode = false,
   onPhotoOpen,
+  itemIndex = 0,
+  onUploadProgressPhoto,
 }) {
   const status = getTimelineStageStatus(stage);
   const normalizedKey = String(stage?.key || "")
@@ -110,6 +112,30 @@ export default function TimelineStage({
       <div className="min-w-0 pt-0.5">
         <p className={`break-words text-sm font-semibold leading-5 ${labelClass}`}>{stage?.label || stage?.name || "Project stage"}</p>
         <p className={`mt-0.5 break-words text-xs leading-5 ${statusTextClass}`}>{statusText}</p>
+                {stage?.photoRequirement && (
+                  <div className={`mt-2 rounded-lg border p-2.5 text-xs ${darkMode ? "border-slate-700 bg-slate-900 text-slate-300" : "border-slate-200 bg-white text-slate-600"}`}>
+                    <p>{stage.photoRequirement === "required"
+                      ? "A progress photo is required before this stage can be marked as completed."
+                      : "Uploading a progress photo is optional."}</p>
+                    {onUploadProgressPhoto && status !== "done" && (
+                      <label className={`mt-2 inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 font-medium ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
+                        <Camera size={14} aria-hidden="true" />
+                        Upload progress photo
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif"
+                          className="sr-only"
+                          aria-label={`Upload progress photo for ${stage?.label || stage?.name || "stage"}`}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) onUploadProgressPhoto(file, itemIndex, stage.batchStageKey || stage.key);
+                            event.target.value = "";
+                          }}
+                        />
+                      </label>
+                    )}
+                  </div>
+                )}
         {isDelayed && (
           <dl className={`mt-1 grid gap-x-4 gap-y-0.5 text-[11px] leading-4 sm:grid-cols-2 ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
             <div className="flex flex-wrap gap-x-1">
@@ -199,6 +225,30 @@ export default function TimelineStage({
                             />
                           </button>
                         ))}
+                      </div>
+                    )}
+                    {subStage?.photoRequirement && (
+                      <div className={`mt-2 rounded-lg border p-2.5 text-[11px] ${darkMode ? "border-slate-700 bg-slate-900 text-slate-300" : "border-slate-200 bg-white text-slate-600"}`}>
+                        <p>{subStage.photoRequirement === "required"
+                          ? "A progress photo is required before this sub-stage can be marked as completed."
+                          : "Uploading a progress photo is optional."}</p>
+                        {onUploadProgressPhoto && subStatus !== "done" && (
+                          <label className={`mt-2 inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 font-medium ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
+                            <Camera size={13} aria-hidden="true" />
+                            Upload photo
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,image/gif"
+                              className="sr-only"
+                              aria-label={`Upload progress photo for ${subName}`}
+                              onChange={(event) => {
+                                const file = event.target.files?.[0];
+                                if (file) onUploadProgressPhoto(file, itemIndex, stage.batchStageKey || stage.key, index);
+                                event.target.value = "";
+                              }}
+                            />
+                          </label>
+                        )}
                       </div>
                     )}
                   </div>

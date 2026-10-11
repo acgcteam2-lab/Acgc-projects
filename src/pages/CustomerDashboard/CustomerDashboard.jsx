@@ -110,26 +110,45 @@ const getOrderSubmissionMessage = (response, action) => {
   if (response.notification_email_status === "missing_recipient") return `${baseMessage} No confirmation email was sent because your account has no email address.`;
   return `${baseMessage} We couldn't send the confirmation email right now. Please contact support.`;
 };
-const ORDER_REVIEW_TEMPLATES = [
-  {
-    value: "quality",
-    label: "Product quality",
-    title: "Excellent product quality",
-    comment: "The product quality is excellent, and the finished project looks great. I am very satisfied with the result.",
-  },
-  {
-    value: "service",
-    label: "Professional service",
-    title: "Professional service",
-    comment: "The team communicated clearly, arrived as scheduled, and handled the project professionally. I am happy with the service.",
-  },
-  {
-    value: "installation",
-    label: "Installation experience",
-    title: "Great installation experience",
-    comment: "The installation was completed carefully and as agreed. The team did a great job, and I would recommend their service.",
-  },
+const ORDER_REVIEW_TOPICS = [
+  { value: "quality", label: "Product Quality" },
+  { value: "service", label: "Professional Service" },
+  { value: "installation", label: "Installation Experience" },
 ];
+
+const appendReviewTopicPrompt = (comment, label) => {
+  const prompt = `${label}:`;
+  const alreadyPresent = comment.split("\n").some((line) => {
+    const trimmedLine = line.trimStart().toLowerCase();
+    return trimmedLine === prompt.toLowerCase() || trimmedLine.startsWith(`${prompt.toLowerCase()} `);
+  });
+  if (alreadyPresent) return comment;
+  return `${comment.trimEnd()}${comment.trim() ? "\n" : ""}${prompt} `;
+};
+
+const removeReviewTopicPrompt = (comment, label) => {
+  const prompt = `${label}:`;
+  const lines = comment.split("\n");
+  const promptIndex = lines.findIndex((line) => {
+    const trimmedLine = line.trimStart();
+    return trimmedLine === prompt || trimmedLine.startsWith(`${prompt} `);
+  });
+  if (promptIndex === -1) return comment;
+
+  const line = lines[promptIndex];
+  const indentation = line.match(/^\s*/)?.[0] || "";
+  const answer = line.slice(indentation.length + prompt.length).trimStart();
+  if (answer) lines[promptIndex] = `${indentation}${answer}`;
+  else lines.splice(promptIndex, 1);
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+|\n+$/g, "");
+};
+
+const getReviewCommentBody = (comment, tags) =>
+  ORDER_REVIEW_TOPICS.reduce((body, topic) => (
+    tags.includes(topic.value)
+      ? body.replace(new RegExp(`^${topic.label}:\\s*`, "gim"), "")
+      : body
+  ), comment).trim();
 
 const getDelayNotificationMessage = (notification) => {
   const stageName = notification.delayStageName || "Project stage";
@@ -429,13 +448,15 @@ function CustomerDashboard() {
   const [orderReviewAgreed, setOrderReviewAgreed] = useState(false);
   const [orderReviewForm, setOrderReviewForm] = useState({
     rating: 0,
-    title: "",
     comment: "",
     photos: [],
     photoPreviews: [],
   });
+  const [selectedReviewTopics, setSelectedReviewTopics] = useState([]);
+  const [generatedReviewSuggestions, setGeneratedReviewSuggestions] = useState({});
   const [reviewFormError, setReviewFormError] = useState("");
   const [reviewFormLoading, setReviewFormLoading] = useState(false);
+  const reviewSubmitInFlightRef = useRef(false);
   const [reviewPhotoUploading, setReviewPhotoUploading] = useState(false);
   const [selectedReviewOrder, setSelectedReviewOrder] = useState(null);
   const [batchReviewSession, setBatchReviewSession] = useState(null);
@@ -1187,11 +1208,12 @@ function CustomerDashboard() {
     });
     setOrderReviewForm({
       rating: existingReview.rating || 0,
-      title: existingReview.title || "",
       comment: existingReview.comment || "",
       photos: existingReview.photos || [],
       photoPreviews: existingReview.photos || [],
     });
+    setSelectedReviewTopics(Array.isArray(existingReview.tags) ? existingReview.tags : []);
+    setGeneratedReviewSuggestions({});
     setReviewFormError("");
     setShowCustomerReviewModal(true);
   };
@@ -1234,7 +1256,9 @@ function CustomerDashboard() {
     setBatchReviewSession(null);
     setShowCustomerReviewModal(false);
     setReviewFormError("");
-    setOrderReviewForm({ rating: 0, title: "", comment: "", photos: [], photoPreviews: [] });
+    setOrderReviewForm({ rating: 0, comment: "", photos: [], photoPreviews: [] });
+    setSelectedReviewTopics([]);
+    setGeneratedReviewSuggestions({});
   };
 
   const openProductReviewModal = () => {
@@ -1251,6 +1275,33 @@ function CustomerDashboard() {
 
   const handleOrderReviewChange = (field, value) => {
     setOrderReviewForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleReviewTopicToggle = (topic) => {
+    const isSelected = selectedReviewTopics.includes(topic.value);
+    if (isSelected) {
+      setSelectedReviewTopics((current) => current.filter((value) => value !== topic.value));
+      const generatedPrompt = generatedReviewSuggestions[topic.value];
+      setOrderReviewForm((current) => ({
+        ...current,
+        comment: removeReviewTopicPrompt(current.comment, generatedPrompt),
+      }));
+      setGeneratedReviewSuggestions((current) => {
+        const next = { ...current };
+        delete next[topic.value];
+        return next;
+      });
+      return;
+    }
+
+    const prompt = topic.label;
+    setSelectedReviewTopics((current) => [...current, topic.value]);
+    setGeneratedReviewSuggestions((current) => ({ ...current, [topic.value]: prompt }));
+    setOrderReviewForm((current) => ({
+      ...current,
+      comment: appendReviewTopicPrompt(current.comment, topic.label),
+    }));
+    setReviewFormError("");
   };
 
   const handleOrderReviewPhotoChange = async (e) => {
@@ -1293,13 +1344,18 @@ function CustomerDashboard() {
   };
 
   const submitCustomerReview = async () => {
+    if (reviewSubmitInFlightRef.current) return;
+    if (reviewPhotoUploading) {
+      setReviewFormError("Please wait for your photos to finish uploading.");
+      return;
+    }
     if (!canUploadFeedback) return;
     if (!selectedReviewOrder) return;
     if (!orderReviewForm.rating || orderReviewForm.rating < 1 || orderReviewForm.rating > 5) {
       setReviewFormError("Please select a rating from 1 to 5.");
       return;
     }
-    if (!orderReviewForm.comment || orderReviewForm.comment.trim().length < 10) {
+    if (getReviewCommentBody(orderReviewForm.comment, selectedReviewTopics).length < 10) {
       setReviewFormError("Comment must be at least 10 characters.");
       return;
     }
@@ -1308,14 +1364,15 @@ function CustomerDashboard() {
       return;
     }
 
+    reviewSubmitInFlightRef.current = true;
     setReviewFormLoading(true);
     setReviewFormError("");
 
     try {
       const payload = {
         rating: orderReviewForm.rating,
-        title: orderReviewForm.title.trim(),
         comment: orderReviewForm.comment.trim(),
+        tags: selectedReviewTopics,
         photos: orderReviewForm.photos.slice(0, 5),
         ...(Number.isInteger(selectedReviewOrder.reviewItemIndex)
           ? { itemIndex: selectedReviewOrder.reviewItemIndex }
@@ -1343,11 +1400,12 @@ function CustomerDashboard() {
           });
           setOrderReviewForm({
             rating: nextReview.rating || 0,
-            title: nextReview.title || "",
             comment: nextReview.comment || "",
             photos: nextReview.photos || [],
             photoPreviews: nextReview.photos || [],
           });
+          setSelectedReviewTopics([]);
+          setGeneratedReviewSuggestions({});
           toast.success("Review saved. Continue with the next product.");
           return;
         }
@@ -1360,6 +1418,7 @@ function CustomerDashboard() {
     } catch (error) {
       setReviewFormError(error.data?.message || error.message || "Unable to submit review.");
     } finally {
+      reviewSubmitInFlightRef.current = false;
       setReviewFormLoading(false);
     }
   };
@@ -2658,6 +2717,11 @@ function CustomerDashboard() {
     setSelectedProductImageIndex(0);
     setProductEstimatorForm({ unit: product?.custom_frame_size_unit || "in", width: "0", height: "0", ...getDefaultBladeSelections(product) });
     setShowAboutProduct(false);
+  };
+
+  const handleFeaturedProductClick = (product) => {
+    setActiveTab("products");
+    handleViewProduct(product);
   };
 
   const closeProductModal = () => {
@@ -4063,6 +4127,50 @@ function CustomerDashboard() {
     setActiveTab("orders");
   };
 
+  const handleUploadProgressPhoto = async (file, itemIndex, stageKey, subStageIndex) => {
+    const orderId = selectedOrderForModal?._id || selectedOrderForModal?.id;
+    if (!orderId) return;
+    try {
+      const response = await uploadFiles([file], undefined, {
+        purpose: "customer-progress-photo",
+        uploadPath: `/orders/${encodeURIComponent(orderId)}/progress-photo`,
+        fieldNames: ["file"],
+        formFields: {
+          itemIndex,
+          stageKey,
+          ...(Number.isInteger(subStageIndex) ? { subStageIndex } : {}),
+        },
+      });
+      const updatedOrder = response.order;
+      if (updatedOrder) {
+        const updatedId = String(updatedOrder._id || updatedOrder.id || orderId);
+        const mergeUpdatedOrder = (current) => {
+          if (!current) return current;
+          return {
+            ...current,
+            ...updatedOrder,
+            items: Array.isArray(updatedOrder.items)
+              ? updatedOrder.items.map((item, index) => ({
+                  ...(current.items?.[index] || {}),
+                  ...item,
+                  product_id: current.items?.[index]?.product_id || item.product_id,
+                }))
+              : current.items,
+          };
+        };
+        setOrders((current) => current.map((order) =>
+          String(order._id || order.id) === updatedId ? mergeUpdatedOrder(order) : order
+        ));
+        setSelectedOrderForModal((current) => (
+          current && String(current._id || current.id) === updatedId ? mergeUpdatedOrder(current) : current
+        ));
+      }
+      toast.success("Progress photo uploaded.");
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to upload progress photo.");
+    }
+  };
+
   useEffect(() => {
     if (!highlightedOrderId) return undefined;
     if (activeTab !== "orders") {
@@ -4966,7 +5074,17 @@ function CustomerDashboard() {
                   return (
                     <article
                       key={product._id || product.name}
-                      className={`group flex h-full min-w-0 flex-col overflow-hidden rounded-[26px] border shadow-[0_18px_38px_rgba(15,23,42,0.08)] transition duration-300 hover:-translate-y-1 ${
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`View ${product.name || product.product_name || "featured product"} details`}
+                      onClick={() => handleFeaturedProductClick(product)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          handleFeaturedProductClick(product);
+                        }
+                      }}
+                      className={`group flex h-full min-w-0 cursor-pointer flex-col overflow-hidden rounded-[26px] border shadow-[0_18px_38px_rgba(15,23,42,0.08)] transition duration-300 hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
                         darkMode ? "border-white/15 bg-white/[0.045] backdrop-blur-xl" : "border-white/65 bg-white/[0.2] backdrop-blur-xl"
                       }`}
                     >
@@ -4987,6 +5105,9 @@ function CustomerDashboard() {
                           className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
+                        <h3 className="absolute inset-x-4 bottom-4 line-clamp-2 text-lg font-black leading-tight text-white drop-shadow-[0_2px_5px_rgba(0,0,0,0.9)] sm:text-xl">
+                          {product.name || product.product_name || "Product"}
+                        </h3>
                         <span className="absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-full border border-amber-200/80 bg-amber-100/95 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-amber-950 shadow-lg backdrop-blur-sm">
                           <Star size={12} fill="currentColor" aria-hidden="true" />
                           Featured
@@ -5148,11 +5269,17 @@ function CustomerDashboard() {
                           />
                           <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
 
-                          <div className="absolute left-3 top-3 right-3 flex items-start justify-between gap-2">
+                          <div className="absolute left-3 top-3 right-3 flex items-start justify-between gap-2 max-md:left-1 max-md:right-1 max-md:top-1 max-md:flex-col max-md:gap-1">
                             {product.is_featured ? (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/80 bg-amber-200/90 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-amber-950 backdrop-blur-sm">
-                                <Star size={11} fill="currentColor" aria-hidden="true" /> Top Product
-                              </span>
+                              <>
+                                <span aria-label="Top Product" title="Top Product" className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-amber-300/80 bg-amber-200/90 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-amber-950 backdrop-blur-sm max-md:gap-px max-md:px-1 max-md:py-0.5 max-md:text-[7px] max-md:tracking-normal">
+                                  <Star className="size-[11px] shrink-0 max-md:size-2" fill="currentColor" aria-hidden="true" />
+                                  Top Product
+                                </span>
+                                <span className="hidden max-md:inline-flex max-md:max-w-full max-md:truncate max-md:whitespace-nowrap max-md:rounded-full max-md:border max-md:border-white/25 max-md:bg-slate-950/40 max-md:px-1 max-md:py-0.5 max-md:text-[7px] max-md:font-medium max-md:uppercase max-md:tracking-normal max-md:text-slate-100">
+                                  {product.product_type || product.category || "General"}
+                                </span>
+                              </>
                             ) : (
                               <span className="rounded-full border border-white/20 bg-slate-900/30 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white backdrop-blur-sm">
                                 {product.category ? product.category.charAt(0).toUpperCase() + product.category.slice(1) : "General"}
@@ -5160,8 +5287,8 @@ function CustomerDashboard() {
                             )}
                           </div>
 
-                          <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3">
-                            <div className="max-w-[70%] rounded-full border border-white/25 bg-slate-950/40 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.10em] text-slate-100 backdrop-blur-sm max-md:hidden">
+                          <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3 max-md:p-1.5">
+                            <div className="max-w-[70%] truncate whitespace-nowrap rounded-full border border-white/25 bg-slate-950/40 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.10em] text-slate-100 backdrop-blur-sm max-md:hidden">
                               {product.product_type || product.category || "General"}
                             </div>
 
@@ -7786,6 +7913,7 @@ function CustomerDashboard() {
             getItemImage={getOrderItemImage}
             getItemDimension={getConfirmationItemDimensionText}
             fallbackImage={PRODUCT_IMAGE_PLACEHOLDER}
+            onUploadProgressPhoto={handleUploadProgressPhoto}
             notificationTarget={timelineNotificationTarget}
           />
         )}
@@ -7938,34 +8066,26 @@ function CustomerDashboard() {
                 </div>
                 <div className="space-y-3">
                   <div>
-                    <label htmlFor="review-template" className={`text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-900"}`}>Review template</label>
-                    <select
-                      id="review-template"
-                      defaultValue=""
-                      onChange={(event) => {
-                        const template = ORDER_REVIEW_TEMPLATES.find((entry) => entry.value === event.target.value);
-                        if (!template) return;
-                        setOrderReviewForm((current) => ({ ...current, title: template.title, comment: template.comment }));
-                        setReviewFormError("");
-                      }}
-                      className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 text-sm outline-none focus:border-red-500 ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
-                    >
-                      <option value="">Choose a starting point</option>
-                      {ORDER_REVIEW_TEMPLATES.map((template) => (
-                        <option key={template.value} value={template.value}>{template.label}</option>
+                    <p className={`text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-900"}`}>Quick topics</p>
+                    <div className="mt-2 flex flex-wrap gap-2" role="group" aria-label="Quick review topics">
+                      {ORDER_REVIEW_TOPICS.map((topic) => (
+                        <button
+                          key={topic.value}
+                          type="button"
+                          aria-pressed={selectedReviewTopics.includes(topic.value)}
+                          onClick={() => handleReviewTopicToggle(topic)}
+                          className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition duration-200 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
+                            selectedReviewTopics.includes(topic.value)
+                              ? "border-red-600 bg-red-600 text-white"
+                              : darkMode
+                                ? "border-red-500/60 bg-slate-800 text-red-300 hover:bg-red-950/50"
+                                : "border-red-300 bg-white text-red-700 hover:bg-red-50"
+                          }`}
+                        >
+                          {topic.label}
+                        </button>
                       ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label htmlFor="review-title" className={`text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-900"}`}>Review Title</label>
-                    <input
-                      id="review-title"
-                      type="text"
-                      value={orderReviewForm.title}
-                      onChange={(e) => handleOrderReviewChange("title", e.target.value)}
-                      placeholder="Excellent Service"
-                      className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 text-sm outline-none focus:border-red-500 ${darkMode ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-500" : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"}`}
-                    />
+                    </div>
                   </div>
                   <div>
                     <label htmlFor="review-comment" className={`text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-900"}`}>Review Comment</label>
@@ -7973,10 +8093,10 @@ function CustomerDashboard() {
                       id="review-comment"
                       value={orderReviewForm.comment}
                       onChange={(e) => handleOrderReviewChange("comment", e.target.value)}
-                      placeholder="Tell us about the product quality, installation, and service experience."
-                      rows={4}
+                      placeholder="Choose a topic or write about your experience..."
+                      rows={5}
                       maxLength={500}
-                      className={`mt-1.5 w-full resize-y rounded-xl border px-3 py-2.5 text-sm outline-none focus:border-red-500 ${darkMode ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-500" : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"}`}
+                      className={`mt-1.5 min-h-[160px] w-full resize-y rounded-xl border px-3 py-2.5 text-sm outline-none focus:border-red-500 ${darkMode ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-500" : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"}`}
                     />
                     <p className={`mt-1 flex justify-between text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
                       <span>Required. 10–500 characters.</span>
@@ -8044,7 +8164,7 @@ function CustomerDashboard() {
                 <button
                   type="button"
                   onClick={submitCustomerReview}
-                  disabled={reviewFormLoading}
+                  disabled={reviewFormLoading || reviewPhotoUploading}
                   className="rounded-xl bg-red-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {reviewFormLoading
@@ -8199,7 +8319,19 @@ function CustomerDashboard() {
                             ) : "No rating"}
                           </div>
                         </div>
-                        <h4 className="mt-3 text-base font-bold text-slate-900">{review.title || "Customer review"}</h4>
+                        {review.title && <h4 className="mt-3 text-base font-bold text-slate-900">{review.title}</h4>}
+                        {review.tags?.length > 0 && (
+                          <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Review topics">
+                            {review.tags.map((tag) => {
+                              const topic = ORDER_REVIEW_TOPICS.find((entry) => entry.value === tag);
+                              return topic ? (
+                                <span key={tag} className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-semibold text-red-700">
+                                  {topic.label}
+                                </span>
+                              ) : null;
+                            })}
+                          </div>
+                        )}
                         <p className="mt-1.5 whitespace-pre-line text-sm leading-6 text-slate-600">{review.comment || "No review comment."}</p>
                         {review.photos?.length > 0 && (
                           <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">

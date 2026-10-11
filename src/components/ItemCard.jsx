@@ -40,7 +40,7 @@ const normalizeStageKey = (value) => String(value || "")
   .toLowerCase()
   .replace(/[\s-]+/g, "_");
 
-function StageList({ stages, darkMode, onPhotoOpen, itemIndex, notificationTarget }) {
+function StageList({ stages, darkMode, onPhotoOpen, onUploadProgressPhoto, itemIndex, notificationTarget }) {
   const nextUpIndex = stages.findIndex((stage) => getTimelineStageStatus(stage) === "pending");
   const hasCurrentStage = stages.some((stage) => getTimelineStageStatus(stage) === "current");
   const isSingleItem = !hasCurrentStage && nextUpIndex !== -1;
@@ -61,6 +61,8 @@ function StageList({ stages, darkMode, onPhotoOpen, itemIndex, notificationTarge
           notificationItemIndex={itemIndex}
           darkMode={darkMode}
           onPhotoOpen={onPhotoOpen}
+          itemIndex={itemIndex}
+          onUploadProgressPhoto={onUploadProgressPhoto}
         />
       ))}
     </ol>
@@ -78,6 +80,7 @@ export default function ItemCard({
   expandedKeys,
   onToggleKey,
   onPhotoOpen,
+  onUploadProgressPhoto,
   notificationTarget,
 }) {
   if (row.groupItems) {
@@ -124,6 +127,7 @@ export default function ItemCard({
                   expandedKeys={expandedKeys}
                   onToggleKey={onToggleKey}
                   onPhotoOpen={onPhotoOpen}
+                  onUploadProgressPhoto={onUploadProgressPhoto}
                   notificationTarget={notificationTarget}
                 />
               ))}
@@ -164,7 +168,7 @@ export default function ItemCard({
         <div className={`mt-2 h-1.5 overflow-hidden rounded-full ${darkMode ? "bg-slate-700" : "bg-slate-100"}`} role="progressbar" aria-label={`${name} stage progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
           <div className="h-full rounded-full bg-emerald-600 transition-[width] duration-200" style={{ width: `${progress}%` }} />
         </div>
-        <StageList stages={stages} darkMode={darkMode} onPhotoOpen={onPhotoOpen} itemIndex={index} notificationTarget={notificationTarget} />
+        <StageList stages={stages} darkMode={darkMode} onPhotoOpen={onPhotoOpen} onUploadProgressPhoto={onUploadProgressPhoto} itemIndex={index} notificationTarget={notificationTarget} />
       </article>
     );
   }
@@ -207,7 +211,7 @@ export default function ItemCard({
       <div aria-hidden={!isExpanded} inert={!isExpanded} className={`grid transition-[grid-template-rows,opacity] duration-200 motion-reduce:transition-none ${isExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
         <div className="overflow-hidden">
           <div className={`border-t px-4 pb-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
-            <StageList stages={stages} darkMode={darkMode} onPhotoOpen={onPhotoOpen} itemIndex={index} notificationTarget={notificationTarget} />
+            <StageList stages={stages} darkMode={darkMode} onPhotoOpen={onPhotoOpen} onUploadProgressPhoto={onUploadProgressPhoto} itemIndex={index} notificationTarget={notificationTarget} />
           </div>
         </div>
       </div>

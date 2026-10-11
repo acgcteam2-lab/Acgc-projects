@@ -852,12 +852,26 @@ function LandingPage() {
                   return (
                     <motion.article
                       key={product._id || product.id || index}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`View ${product.product_name || product.name || "featured product"} details`}
+                      onClick={() => {
+                        scrollToSection("products");
+                        openProductDetails(product);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          scrollToSection("products");
+                          openProductDetails(product);
+                        }
+                      }}
                       initial={{ opacity: 0, y: 44 }}
                       whileInView={{ opacity: 1, y: 0 }}
                       viewport={{ once: true }}
                       transition={{ delay: index * 0.12, duration: 0.6 }}
                       whileHover={{ y: -4 }}
-                      className="group flex h-full min-w-0 flex-col overflow-hidden rounded-[26px] border border-white/65 bg-white/[0.2] shadow-[0_18px_38px_rgba(15,23,42,0.08)] backdrop-blur-xl transition hover:shadow-[0_24px_48px_rgba(127,29,29,0.12)]"
+                      className="group flex h-full min-w-0 cursor-pointer flex-col overflow-hidden rounded-[26px] border border-white/65 bg-white/[0.2] shadow-[0_18px_38px_rgba(15,23,42,0.08)] backdrop-blur-xl transition hover:shadow-[0_24px_48px_rgba(127,29,29,0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
                     >
                       <div className="relative aspect-[4/3] w-full overflow-hidden bg-slate-100/70">
                         <div data-product-image-skeleton className="absolute inset-0 animate-pulse bg-slate-200 motion-reduce:animate-none" />
@@ -876,6 +890,9 @@ function LandingPage() {
                           className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
+                        <h3 className="absolute inset-x-4 bottom-4 line-clamp-2 text-lg font-black leading-tight text-white drop-shadow-[0_2px_5px_rgba(0,0,0,0.9)] sm:text-xl">
+                          {product.product_name || product.name || "Product"}
+                        </h3>
                         <span className="absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-full border border-amber-200/80 bg-amber-100/95 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-amber-950 shadow-lg backdrop-blur-sm">
                           <Star size={12} fill="currentColor" aria-hidden="true" />
                           Featured
@@ -1054,18 +1071,23 @@ function LandingPage() {
                     className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-110 motion-reduce:transition-none"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
-                  <div className="absolute left-3 right-3 top-3 flex items-start justify-between gap-2">
+                  <div className="absolute left-3 right-3 top-3 flex items-start justify-between gap-2 max-md:left-1 max-md:right-1 max-md:top-1 max-md:flex-col max-md:gap-1">
                     {product.is_featured ? (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/80 bg-amber-200/90 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-amber-950 backdrop-blur-sm max-md:px-1.5 max-md:py-0.5 max-md:text-[8px]">
-                        <Star size={11} fill="currentColor" aria-hidden="true" /> Top Product
-                      </span>
+                      <>
+                        <span aria-label="Top Product" title="Top Product" className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-amber-300/80 bg-amber-200/90 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-amber-950 backdrop-blur-sm max-md:gap-px max-md:px-1 max-md:py-0.5 max-md:text-[7px] max-md:tracking-normal">
+                          <Star className="size-[11px] shrink-0 max-md:size-2" fill="currentColor" aria-hidden="true" /> Top Product
+                        </span>
+                        <span className="hidden max-md:inline-flex max-md:max-w-full max-md:truncate max-md:whitespace-nowrap max-md:rounded-full max-md:border max-md:border-white/25 max-md:bg-slate-950/40 max-md:px-1 max-md:py-0.5 max-md:text-[7px] max-md:font-medium max-md:uppercase max-md:tracking-normal max-md:text-slate-100">
+                          {category}
+                        </span>
+                      </>
                     ) : (
                       <span className="rounded-full border border-white/20 bg-slate-900/30 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white backdrop-blur-sm">
                         {product.category || "General"}
                       </span>
                     )}
                   </div>
-                  <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3">
+                  <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3 max-md:p-1.5">
                     <span className="max-w-[70%] truncate rounded-full border border-white/25 bg-slate-950/40 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.1em] text-slate-100 backdrop-blur-sm max-md:hidden">
                       {category}
                     </span>

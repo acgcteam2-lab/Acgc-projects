@@ -32,6 +32,49 @@ describe("ProgressEditModal", () => {
     expect(screen.getByRole("button", { name: "Mark Cutting Done" })).toBeTruthy();
   });
 
+  it("blocks completion without a photo when the stage requirement is Required", async () => {
+    const onSave = vi.fn().mockResolvedValue();
+    render(
+      <ProgressEditModal
+        project={{ id: "order-123", client: "Acme Corp", stages: [] }}
+        onSave={onSave}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Progress Photo Requirement for Cutting"), { target: { value: "required" } });
+    expect(screen.getByRole("button", { name: "Mark Cutting Done" }).disabled).toBe(true);
+    expect(screen.getByText("A progress photo is required before this stage can be marked as completed.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0][0].stages.find((stage) => stage.key === "cutting")).toMatchObject({
+      photoRequirement: "required",
+      completed: false,
+    });
+  });
+
+  it("allows completion without a photo when the stage requirement is Optional", async () => {
+    const onSave = vi.fn().mockResolvedValue();
+    render(
+      <ProgressEditModal
+        project={{ id: "order-123", client: "Acme Corp", stages: [] }}
+        onSave={onSave}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark Cutting Done" }));
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0][0].stages.find((stage) => stage.key === "cutting")).toMatchObject({
+      photoRequirement: "optional",
+      completed: true,
+      status: "done",
+    });
+  });
+
   it("repositions a standard stage after the selected parent stage", async () => {
     const project = { id: "order-123", client: "Acme Corp", stages: [] };
     const onSave = vi.fn().mockResolvedValue();

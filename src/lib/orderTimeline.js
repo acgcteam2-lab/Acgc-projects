@@ -272,6 +272,7 @@ export const buildBatchProductTimelineStages = (order, item, itemIndex = 0) => {
       date: stepStatus === "completed" ? formatDateTimeToMMDDYYYY(sourceStage?.date) || "Completed" : stepStatus === "in-progress" ? "In progress" : "Pending",
       assignedTo: definition.key === "installation" ? "Installation Team" : "Production Team",
       notes: sourceStage?.delayReason || sourceStage?.delayNotes || `Current phase: ${definition.label}`,
+      ...(sourceStage ? { photoRequirement: sourceStage.photoRequirement === "required" ? "required" : "optional" } : {}),
       delayReason: latestDelayEntry?.reason || sourceStage?.delayReason || "",
       delayNotes: latestDelayEntry?.notes || sourceStage?.delayNotes || "",
       delayReportedAt: formatDateTimeToMMDDYYYY(latestDelayEntry?.reportedAt || sourceStage?.delayReportedAt) || "Not recorded",
@@ -378,6 +379,7 @@ export const buildOrderTimelineStages = (order) => {
             date: formatDateTimeToMMDDYYYY(sub.date),
             notes: sub.description || null,
             images: Array.isArray(sub.images) ? sub.images : [],
+            photoRequirement: sub.photoRequirement === "required" ? "required" : "optional",
           }))
         : [];
 

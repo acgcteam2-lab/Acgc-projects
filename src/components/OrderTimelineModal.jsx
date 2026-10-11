@@ -121,6 +121,7 @@ export default function OrderTimelineModal({
   getItemDimension,
   fallbackImage = "",
   onContactSupport,
+  onUploadProgressPhoto,
   notificationTarget = null,
 }) {
   const items = Array.isArray(order?.items) ? order.items : EMPTY_ITEMS;
@@ -381,7 +382,8 @@ export default function OrderTimelineModal({
               getItemDimension={getItemDimension}
               fallbackImage={fallbackImage}
               onPhotoOpen={setPhotoGallery}
-                  notificationTarget={notificationTarget}
+                onUploadProgressPhoto={onUploadProgressPhoto}
+                notificationTarget={notificationTarget}
             />
           ) : (
             <div className="space-y-2.5">
@@ -397,6 +399,7 @@ export default function OrderTimelineModal({
                   expandedKeys={expandedKeys}
                   onToggleKey={toggleKey}
                   onPhotoOpen={setPhotoGallery}
+                  onUploadProgressPhoto={onUploadProgressPhoto}
                   notificationTarget={notificationTarget}
                 />
               ))}
