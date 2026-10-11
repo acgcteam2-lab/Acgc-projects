@@ -1514,7 +1514,7 @@ function CustomerDashboard() {
         const response = await getProducts();
         if (!active) return;
         const latestProducts = response.products || [];
-        const latestById = new Map(latestProducts.map((product) => [String(product._id || product.id), product]));
+        const latestById = new globalThis.Map(latestProducts.map((product) => [String(product._id || product.id), product]));
         const refreshProduct = (currentProduct) => {
           if (!currentProduct) return currentProduct;
           const productId = String(currentProduct._id || currentProduct.id || "");
