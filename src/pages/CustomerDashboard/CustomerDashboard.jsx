@@ -8861,7 +8861,14 @@ function CustomerDashboard() {
           <div className="mobile-fullscreen-overlay fixed inset-0 z-[90] overflow-y-auto bg-slate-950/55 px-3 py-4 backdrop-blur-sm sm:px-6 sm:py-8">
           <div role="dialog" aria-modal="true" aria-labelledby="customer-profile-settings-title" className="mobile-fullscreen-dialog mx-auto max-h-[calc(100dvh-1.5rem)] w-full max-w-5xl overflow-y-auto overscroll-contain xl:h-[min(88dvh,52rem)] xl:max-h-[calc(100dvh-4rem)] xl:overflow-hidden">
           <div className="grid grid-cols-1 gap-4 xl:h-full xl:min-h-0 xl:grid-cols-3">
-            <div className={`rounded-2xl shadow p-4 sm:p-5 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
+            <div className={`relative rounded-2xl shadow p-4 sm:p-5 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
+              <button
+                type="button"
+                onClick={() => setProfileEditing(false)}
+                className={`absolute right-4 top-4 rounded-lg border px-3 py-2 text-xs font-semibold xl:hidden ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+              >
+                Back to profile
+              </button>
               <div className="flex flex-col items-center">
                 <ProfileAvatar
                   name={`${profileForm.first_name || user?.first_name || ""} ${profileForm.last_name || user?.last_name || ""}`.trim() || "Customer"}
@@ -8911,7 +8918,7 @@ function CustomerDashboard() {
                 <button
                   type="button"
                   onClick={() => setProfileEditing(false)}
-                  className={`ml-auto rounded-lg border px-3 py-2 text-xs font-semibold ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+                  className={`ml-auto hidden rounded-lg border px-3 py-2 text-xs font-semibold xl:inline-flex ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
                 >
                   Back to profile
                 </button>
@@ -9035,7 +9042,7 @@ function CustomerDashboard() {
                       />
                       <ProfileTextField
                         label="Province"
-                        icon={Map}
+                        icon={MapPin}
                         darkMode={darkMode}
                         type="text"
                         name="province"

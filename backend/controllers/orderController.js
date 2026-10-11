@@ -1,6 +1,8 @@
 import process from "node:process";
+import { Buffer } from "node:buffer";
 import fs from "fs";
 import path from "path";
+import { randomUUID } from "node:crypto";
 import mongoose from "mongoose";
 import Order from "../models/Order.js";
 import Product from "../models/Product.js";
@@ -12,6 +14,12 @@ import { applyInstallationWarranty, isCompletedInstallationStage } from "../serv
 import { buildProductPriceSnapshot, getMeasuredProductLineTotal } from "../../src/lib/productPricing.js";
 import { calculateRequiredDownpayment, getFinalProjectCost, isProjectPriceLocked } from "../../src/lib/orderPricing.js";
 import { getInstallationDateError } from "../../src/lib/installationSchedule.js";
+import {
+  deletePrivatePaymentDocument,
+  getPrivatePaymentDocumentDownloadUrl,
+  uploadPrivatePaymentDocumentBuffer,
+} from "../config/cloudinary.js";
+import { getPaymentDocumentType } from "../services/paymentDocuments.js";
 import {
   getOrderPaymentAmounts,
   getOrderPaymentStatus,
@@ -30,6 +38,123 @@ const isWithinReviewEditWindow = (submittedAt) => {
 
 const buildReviewNotificationMessage = (order, review, productName = order.items?.[0]?.name || "project") => {
   return `New customer review received for ${productName} (${order.tracking}).\nOrder ID: ${order.tracking || order._id}\nRating: ${"⭐".repeat(review.rating || 0)}\nTitle: ${review.title || "-"}\nComment: ${review.comment || "-"}`;
+};
+
+const privatePaymentDocumentsDirectory = path.resolve(process.cwd(), "private-payment-documents");
+
+const getPaymentDocumentDisplayName = (user) => [user?.first_name, user?.last_name].filter(Boolean).join(" ") || user?.email || "Administrator";
+
+export const addAdminPaymentSupportingDocument = async (req, res) => {
+  let uploadedAsset = null;
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: "Select a receipt or payment document to upload." });
+    const fileType = getPaymentDocumentType(req.file.mimetype, req.file.buffer);
+    if (!fileType) {
+      return res.status(400).json({ success: false, message: "The file contents do not match a supported image or PDF document." });
+    }
+    const originalName = String(req.file.originalname || "").trim();
+    const uploadId = String(req.body?.upload_id || "").trim();
+    if (!originalName || originalName.length > 255) {
+      return res.status(400).json({ success: false, message: "The document filename must be 1 to 255 characters." });
+    }
+    if (!/^[\w-]{8,100}$/.test(uploadId)) {
+      return res.status(400).json({ success: false, message: "A valid upload ID is required." });
+    }
+
+    const order = await Order.findById(req.params.orderId);
+    if (!order) return res.status(404).json({ success: false, message: "Order not found." });
+    const paymentRecord = order.payment_records.id(req.params.recordId);
+    if (!paymentRecord) return res.status(404).json({ success: false, message: "Payment record not found for this transaction." });
+    const existingDocument = paymentRecord.supporting_documents.find((document) => document.client_upload_id === uploadId);
+    if (existingDocument) return res.json({ success: true, duplicate: true, order });
+
+    const documentId = randomUUID();
+    const uploadedAt = new Date();
+    let documentStorage;
+    let storageKey = "";
+    let publicId = "";
+    let resourceType = fileType.resourceType;
+
+    try {
+      const cloudinaryAsset = await uploadPrivatePaymentDocumentBuffer(req.file.buffer, {
+        publicId: `acgc/payment-proofs/admin/${order._id}/${paymentRecord._id}/${documentId}${fileType.resourceType === "raw" ? ".pdf" : ""}`,
+        resourceType,
+      });
+      uploadedAsset = { publicId: cloudinaryAsset.public_id, resourceType };
+      documentStorage = "cloudinary";
+      publicId = cloudinaryAsset.public_id;
+      resourceType = cloudinaryAsset.resource_type || resourceType;
+    } catch (error) {
+      if (process.env.VERCEL === "1" || process.env.NODE_ENV === "production") throw error;
+      await fs.promises.mkdir(privatePaymentDocumentsDirectory, { recursive: true, mode: 0o700 });
+      storageKey = `${documentId}${fileType.extension}`;
+      await fs.promises.writeFile(path.join(privatePaymentDocumentsDirectory, storageKey), req.file.buffer, { flag: "wx", mode: 0o600 });
+      documentStorage = "local";
+    }
+
+    paymentRecord.supporting_documents.push({
+      client_upload_id: uploadId,
+      original_name: originalName,
+      public_id: publicId,
+      resource_type: resourceType,
+      format: fileType.format,
+      storage: documentStorage,
+      storage_key: storageKey,
+      uploaded_by: req.user.id,
+      uploaded_by_role: req.user.role,
+      uploaded_by_name: getPaymentDocumentDisplayName(req.user),
+      uploaded_at: uploadedAt,
+    });
+    try {
+      await order.save();
+    } catch (error) {
+      if (uploadedAsset) {
+        await deletePrivatePaymentDocument(uploadedAsset.publicId, uploadedAsset.resourceType).catch(() => undefined);
+      } else if (storageKey) {
+        await fs.promises.unlink(path.join(privatePaymentDocumentsDirectory, storageKey)).catch(() => undefined);
+      }
+      throw error;
+    }
+    return res.status(201).json({ success: true, order });
+  } catch (error) {
+    console.error("Add admin payment document error:", error);
+    return res.status(error.status || 500).json({ success: false, message: error.status ? error.message : "Unable to save the payment document." });
+  }
+};
+
+export const viewAdminPaymentSupportingDocument = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.orderId).select("payment_records");
+    if (!order) return res.status(404).json({ success: false, message: "Order not found." });
+    const paymentRecord = order.payment_records.id(req.params.recordId);
+    const document = paymentRecord?.supporting_documents.id(req.params.documentId);
+    if (!document) return res.status(404).json({ success: false, message: "Payment document not found." });
+
+    if (document.storage === "cloudinary") {
+      const downloadUrl = getPrivatePaymentDocumentDownloadUrl(document.public_id, document.format, document.resource_type);
+      const cloudinaryResponse = await fetch(downloadUrl);
+      if (!cloudinaryResponse.ok) return res.status(502).json({ success: false, message: "Unable to retrieve the private payment document." });
+      const contentType = document.format === "pdf" ? "application/pdf" : `image/${document.format === "jpg" ? "jpeg" : document.format}`;
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(document.original_name)}`);
+      res.setHeader("Cache-Control", "private, no-store");
+      return res.end(Buffer.from(await cloudinaryResponse.arrayBuffer()));
+    }
+
+    const filePath = path.resolve(privatePaymentDocumentsDirectory, document.storage_key);
+    if (!filePath.startsWith(`${privatePaymentDocumentsDirectory}${path.sep}`)) {
+      return res.status(404).json({ success: false, message: "Payment document not found." });
+    }
+    await fs.promises.access(filePath);
+    res.setHeader("Content-Type", document.format === "pdf" ? "application/pdf" : `image/${document.format === "jpg" ? "jpeg" : document.format}`);
+    res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(document.original_name)}`);
+    res.setHeader("Cache-Control", "private, no-store");
+    return fs.createReadStream(filePath).pipe(res);
+  } catch (error) {
+    if (error.code === "ENOENT") return res.status(404).json({ success: false, message: "Payment document not found." });
+    console.error("View admin payment document error:", error);
+    return res.status(500).json({ success: false, message: "Unable to view the payment document." });
+  }
 };
 
 const getDelayEventKey = (stage, entry, index) => [

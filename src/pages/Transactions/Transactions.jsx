@@ -10,6 +10,7 @@ import {
   Trash2,
   X,
   Info,
+  Paperclip,
 } from "lucide-react";
 import { toPng } from "html-to-image";
 import jsPDF from "jspdf";
@@ -27,7 +28,8 @@ import { recordActivity } from "@/lib/activityLog";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import { getCustomerPaymentProof, getPaymentSummary, isPaymentProofConfirmed, validateCustomerPaymentAmount } from "./paymentProofUtils";
-import { uploadFiles } from "@/api/uploads";
+import { uploadAdminPaymentDocument, uploadFiles } from "@/api/uploads";
+import { API_BASE } from "@/api/client";
 import { subscribeToRealtime } from "@/lib/realtimeEvents";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import useNotificationHighlight from "@/hooks/useNotificationHighlight";
@@ -106,11 +108,41 @@ function Transactions() {
   const [editPaymentRecordId, setEditPaymentRecordId] = useState("");
   const [editPaymentDate, setEditPaymentDate] = useState("");
   const [editPaymentProofFile, setEditPaymentProofFile] = useState(null);
+  const [editPaymentProofPreviewUrl, setEditPaymentProofPreviewUrl] = useState("");
+  const editPaymentProofInputRef = useRef(null);
   const [editPaymentRequestId, setEditPaymentRequestId] = useState("");
   const [showDownpaymentExceptionModal, setShowDownpaymentExceptionModal] = useState(false);
   const [paymentActionLoading, setPaymentActionLoading] = useState(false);
   const [transactionApprovalOrderId, setTransactionApprovalOrderId] = useState("");
   const paymentActionSubmittingRef = useRef(false);
+
+  useEffect(() => {
+    if (!editPaymentProofPreviewUrl) return undefined;
+    return () => URL.revokeObjectURL(editPaymentProofPreviewUrl);
+  }, [editPaymentProofPreviewUrl]);
+
+  const handleEditPaymentProofSelection = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const supportedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"];
+    if (!supportedTypes.includes(file.type)) {
+      toast.error("Choose a JPEG, PNG, WEBP, GIF, or PDF file.");
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      toast.error("Payment proof must be 4 MB or smaller.");
+      return;
+    }
+    setEditPaymentProofPreviewUrl(URL.createObjectURL(file));
+    setEditPaymentProofFile(file);
+  };
+
+  const clearEditPaymentProofSelection = () => {
+    setEditPaymentProofPreviewUrl("");
+    setEditPaymentProofFile(null);
+    if (editPaymentProofInputRef.current) editPaymentProofInputRef.current.value = "";
+  };
 
   const isCompletedProject = (order) => {
     const status = (order.status || "").toString().toLowerCase();
@@ -462,6 +494,7 @@ function Transactions() {
     setEditPaymentRecordId(String(latestVerifiedRecord?._id || ""));
     setEditPaymentDate(new Date().toISOString().slice(0, 10));
     setEditPaymentProofFile(null);
+    setEditPaymentProofPreviewUrl("");
     setEditPaymentRequestId(globalThis.crypto?.randomUUID?.() || `payment-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     setShowDownpaymentExceptionModal(false);
     setShowEditPaymentModal(true);
@@ -485,8 +518,66 @@ function Transactions() {
     setEditPaymentRecordId("");
     setEditPaymentDate("");
     setEditPaymentProofFile(null);
+    setEditPaymentProofPreviewUrl("");
     setEditPaymentRequestId("");
     setShowDownpaymentExceptionModal(false);
+  };
+
+  const viewAdminPaymentSupportingDocument = async (orderId, recordId, documentId) => {
+    const previewWindow = window.open("about:blank", "_blank");
+    if (!previewWindow) {
+      toast.error("Allow pop-ups to view this payment document.");
+      return;
+    }
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(
+        `${API_BASE}/orders/admin/${encodeURIComponent(orderId)}/payment-records/${encodeURIComponent(recordId)}/documents/${encodeURIComponent(documentId)}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || "Unable to view the payment document.");
+      }
+      const documentUrl = URL.createObjectURL(await response.blob());
+      previewWindow.location.replace(documentUrl);
+      window.setTimeout(() => URL.revokeObjectURL(documentUrl), 60_000);
+    } catch (error) {
+      previewWindow.close();
+      toast.error(error.message || "Unable to view the payment document.");
+    }
+  };
+
+  const handleSavePaymentSupportingDocument = async () => {
+    if (!editPaymentOrder || !editPaymentProofFile || paymentActionSubmittingRef.current || paymentActionLoading) return;
+    const orderId = editPaymentOrder._id || editPaymentOrder.id;
+    const proof = getCustomerPaymentProof(editPaymentOrder);
+    const pendingRecord = proof.status === "pending"
+      ? editPaymentOrder.payment_records?.find((record) => String(record._id) === String(proof.recordId))
+      : null;
+    const selectedRecord = editPaymentOrder.payment_records?.find((record) => String(record._id) === String(editPaymentRecordId));
+    const targetRecord = pendingRecord || selectedRecord || editPaymentOrder.payment_records?.at(-1);
+    if (!targetRecord) {
+      toast.error("Save the payment record before adding a supporting document.");
+      return;
+    }
+
+    paymentActionSubmittingRef.current = true;
+    setPaymentActionLoading(true);
+    try {
+      const response = await uploadAdminPaymentDocument(orderId, targetRecord._id, editPaymentProofFile, editPaymentRequestId);
+      const updated = response?.order || editPaymentOrder;
+      updateOrderLocally(orderId, updated);
+      setEditPaymentOrder(updated);
+      clearEditPaymentProofSelection();
+      setEditPaymentRequestId(globalThis.crypto?.randomUUID?.() || `payment-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      toast.success("Supporting document saved. Payment status and amount are unchanged.");
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to save the supporting document.");
+    } finally {
+      paymentActionSubmittingRef.current = false;
+      setPaymentActionLoading(false);
+    }
   };
 
   const handleSavePaymentEdit = async () => {
@@ -500,6 +591,25 @@ function Transactions() {
     const nextAmount = amountValidation.amount;
 
     const orderId = editPaymentOrder._id || editPaymentOrder.id;
+    const previouslyRecordedPayment = editPaymentOrder.payment_records?.find((record) => record.request_id === editPaymentRequestId);
+    if (previouslyRecordedPayment && editPaymentProofFile) {
+      paymentActionSubmittingRef.current = true;
+      setPaymentActionLoading(true);
+      try {
+        const uploadResponse = await uploadAdminPaymentDocument(orderId, previouslyRecordedPayment._id, editPaymentProofFile, editPaymentRequestId);
+        const updated = uploadResponse?.order || editPaymentOrder;
+        updateOrderLocally(orderId, updated);
+        setEditPaymentOrder(updated);
+        toast.success("Supporting document added to the payment record.");
+        closeEditPaymentModal();
+      } catch (error) {
+        toast.error(error?.data?.message || error?.message || "Unable to save the supporting document.");
+      } finally {
+        paymentActionSubmittingRef.current = false;
+        setPaymentActionLoading(false);
+      }
+      return;
+    }
     if (nextAmount <= 0) {
       toast.error("Enter an amount greater than zero.");
       return;
@@ -543,12 +653,15 @@ function Transactions() {
 
     paymentActionSubmittingRef.current = true;
     setPaymentActionLoading(true);
+    let paymentRecorded = false;
     try {
-      let uploadedProof = null;
-      if (isAdminRecording && editPaymentProofFile) {
-        const uploadResult = await uploadFiles([editPaymentProofFile], undefined, { purpose: "payment-proofs" });
-        uploadedProof = uploadResult?.files?.[0];
-        if (!uploadedProof?.url) throw new Error("The payment proof upload did not return a file URL.");
+      let updated = editPaymentOrder;
+      const supportingDocumentRecordId = isAdminRecording ? "" : isAdjusting ? editPaymentRecordId : proof.recordId;
+      if (editPaymentProofFile && supportingDocumentRecordId) {
+        const uploadResponse = await uploadAdminPaymentDocument(orderId, supportingDocumentRecordId, editPaymentProofFile, editPaymentRequestId);
+        updated = uploadResponse?.order || updated;
+        setEditPaymentOrder(updated);
+        updateOrderLocally(orderId, updated);
       }
       const payload = {
         payment_record_action: pendingSubmission
@@ -572,20 +685,29 @@ function Transactions() {
               transaction_number: editPaymentTransactionNumber || editPaymentOrder.transaction_number || "",
               request_id: editPaymentRequestId,
               payment_date: editPaymentDate,
-              proof_file_url: uploadedProof?.url || "",
-              proof_file_name: uploadedProof?.originalName || "",
               reason: editPaymentReason.trim(),
             },
       };
 
       const response = await updateOrderStatus(orderId, payload);
-      const updated = response?.order || {};
+      updated = response?.order || updated;
+      paymentRecorded = isAdminRecording && Boolean(updated.payment_records?.some((record) => record.request_id === editPaymentRequestId));
+      if (isAdminRecording && editPaymentProofFile) {
+        setEditPaymentOrder(updated);
+        updateOrderLocally(orderId, updated);
+      }
+      if (isAdminRecording && editPaymentProofFile) {
+        const recordedPayment = updated.payment_records?.find((record) => record.request_id === editPaymentRequestId);
+        if (!recordedPayment) throw new Error("The payment record was saved, but its supporting document could not be associated.");
+        const uploadResponse = await uploadAdminPaymentDocument(orderId, recordedPayment._id, editPaymentProofFile, editPaymentRequestId);
+        updated = uploadResponse?.order || updated;
+      }
       updateOrderLocally(orderId, {
         ...updated,
-        ...payload,
         payment_proof_amount: updated.payment_proof_amount ?? editPaymentOrder.payment_proof_amount ?? 0,
         payment_method: editPaymentMethod,
       });
+      setEditPaymentOrder(updated);
 
       const updatedSummary = getPaymentSummary(updated);
       const remainingAfter = updatedSummary.remainingAmount;
@@ -596,7 +718,10 @@ function Transactions() {
       );
     } catch (error) {
       console.error("Save payment edit failed", error);
-      toast.error(error?.data?.message || error?.message || "Unable to save payment update.");
+      const errorMessage = error?.data?.message || error?.message || "Unable to save payment update.";
+      toast.error(paymentRecorded
+        ? `Payment was recorded, but the supporting document could not be saved: ${errorMessage}`
+        : errorMessage);
       return;
     } finally {
       paymentActionSubmittingRef.current = false;
@@ -1142,11 +1267,11 @@ function Transactions() {
 
   const editPaymentModalContent = showEditPaymentModal && editPaymentOrder ? (() => {
     const shellClass = darkMode
-      ? "fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
-      : "fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/30 p-4";
+      ? "mobile-fullscreen-overlay fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
+      : "mobile-fullscreen-overlay fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/30 p-4";
     const modalClass = darkMode
-      ? "flex max-h-[90vh] w-full max-w-[520px] flex-col overflow-hidden rounded-2xl border border-slate-700 bg-[#17283d] shadow-[0_18px_60px_rgba(2,6,23,0.45)] ring-1 ring-slate-700"
-      : "flex max-h-[90vh] w-full max-w-[520px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.12)] ring-1 ring-slate-200";
+      ? "mobile-fullscreen-dialog flex min-h-0 max-h-[90vh] w-full max-w-[520px] flex-col overflow-hidden rounded-2xl border border-slate-700 bg-[#17283d] shadow-[0_18px_60px_rgba(2,6,23,0.45)] ring-1 ring-slate-700"
+      : "mobile-fullscreen-dialog flex min-h-0 max-h-[90vh] w-full max-w-[520px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.12)] ring-1 ring-slate-200";
     const titleClass = darkMode ? "text-red-400" : "text-red-500";
     const nameClass = darkMode ? "text-slate-100" : "text-slate-900";
     const subtitleClass = darkMode ? "text-slate-400" : "text-slate-500";
@@ -1158,7 +1283,7 @@ function Transactions() {
       ? "flex items-start gap-3 rounded-xl border border-red-500/40 bg-[#2b1d1d] px-3 py-3 text-sm text-red-200"
       : "flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700";
     const alertIconClass = darkMode ? "text-red-400" : "text-red-500";
-    const bodyClass = darkMode ? "flex-1 space-y-4 overflow-y-auto px-5 py-4 text-slate-200" : "flex-1 space-y-4 overflow-y-auto px-5 py-4 text-slate-700";
+    const bodyClass = darkMode ? "min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-3 py-3 text-slate-200 sm:px-5 sm:py-4" : "min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-3 py-3 text-slate-700 sm:px-5 sm:py-4";
     const labelClass = darkMode ? "text-slate-400" : "text-slate-500";
     const inputClass = darkMode
       ? "w-full rounded-xl border border-slate-600 bg-[#1d2f45] px-3 py-2.5 text-base text-slate-100 outline-none transition placeholder:text-slate-400 focus:border-red-400 focus:ring-2 focus:ring-red-500/30"
@@ -1175,7 +1300,7 @@ function Transactions() {
     const secondaryTextClass = darkMode ? "text-slate-300" : "text-slate-600";
     const tertiaryTextClass = darkMode ? "text-slate-400" : "text-slate-500";
     const strongTextClass = darkMode ? "text-slate-100" : "text-slate-900";
-    const footerClass = darkMode ? "flex justify-end gap-3 border-t border-slate-700 bg-[#1d2f45] px-5 py-4" : "flex justify-end gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4";
+    const footerClass = darkMode ? "grid grid-cols-2 gap-2 border-t border-slate-700 bg-[#1d2f45] px-4 py-3 sm:gap-3 sm:px-5 sm:py-4" : "grid grid-cols-2 gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:gap-3 sm:px-5 sm:py-4";
     const footerCancelClass = darkMode ? "rounded-xl border border-slate-600 bg-[#15263f] px-5 py-2.5 text-sm font-medium text-slate-200 transition hover:bg-slate-700" : "rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100";
     const footerSaveClass = darkMode ? "rounded-xl border border-red-500/50 bg-red-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-500" : "rounded-xl border border-red-200 bg-red-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-500";
     const proofIconBoxClass = darkMode ? "inline-flex h-5 w-5 items-center justify-center rounded bg-slate-700 text-slate-200" : "inline-flex h-5 w-5 items-center justify-center rounded bg-slate-200 text-slate-700";
@@ -1196,11 +1321,17 @@ function Transactions() {
     const submittedPaymentAmount = Number(currentProof.submittedAmount ?? currentProof.amount) || 0;
     const exceptionShortfall = Math.max(paymentSummary.requiredAmount - paymentSummary.paidAmount - submittedPaymentAmount, 0);
     const canOfferDownpaymentException = pendingPaymentProof && Boolean(currentProof.recordId) && submittedPaymentAmount > 0 && exceptionShortfall > 0;
+    const supportingDocuments = (editPaymentOrder.payment_records || []).flatMap((record) => (
+      (record.supporting_documents || []).map((document) => ({
+        ...document,
+        paymentRecordId: String(record._id),
+      }))
+    ));
 
     return (
       <div className={shellClass}>
         <div className={modalClass}>
-          <div className="flex items-center justify-between px-5 py-4">
+          <div className="flex shrink-0 items-center justify-between gap-3 px-4 py-3 sm:px-5 sm:py-4">
             <div>
               <div className={`text-[11px] font-extrabold uppercase tracking-[0.18em] ${titleClass}`}>EDIT PAYMENT</div>
               <div className={`mt-1 text-[15px] font-bold ${nameClass}`}>{editPaymentOrder.customer_name || `${editPaymentOrder.customer?.first_name || ""} ${editPaymentOrder.customer?.last_name || ""}`.trim() || "Customer"}</div>
@@ -1211,7 +1342,7 @@ function Transactions() {
             </button>
           </div>
 
-          <div className={headerPanelClass}>
+          <div className={`${headerPanelClass} shrink-0`}>
             <div className={alertClass}>
               <Info size={18} className={`mt-0.5 shrink-0 ${alertIconClass}`} />
               <span>You may update the amount paid, payment method, and transaction number.</span>
@@ -1416,6 +1547,70 @@ function Transactions() {
               );
             })()}
 
+            <section className={`${panelClass} space-y-3 p-3`}>
+              <div>
+                <h3 className={`text-[11px] font-extrabold uppercase tracking-[0.16em] ${labelClass}`}>Proof of Payment (Optional)</h3>
+                <p className={`mt-1 text-xs leading-5 ${tertiaryTextClass}`}>Uploading proof of payment is optional. You may attach a receipt or payment document for record-keeping.</p>
+              </div>
+
+              {supportingDocuments.map((document) => (
+                <div key={document._id || document.client_upload_id} className={`${previewCardClass} flex flex-wrap items-center justify-between gap-3`}>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <FileText size={17} className="shrink-0 text-red-500" aria-hidden="true" />
+                    <div className="min-w-0">
+                      <p className={`truncate text-sm font-semibold ${strongTextClass}`} title={document.original_name}>{document.original_name}</p>
+                      <p className={`mt-0.5 text-[11px] ${tertiaryTextClass}`}>
+                        Added by {document.uploaded_by_name || "Administrator"} ({document.uploaded_by_role || "admin"}) · {formatDateTimeToMMDDYYYY(document.uploaded_at)}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => viewAdminPaymentSupportingDocument(orderId, document.paymentRecordId, document._id)}
+                    className="shrink-0 rounded-lg border border-slate-500/30 px-3 py-2 text-xs font-semibold text-sky-500 transition hover:bg-sky-500/10"
+                  >
+                    View Proof
+                  </button>
+                </div>
+              ))}
+
+              <input
+                ref={editPaymentProofInputRef}
+                id="admin-supporting-payment-document"
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                onChange={handleEditPaymentProofSelection}
+                className="sr-only"
+              />
+              {editPaymentProofFile ? (
+                <div className={`${previewCardClass} space-y-3`}>
+                  {editPaymentProofFile.type === "application/pdf" ? (
+                    <iframe src={editPaymentProofPreviewUrl} title={`Preview of ${editPaymentProofFile.name}`} className="h-48 w-full rounded-lg border border-slate-500/20 bg-white" />
+                  ) : (
+                    <img src={editPaymentProofPreviewUrl} alt={`Preview of ${editPaymentProofFile.name}`} className="max-h-48 w-full rounded-lg bg-white object-contain" />
+                  )}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className={`min-w-0 flex-1 truncate text-xs font-semibold ${strongTextClass}`} title={editPaymentProofFile.name}>{editPaymentProofFile.name}</p>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <button type="button" disabled={paymentActionLoading} onClick={clearEditPaymentProofSelection} className={`${footerCancelClass} px-3 py-2 text-xs`}>Remove</button>
+                      <button type="button" disabled={paymentActionLoading} onClick={() => editPaymentProofInputRef.current?.click()} className={`${footerCancelClass} px-3 py-2 text-xs`}>Replace file</button>
+                      <button type="button" disabled={paymentActionLoading || !editPaymentOrder.payment_records?.length} onClick={handleSavePaymentSupportingDocument} className={`${footerSaveClass} px-3 py-2 text-xs`}>Save Document</button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={paymentActionLoading}
+                  onClick={() => editPaymentProofInputRef.current?.click()}
+                  className={`inline-flex w-full items-center justify-center gap-2 rounded-lg border border-dashed px-3 py-3 text-sm font-semibold transition disabled:opacity-60 ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700/60" : "border-slate-300 text-slate-700 hover:bg-slate-100"}`}
+                >
+                  <Paperclip size={16} aria-hidden="true" />
+                  Upload Image/File
+                </button>
+              )}
+            </section>
+
             {(editPaymentOrder.payment_records || []).length > 0 && (
               <section className={`${panelClass} px-3 py-3`}>
                 <h3 className={`mb-2 text-[11px] font-extrabold uppercase tracking-[0.16em] ${labelClass}`}>PAYMENT HISTORY</h3>
@@ -1474,17 +1669,6 @@ function Transactions() {
                     onChange={(event) => setEditPaymentDate(event.target.value)}
                     className={inputClass}
                   />
-                </div>
-                <div>
-                  <label htmlFor="admin-payment-proof" className={`mb-2 block text-[11px] font-extrabold uppercase tracking-[0.18em] ${labelClass}`}>PROOF OF PAYMENT <span className={`font-normal normal-case ${tertiaryTextClass}`}>(optional for cash)</span></label>
-                  <input
-                    id="admin-payment-proof"
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
-                    onChange={(event) => setEditPaymentProofFile(event.target.files?.[0] || null)}
-                    className={inputClass}
-                  />
-                  {editPaymentProofFile && <p className={`mt-1 text-xs ${tertiaryTextClass}`}>{editPaymentProofFile.name}</p>}
                 </div>
                 <div>
                   <label htmlFor="admin-payment-note" className={`mb-2 block text-[11px] font-extrabold uppercase tracking-[0.18em] ${labelClass}`}>ADMIN NOTE / REASON <span className="text-red-500">(required)</span></label>
@@ -1594,20 +1778,20 @@ function Transactions() {
             </div>
           </div>
 
-          <div className={footerClass}>
-            <button type="button" disabled={paymentActionLoading} onClick={closeEditPaymentModal} className={footerCancelClass}>Cancel</button>
+          <div className={`${footerClass} shrink-0`}>
+            <button type="button" disabled={paymentActionLoading} onClick={closeEditPaymentModal} className={`${footerCancelClass} min-w-0 text-center leading-tight`}>Cancel</button>
             {pendingPaymentProof && (
-              <button type="button" disabled={paymentActionLoading} onClick={handleRejectPaymentProof} className={footerCancelClass}>Reject Proof</button>
+              <button type="button" disabled={paymentActionLoading} onClick={handleRejectPaymentProof} className={`${footerCancelClass} min-w-0 text-center leading-tight`}>Reject Proof</button>
             )}
             {canOfferDownpaymentException && (
               <button
                 type="button"
                 onClick={handleRequestDownpaymentException}
                 disabled={paymentActionLoading}
-                className={footerCancelClass}
+                className={`${footerCancelClass} min-w-0 text-center leading-tight`}
               >Accept Below Required Downpayment</button>
             )}
-            <button type="button" disabled={paymentActionLoading} onClick={handleSavePaymentEdit} className={footerSaveClass}>{paymentActionLoading ? "Saving..." : "Save Changes"}</button>
+            <button type="button" disabled={paymentActionLoading} onClick={handleSavePaymentEdit} className={`${footerSaveClass} min-w-0 text-center leading-tight`}>{paymentActionLoading ? "Saving..." : "Save Changes"}</button>
           </div>
         </div>
       </div>
@@ -1814,7 +1998,7 @@ function Transactions() {
                               <td className="p-4"><span className={`inline-flex rounded-md px-3 py-1 text-xs font-semibold ${projectCategory === "Completed" ? "bg-rose-50 text-rose-700" : "bg-violet-50 text-violet-700"}`}>{projectCategory}</span></td>
                               {activeTable === "receipts" && <td className="p-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getWarrantyStatusClass(warrantyStatus)}`}>{warrantyStatus}</span></td>}
                               <td className="p-4"><div className="flex flex-col items-start gap-1.5"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${isFullyPaid ? (darkMode ? "border border-emerald-400/40 bg-emerald-500/15 text-emerald-300" : "bg-emerald-100 text-emerald-700") : (darkMode ? "border border-amber-400/40 bg-amber-500/15 text-amber-300" : "bg-amber-50 text-amber-700")}`}>{statusLabel}</span>{needsTransactionApproval && <span className="inline-flex rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">Awaiting transaction approval</span>}{showNeedsConfirmation && (<span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-rose-400/40 bg-rose-500/15 text-rose-300" : "bg-rose-100 text-rose-700"}`}><span aria-hidden="true">🔔</span>Needs Confirmation</span>)}</div></td>
-                              <td className="p-4"><div className="flex flex-wrap justify-center gap-2">{user?.role === "admin" && needsTransactionApproval && <button type="button" disabled={Boolean(transactionApprovalOrderId)} title="Approve transaction and move to Progress Monitor" onClick={() => approveTransactionForProgress(order)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 px-2 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-200 disabled:opacity-60"><CheckCircle size={16} />{transactionApprovalOrderId === String(order._id || order.id) ? "Approving..." : "Approve to Progress"}</button>}<button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>{isFullyPaid ? (<button type="button" title="Fully paid" aria-label="Fully paid. Payment editing is locked." disabled className={`cursor-not-allowed rounded-lg p-2 ${darkMode ? "bg-slate-700 text-slate-400" : "bg-slate-100 text-slate-500"}`}><Lock size={18} aria-hidden="true" /></button>) : (<button type="button" title="Add Payment" aria-label="Add Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>)}<button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button></div></td>
+                              <td className="p-4"><div className="flex flex-wrap justify-center gap-2">{user?.role === "admin" && needsTransactionApproval && <button type="button" disabled={Boolean(transactionApprovalOrderId)} title={transactionApprovalOrderId === String(order._id || order.id) ? "Approving transaction..." : "Approve transaction and move to Progress Monitor"} aria-label={transactionApprovalOrderId === String(order._id || order.id) ? "Approving transaction" : "Approve transaction and move to Progress Monitor"} onClick={() => approveTransactionForProgress(order)} className="inline-flex size-9 items-center justify-center rounded-lg bg-emerald-100 text-emerald-800 transition hover:bg-emerald-200 disabled:opacity-60"><CheckCircle size={16} aria-hidden="true" /></button>}<button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>{isFullyPaid ? (<button type="button" title="Fully paid" aria-label="Fully paid. Payment editing is locked." disabled className={`cursor-not-allowed rounded-lg p-2 ${darkMode ? "bg-slate-700 text-slate-400" : "bg-slate-100 text-slate-500"}`}><Lock size={18} aria-hidden="true" /></button>) : (<button type="button" title="Add Payment" aria-label="Add Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>)}<button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button></div></td>
                             </>
                           )}
                         </tr>
@@ -1903,7 +2087,7 @@ function Transactions() {
                       </div>
                     )}
                     <div className="mt-3 flex justify-end gap-2">
-                      {user?.role === "admin" && needsTransactionApproval && <button type="button" disabled={Boolean(transactionApprovalOrderId)} onClick={() => approveTransactionForProgress(order)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 px-2.5 py-2 text-xs font-semibold text-emerald-800 disabled:opacity-60"><CheckCircle size={15} />{transactionApprovalOrderId === String(order._id || order.id) ? "Approving..." : "Approve to Progress"}</button>}
+                      {user?.role === "admin" && needsTransactionApproval && <button type="button" disabled={Boolean(transactionApprovalOrderId)} title={transactionApprovalOrderId === String(order._id || order.id) ? "Approving transaction..." : "Approve transaction and move to Progress Monitor"} aria-label={transactionApprovalOrderId === String(order._id || order.id) ? "Approving transaction" : "Approve transaction and move to Progress Monitor"} onClick={() => approveTransactionForProgress(order)} className="inline-flex size-9 items-center justify-center rounded-lg bg-emerald-100 text-emerald-800 transition hover:bg-emerald-200 disabled:opacity-60"><CheckCircle size={15} aria-hidden="true" /></button>}
                       <button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>
                       {isFullyPaid ? (
                         <button type="button" title="Fully paid" aria-label="Fully paid. Payment editing is locked." disabled className="cursor-not-allowed rounded-lg bg-slate-100 p-2 text-slate-500">

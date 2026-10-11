@@ -26,6 +26,7 @@ export const uploadFiles = async (files = [], onProgress, options = {}) => {
   if (["product-images", "review-photos", "payment-proofs", "progress-media"].includes(options.purpose)) {
     const fieldNames = options.fieldNames || [];
     const formData = new FormData();
+    Object.entries(options.formFields || {}).forEach(([key, value]) => formData.append(key, String(value)));
     Array.from(files).forEach((file, index) => {
       const fieldName = options.purpose === "payment-proofs" ? "file" : fieldNames[index] || "files";
       formData.append(fieldName, file, file.name);
@@ -42,7 +43,7 @@ export const uploadFiles = async (files = [], onProgress, options = {}) => {
       "review-photos": "review photos",
       "progress-media": "progress proof files",
     };
-    const uploadPath = uploadPaths[options.purpose];
+    const uploadPath = options.uploadPath || uploadPaths[options.purpose];
     const uploadLabel = uploadLabels[options.purpose];
 
     return new Promise((resolve, reject) => {
@@ -173,5 +174,15 @@ export const uploadFiles = async (files = [], onProgress, options = {}) => {
 
   return { success: true, files: uploadedFiles };
 };
+
+export const uploadAdminPaymentDocument = (orderId, recordId, file, uploadId) => uploadFiles(
+  [file],
+  undefined,
+  {
+    purpose: "payment-proofs",
+    uploadPath: `/orders/admin/${encodeURIComponent(orderId)}/payment-records/${encodeURIComponent(recordId)}/documents`,
+    formFields: { upload_id: uploadId },
+  },
+);
 
 export default { uploadFiles };

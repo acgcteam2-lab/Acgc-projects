@@ -18,9 +18,12 @@ import {
   respondToContract,
   cancelCustomerOrder,
   submitCustomerPaymentProof,
+  addAdminPaymentSupportingDocument,
+  viewAdminPaymentSupportingDocument,
   respondToInstallationSchedule,
   sendWalkInApprovalEmail,
 } from "../controllers/orderController.js";
+import { paymentProofUploadMiddleware } from "../controllers/uploadController.js";
 
 const router = express.Router();
 
@@ -40,6 +43,19 @@ router.get("/admin/list", authMiddleware, staffModulePermission((req) => req.que
 router.get("/admin/:orderId", authMiddleware, staffModulePermission((req) => req.query.module), getAdminOrderById);
 router.post("/admin/create", authMiddleware, roleMiddleware("admin"), createOrderAsAdmin);
 router.put("/admin/:orderId/status", authMiddleware, roleMiddleware("admin"), updateOrderStatus);
+router.post(
+  "/admin/:orderId/payment-records/:recordId/documents",
+  authMiddleware,
+  roleMiddleware(["admin", "super_admin"]),
+  paymentProofUploadMiddleware,
+  addAdminPaymentSupportingDocument,
+);
+router.get(
+  "/admin/:orderId/payment-records/:recordId/documents/:documentId",
+  authMiddleware,
+  roleMiddleware(["admin", "super_admin"]),
+  viewAdminPaymentSupportingDocument,
+);
 router.delete("/admin/:orderId/review", authMiddleware, roleMiddleware("admin"), deleteOrderReview);
 router.put("/admin/:orderId/inspection", authMiddleware, roleMiddleware("admin"), updateOrderInspection);
 router.put("/admin/:orderId/progress", authMiddleware, roleMiddleware("admin"), updateOrderProgress);

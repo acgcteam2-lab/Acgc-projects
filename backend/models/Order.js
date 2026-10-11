@@ -276,6 +276,20 @@ const DownpaymentExceptionSchema = new mongoose.Schema({
   approved_by: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
 }, { _id: false });
 
+const PaymentSupportingDocumentSchema = new mongoose.Schema({
+  client_upload_id: { type: String, trim: true, required: true },
+  original_name: { type: String, trim: true, required: true, maxlength: 255 },
+  public_id: { type: String, trim: true, default: "" },
+  resource_type: { type: String, enum: ["image", "raw"], default: "raw" },
+  format: { type: String, trim: true, required: true },
+  storage: { type: String, enum: ["cloudinary", "local"], required: true },
+  storage_key: { type: String, trim: true, default: "" },
+  uploaded_by: { type: mongoose.Schema.Types.ObjectId, required: true },
+  uploaded_by_role: { type: String, enum: ["admin", "super_admin"], required: true },
+  uploaded_by_name: { type: String, trim: true, default: "" },
+  uploaded_at: { type: Date, default: Date.now },
+}, { timestamps: false });
+
 const PaymentRecordSchema = new mongoose.Schema({
   request_id: { type: String, trim: true, default: "" },
   record_source: { type: String, enum: ["customer_submitted", "admin_recorded"], default: "customer_submitted" },
@@ -286,6 +300,7 @@ const PaymentRecordSchema = new mongoose.Schema({
   transaction_number: { type: String, trim: true, default: "" },
   proof_file_name: { type: String, trim: true, default: "" },
   proof_file_url: { type: String, trim: true, default: "" },
+  supporting_documents: { type: [PaymentSupportingDocumentSchema], default: [] },
   submitted_at: { type: Date, default: Date.now },
   payment_date: { type: Date, default: null },
   recorded_at: { type: Date, default: null },

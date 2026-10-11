@@ -126,6 +126,47 @@ export const getPrivateRawDownloadUrl = (publicId, format) => {
   });
 };
 
+export const uploadPrivatePaymentDocumentBuffer = (buffer, { publicId, resourceType }) => {
+  cloudinary.config(getCloudinaryConfig());
+
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        public_id: publicId,
+        resource_type: resourceType,
+        type: "authenticated",
+        unique_filename: false,
+        overwrite: false,
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        if (!result?.public_id) return reject(new Error("Cloudinary did not return a private payment document ID."));
+        return resolve(result);
+      }
+    );
+    uploadStream.end(buffer);
+  });
+};
+
+export const getPrivatePaymentDocumentDownloadUrl = (publicId, format, resourceType) => {
+  cloudinary.config(getCloudinaryConfig());
+  return cloudinary.utils.private_download_url(publicId, format, {
+    resource_type: resourceType,
+    type: "authenticated",
+    attachment: false,
+    expires_at: Math.floor(Date.now() / 1000) + 300,
+  });
+};
+
+export const deletePrivatePaymentDocument = (publicId, resourceType) => {
+  cloudinary.config(getCloudinaryConfig());
+  return cloudinary.uploader.destroy(publicId, {
+    resource_type: resourceType,
+    type: "authenticated",
+    invalidate: true,
+  });
+};
+
 export const deletePrivateRawAsset = (publicId) => {
   cloudinary.config(getCloudinaryConfig());
   return cloudinary.uploader.destroy(publicId, {
