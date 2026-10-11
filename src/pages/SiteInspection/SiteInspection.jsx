@@ -17,6 +17,7 @@ import { toJpeg } from "html-to-image";
 import jsPDF from "jspdf";
 
 import { getAdminOrders, getAdminOrder, generateContract, updateOrderInspection, updateOrderStatus, createInspection, sendWalkInApprovalEmail } from "@/api/orders";
+import { subscribeToRealtime } from "@/lib/realtimeEvents";
 import { buildContractSnapshot, hasContractSnapshotChanged, hasExistingContract } from "./contractState";
 import { getCustomerPaymentProof, getPaymentSummary } from "@/pages/Transactions/paymentProofUtils";
 import { getProducts } from "@/api/products";
@@ -680,8 +681,8 @@ function SiteInspection() {
     setCurrentPage(1);
   }, [activeTab, searchQuery, statusFilter, cancelledInspections.length, inspections.length]);
 
-  const fetchSiteInspections = async () => {
-    setInspectionsLoading(true);
+  const fetchSiteInspections = async (showLoading = true) => {
+    if (showLoading) setInspectionsLoading(true);
     try {
       const [siteResp, cancelledResp] = await Promise.all([
         getAdminOrders({ status: "site_inspection", module: "site_inspection" }),
@@ -694,7 +695,7 @@ function SiteInspection() {
       setInspections([]);
       setCancelledInspections([]);
     } finally {
-      setInspectionsLoading(false);
+      if (showLoading) setInspectionsLoading(false);
     }
   };
 
@@ -1717,6 +1718,9 @@ function SiteInspection() {
   useEffect(() => {
     fetchSiteInspections();
     fetchProducts();
+    const unsubscribeRealtime = subscribeToRealtime("orders", () => {
+      if (document.visibilityState === "visible") fetchSiteInspections(false);
+    });
     // If navigated with ?view=orderId, open that inspection
     const params = new URLSearchParams(window.location.search || "");
     const viewId = params.get("view");
@@ -1730,6 +1734,7 @@ function SiteInspection() {
         }
       })();
     }
+    return unsubscribeRealtime;
   }, []);
 
   useEffect(() => {

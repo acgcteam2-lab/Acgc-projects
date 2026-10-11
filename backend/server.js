@@ -1,4 +1,5 @@
 import express from "express";
+import { createServer } from "node:http";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -13,6 +14,7 @@ import orderRoutes from "./routes/orders.js";
 import cartRoutes from "./routes/cart.js";
 import { connectMongo, getLastMongoError, hasMongoUri } from "./config/db.js";
 import { startSystemBackupScheduler } from "./services/backupService.js";
+import { createRealtimeServer, realtimeResponseMiddleware } from "./services/realtime.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 if (process.env.NODE_ENV !== "production" && process.env.VERCEL !== "1") {
@@ -36,6 +38,9 @@ if (!process.env.MONGO_URI && isVerbose) {
 }
 
 const app = express();
+const httpServer = createServer(app);
+const realtimeServer = createRealtimeServer(httpServer);
+app.set("realtime", realtimeServer);
 const PORT = parseInt(process.env.PORT, 10) || 5000;
 
 if (isVerbose) {
@@ -49,7 +54,7 @@ app.use(
   cors({
     origin: true,
     credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Client-Id"],
   })
 );
 app.use(express.json({ limit: "15mb" }));
@@ -114,6 +119,8 @@ app.use("/api", (req, res, next) => {
   });
 });
 
+app.use("/api", realtimeResponseMiddleware(realtimeServer));
+
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/products", productRoutes);
@@ -171,8 +178,8 @@ const connectWithRetry = async (attempt = 1) => {
   }
 };
 
-if (!isProduction) {
-  app.listen(PORT, () => {
+if (process.env.VERCEL !== "1") {
+  httpServer.listen(PORT, () => {
     if (isVerbose) {
       console.log(`Server listening on http://localhost:${PORT}`);
       console.log(`API base URL: http://localhost:${PORT}/api`);

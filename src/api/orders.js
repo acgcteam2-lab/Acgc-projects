@@ -2,9 +2,19 @@ import { apiFetch } from "./client";
 
 export const getOrders = () => apiFetch("/orders", { cache: "no-store" });
 
+const inFlightAdminOrderRequests = new Map();
+
 export const getAdminOrders = (params = {}) => {
   const query = new URLSearchParams(params).toString();
-  return apiFetch(`/orders/admin/list${query ? `?${query}` : ""}`, { cache: "no-store" });
+  const path = `/orders/admin/list${query ? `?${query}` : ""}`;
+  const existingRequest = inFlightAdminOrderRequests.get(path);
+  if (existingRequest) return existingRequest;
+
+  const request = apiFetch(path, { cache: "no-store" }).finally(() => {
+    inFlightAdminOrderRequests.delete(path);
+  });
+  inFlightAdminOrderRequests.set(path, request);
+  return request;
 };
 
 export const getAdminOrder = (orderId, module) => {

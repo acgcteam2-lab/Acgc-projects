@@ -11,6 +11,7 @@ import {
 } from "@/api/auth";
 import { normalizeUserProfile } from "@/lib/userProfile";
 import { recordActivity } from "@/lib/activityLog";
+import { subscribeToRealtime } from "@/lib/realtimeEvents";
 
 let authInitializationStarted = false;
 const AuthContext = createContext(null);
@@ -131,6 +132,13 @@ export function AuthProvider({ children }) {
       throw error;
     }
   }, []);
+
+  useEffect(() => {
+    if (!accountId || loading) return undefined;
+    return subscribeToRealtime("profile", () => {
+      refreshUser().catch(() => {});
+    });
+  }, [accountId, loading, refreshUser]);
 
   const loadAdminStatus = async () => {
     if (adminStatusFetching.current) {

@@ -665,6 +665,19 @@ const OrderSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    transaction_approved: {
+      type: Boolean,
+      default: false,
+    },
+    transaction_approved_at: {
+      type: Date,
+      default: null,
+    },
+    transaction_approved_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Admin",
+      default: null,
+    },
     contractSnapshot: {
       type: Object,
       default: {},
@@ -775,5 +788,11 @@ const OrderSchema = new mongoose.Schema(
 );
 
 OrderSchema.index({ customer: 1, createdAt: -1 });
+OrderSchema.index({ status: 1, createdAt: -1 });
+OrderSchema.index({ contract_status: 1, createdAt: -1 });
+OrderSchema.index({ payment_proof_submitted_at: -1 });
+OrderSchema.index({ updatedAt: -1 });
+OrderSchema.index({ customer_email: 1 });
+OrderSchema.index({ tracking: 1 });
 
 export default mongoose.model("Order", OrderSchema);

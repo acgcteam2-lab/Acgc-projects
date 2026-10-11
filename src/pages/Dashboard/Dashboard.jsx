@@ -9,6 +9,7 @@ import {
   PanelRightOpen,
 } from "lucide-react";
 import { getAdminOrders, getAdminOrder, updateOrderStatus } from "@/api/orders";
+import { subscribeToRealtime } from "@/lib/realtimeEvents";
 import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { getFinalProjectCost } from "@/lib/orderPricing";
 import { recordActivity } from "@/lib/activityLog";
@@ -305,40 +306,37 @@ function Dashboard() {
     fetchContractNotifications();
 
     const refreshOrders = () => {
-      if (document.visibilityState === "visible") fetchOrders(false);
+      if (document.visibilityState === "visible") {
+        fetchOrders(false);
+        fetchContractNotifications();
+      }
     };
-    const interval = window.setInterval(refreshOrders, 15000);
+    const unsubscribeRealtime = subscribeToRealtime("orders", refreshOrders);
     window.addEventListener("focus", refreshOrders);
     document.addEventListener("visibilitychange", refreshOrders);
 
     return () => {
       active = false;
-      window.clearInterval(interval);
       window.removeEventListener("focus", refreshOrders);
       document.removeEventListener("visibilitychange", refreshOrders);
+      unsubscribeRealtime();
     };
   }, []);
 
   async function fetchContractNotifications() {
     setContractNotificationsLoading(true);
     try {
-      const [acceptedResp, declinedResp] = await Promise.all([
-        getAdminOrders({ contract_status: "accepted", module: "dashboard" }),
-        getAdminOrders({ contract_status: "declined", module: "dashboard" }),
-      ]);
+      const response = await getAdminOrders({
+        contract_status: "accepted,declined",
+        module: "dashboard",
+        limit: 100,
+      });
 
-      const notifications = [
-        ...(acceptedResp.orders || []).map((order) => ({
-          ...order,
-          notificationType: "accepted",
-          read: false,
-        })),
-        ...(declinedResp.orders || []).map((order) => ({
-          ...order,
-          notificationType: "declined",
-          read: false,
-        })),
-      ].sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
+      const notifications = (response.orders || []).map((order) => ({
+        ...order,
+        notificationType: String(order.contract_status || "").toLowerCase() === "declined" ? "declined" : "accepted",
+        read: false,
+      })).sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
 
       setContractNotifications(notifications);
     } catch (error) {

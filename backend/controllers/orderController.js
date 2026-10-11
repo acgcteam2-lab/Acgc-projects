@@ -678,11 +678,19 @@ export const getAdminOrders = async (req, res) => {
       return res.status(403).json({ success: false, message: "Staff access required" });
     }
 
-    const { status, contract_status, payment_proof_submitted } = req.query;
+    const { status, contract_status, payment_proof_submitted, search, module, view } = req.query;
     const filter = {};
+    const parseCsv = (value) => String(value || "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
 
-    if (status) filter.status = status;
-    if (contract_status) filter.contract_status = contract_status;
+    const statusValues = parseCsv(status);
+    const contractStatusValues = parseCsv(contract_status);
+    if (statusValues.length === 1) filter.status = statusValues[0];
+    if (statusValues.length > 1) filter.status = { $in: statusValues };
+    if (contractStatusValues.length === 1) filter.contract_status = contractStatusValues[0];
+    if (contractStatusValues.length > 1) filter.contract_status = { $in: contractStatusValues };
     if (payment_proof_submitted === "true") {
       filter.payment_proof_submitted_at = { $exists: true, $ne: null };
     }
@@ -693,13 +701,72 @@ export const getAdminOrders = async (req, res) => {
         { contract_status: null },
       ];
     }
+    if (search) {
+      const safeSearch = String(search).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (safeSearch) {
+        const searchRegex = new RegExp(safeSearch, "i");
+        filter.$and = [
+          ...(filter.$and || []),
+          {
+            $or: [
+              { tracking: searchRegex },
+              { customer_name: searchRegex },
+              { customer_email: searchRegex },
+              { customer_phone: searchRegex },
+            ],
+          },
+        ];
+      }
+    }
 
-    const orders = await Order.find(filter)
+    const limitValue = Math.min(Math.max(Number(req.query.limit) || 0, 0), 500);
+    const pageValue = Math.max(Number(req.query.page) || 1, 1);
+    const skipValue = limitValue ? (pageValue - 1) * limitValue : 0;
+    const baseFields = [
+      "customer customer_name customer_email customer_phone shipping_address items total_amount estimated_cost final_project_cost",
+      "payment_terms downpayment_amount required_downpayment_amount amount_paid payment_status payment_records payment_proof_amount payment_proof_submitted_at payment_proof_confirmed_at payment_proof_file_name payment_proof_file_url payment_method transaction_number",
+      "status order_type contract_status contractStatus contractGenerated contractId contractVersion currentContractVersion contractGeneratedAt contractNeedsRegeneration contractSentAt contract_email_status contract_email_error contractDeclineReason contractDeclinedAt acceptedByCustomer acceptedAt acceptanceMethod transactionCreated transactionCreatedAt transaction_approved",
+      "tracking inspection_status inspection_completed_at inspection_date estimated_installation_date inspection_notes issues_found",
+      "progress progress_stages attachments warranty_assignment_mode warranty_period custom_warranty_days warranty_start_date warranty_expiry_date warranty_status warranty_terms review signed_contract_url contract_number contract_signed_date acceptance_method createdAt updatedAt",
+    ].join(" ");
+    const moduleFields = {
+      dashboard: [
+        "customer customer_name customer_email customer_phone items total_amount estimated_cost final_project_cost",
+        "status contract_status contractStatus contractSentAt contractDeclineReason acceptedByCustomer acceptedAt transactionCreated tracking createdAt updatedAt",
+      ].join(" "),
+      notifications: [
+        "customer customer_name customer_email customer_phone items total_amount final_project_cost",
+        "status contract_status contractStatus contractSentAt payment_status payment_records payment_proof_submitted_at tracking inspection_status inspection_date createdAt updatedAt",
+      ].join(" "),
+      transactions: baseFields,
+      site_inspection: baseFields,
+      progress_monitoring: baseFields,
+      profile: baseFields,
+    };
+    const selectedFields = moduleFields[view || module] || baseFields;
+
+    const query = Order.find(filter)
+      .select(selectedFields)
       .populate("items.product_id", "image_url image images name category product_type width height measurement_unit standard_size")
       .populate("customer", "first_name last_name email phone street_address city province zip_code")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
-    res.json({ success: true, orders });
+    if (skipValue) query.skip(skipValue);
+    if (limitValue) query.limit(limitValue);
+
+    const [orders, total] = await Promise.all([
+      query,
+      limitValue ? Order.countDocuments(filter) : Promise.resolve(undefined),
+    ]);
+
+    res.json({
+      success: true,
+      orders,
+      pagination: limitValue
+        ? { page: pageValue, limit: limitValue, total, totalPages: Math.max(1, Math.ceil(total / limitValue)) }
+        : undefined,
+    });
   } catch (error) {
     console.error("Get admin orders error:", error);
     res.status(500).json({ success: false, message: "Unable to fetch orders", error: error.message });
@@ -765,6 +832,7 @@ export const updateOrderStatus = async (req, res) => {
       acceptedAt,
       transactionCreated,
       transactionCreatedAt,
+      transaction_approval_action,
     } = req.body;
 
     const order = await Order.findById(orderId);
@@ -784,6 +852,70 @@ export const updateOrderStatus = async (req, res) => {
       status: order.warranty_status,
       items: (order.items || []).map((item) => [item.warranty_period, item.warranty_start_date, item.warranty_expiry_date, item.warranty_status]),
     });
+
+    const transactionApprovalAction = String(transaction_approval_action?.action || transaction_approval_action || "").toLowerCase();
+    if (transactionApprovalAction) {
+      if (transactionApprovalAction !== "approve") {
+        return res.status(400).json({ success: false, message: "Invalid transaction approval action." });
+      }
+      if (order.transaction_approved) {
+        return res.json({ success: true, duplicate: true, order, message: "Transaction already approved." });
+      }
+      const contractAccepted = String(order.contract_status || "").toLowerCase() === "accepted";
+      const validOnlineAcceptance = order.order_type !== "walk_in_customer"
+        && contractAccepted
+        && order.acceptance_method === "online"
+        && order.acceptedByCustomer === true;
+      const validWalkInAcceptance = order.order_type === "walk_in_customer"
+        && contractAccepted
+        && order.acceptance_method === "walk_in_signed_contract"
+        && Boolean(order.signed_contract_url)
+        && Boolean(order.contract_signed_date);
+      if (!validOnlineAcceptance && !validWalkInAcceptance) {
+        return res.status(400).json({ success: false, message: "A verified accepted contract is required before approving this transaction." });
+      }
+      const approvedAt = new Date();
+      const acceptanceFilter = validWalkInAcceptance
+        ? {
+            acceptance_method: "walk_in_signed_contract",
+            signed_contract_url: { $ne: "" },
+            contract_signed_date: { $ne: null },
+          }
+        : { acceptance_method: "online", acceptedByCustomer: true };
+      const approvedOrder = await Order.findOneAndUpdate(
+        {
+          _id: order._id,
+          status: order.status,
+          contract_status: "accepted",
+          transaction_approved: { $ne: true },
+          ...acceptanceFilter,
+        },
+        {
+          $set: {
+            transaction_approved: true,
+            transaction_approved_at: approvedAt,
+            transaction_approved_by: req.user.id,
+            transactionCreated: true,
+            transactionCreatedAt: order.transactionCreatedAt || approvedAt,
+            status: "approved",
+          },
+        },
+        { new: true, runValidators: true },
+      );
+      if (!approvedOrder) {
+        const latestOrder = await Order.findById(order._id);
+        if (latestOrder?.transaction_approved) {
+          return res.json({ success: true, duplicate: true, order: latestOrder, message: "Transaction already approved." });
+        }
+        return res.status(409).json({ success: false, message: "The contract changed while this transaction was being approved. Refresh and review the latest record." });
+      }
+      res.json({ success: true, order: approvedOrder });
+      void sendOrderNotification("transaction_approved", approvedOrder, {
+        customerEmail: approvedOrder.customer_email || approvedOrder.customer?.email,
+        approvedAt,
+      });
+      return;
+    }
 
     const requestedStatus = String(status || order.status || "").toLowerCase();
     const requestedContractStatus = String(contract_status || order.contract_status || "").toLowerCase();
@@ -1471,42 +1603,63 @@ export const respondToContract = async (req, res) => {
 
     if (action === "accept") {
       const acceptedAt = new Date();
-      order.contract_status = "accepted";
-      order.status = "contract_accepted";
-      order.contractStatus = "Accepted";
-      order.acceptance_method = "online";
-      order.acceptanceMethod = "Online";
-      order.acceptedByCustomer = true;
-      order.acceptedAt = acceptedAt;
-      order.contract_signed_date = acceptedAt;
-      order.inspection_status = "completed";
-      order.inspection_completed_at = acceptedAt;
+      const acceptanceUpdate = {
+        contract_status: "accepted",
+        status: "contract_accepted",
+        contractStatus: "Accepted",
+        acceptance_method: "online",
+        acceptanceMethod: "Online",
+        acceptedByCustomer: true,
+        acceptedAt,
+        contract_signed_date: acceptedAt,
+        inspection_status: "completed",
+        inspection_completed_at: acceptedAt,
+      };
       if (order.transactionCreated !== true) {
-        order.transactionCreated = true;
-        order.transactionCreatedAt = acceptedAt;
+        acceptanceUpdate.transactionCreated = true;
+        acceptanceUpdate.transactionCreatedAt = acceptedAt;
       }
       const activeContract = Array.isArray(order.contractHistory)
-        ? order.contractHistory.find((entry) => entry.status === "Current")
-        : null;
-      if (activeContract) {
-        activeContract.status = "Accepted";
-        activeContract.acceptedAt = acceptedAt;
-        activeContract.acceptanceMethod = "Online";
+        ? order.contractHistory.findIndex((entry) => entry.status === "Current")
+        : -1;
+      if (activeContract >= 0) {
+        acceptanceUpdate[`contractHistory.${activeContract}.status`] = "Accepted";
+        acceptanceUpdate[`contractHistory.${activeContract}.acceptedAt`] = acceptedAt;
+        acceptanceUpdate[`contractHistory.${activeContract}.acceptanceMethod`] = "Online";
       }
-    } else {
-      order.contract_status = "declined";
-      order.status = "site_inspection";
-      order.contractStatus = "Declined";
-      order.contractDeclineReason = String(declineReason).trim();
-      order.contractDeclinedAt = new Date();
+      const acceptedOrder = await Order.findOneAndUpdate(
+        {
+          _id: order._id,
+          customer: req.user.id,
+          status: order.status,
+          contract_status: order.contract_status,
+          acceptedByCustomer: { $ne: true },
+        },
+        { $set: acceptanceUpdate },
+        { new: true, runValidators: true },
+      );
+      if (!acceptedOrder) {
+        const latestOrder = await Order.findById(order._id);
+        if (latestOrder && (latestOrder.status === "contract_accepted" || latestOrder.contract_status === "accepted")) {
+          return res.json({ success: true, duplicate: true, order: latestOrder, message: "Contract already accepted." });
+        }
+        return res.status(409).json({ success: false, message: "The contract changed while you were accepting it. Refresh and review the latest contract." });
+      }
+
+      res.json({ success: true, order: acceptedOrder });
+      void sendOrderNotification("contract_accepted", acceptedOrder, { customerEmail: req.user.email });
+      return;
     }
+
+    order.contract_status = "declined";
+    order.status = "site_inspection";
+    order.contractStatus = "Declined";
+    order.contractDeclineReason = String(declineReason).trim();
+    order.contractDeclinedAt = new Date();
 
     await order.save();
 
     res.json({ success: true, order });
-    if (action === "accept") {
-      void sendOrderNotification("contract_accepted", order, { customerEmail: req.user.email });
-    }
   } catch (error) {
     console.error("Respond to contract error:", error);
     res.status(500).json({ success: false, message: "Unable to update contract response", error: error.message });

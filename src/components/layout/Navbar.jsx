@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Bell, Moon, Sun, ClipboardCheck, CheckCircle2, XCircle, ShoppingCart, CheckCheck, CreditCard, Send, LogOut } from "lucide-react";
 import { getAdminOrders } from "@/api/orders";
+import { subscribeToRealtime } from "@/lib/realtimeEvents";
 import { formatDateTimeToMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
-import { getAdminNotificationId, getAdminReadNotificationIds, markAdminNotificationRead, markAdminNotificationsRead, sortAdminNotificationsNewestFirst } from "@/lib/notificationState";
+import { ADMIN_READ_NOTIFICATIONS_KEY, getAdminNotificationId, getAdminReadNotificationIds, markAdminNotificationRead, markAdminNotificationsRead, sortAdminNotificationsNewestFirst } from "@/lib/notificationState";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAdminSiteInspectionNotificationMessage } from "@/pages/CustomerDashboard/orderStatusUtils";
@@ -98,29 +99,53 @@ function Navbar() {
 
 export default Navbar;
 
+const adminNotificationCache = {
+  ownerId: "",
+  items: [],
+  initialized: false,
+};
+
 function NotificationMenu() {
   const [open, setOpen] = useState(false);
-  const [notifications, setNotifications] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const ownerId = String(user?._id || user?.id || "");
+  const [notifications, setNotifications] = useState(() => (
+    adminNotificationCache.ownerId === ownerId ? adminNotificationCache.items : []
+  ));
+  const [loading, setLoading] = useState(() => (
+    adminNotificationCache.ownerId !== ownerId || !adminNotificationCache.initialized
+  ));
   const [notificationFilter, setNotificationFilter] = useState("all");
   const { darkMode } = useAdminTheme();
-  const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
   useEffect(() => {
     let active = true;
-    let hasFetched = false;
+    let requestInFlight = false;
+    let refreshQueued = false;
+    if (adminNotificationCache.ownerId !== ownerId) {
+      adminNotificationCache.ownerId = ownerId;
+      adminNotificationCache.items = [];
+      adminNotificationCache.initialized = false;
+    }
     const staffModules = user?.staff_access?.modules || {};
     const canReadModule = (moduleKey) => user?.role !== "skilled_worker" || (
       staffModules[moduleKey]?.enabled === true && staffModules[moduleKey]?.actions?.view === true
     );
     const fetchModuleOrders = (params, moduleKey) => canReadModule(moduleKey)
-      ? getAdminOrders({ ...params, module: moduleKey })
+      ? getAdminOrders({ ...params, module: moduleKey, view: "notifications", limit: 100 })
       : Promise.resolve({ orders: [] });
 
     const fetchNotifications = async () => {
-      if (!hasFetched) setLoading(true);
+      if (!active) return;
+      if (requestInFlight) {
+        refreshQueued = true;
+        return;
+      }
+      requestInFlight = true;
+      const showInitialLoading = !adminNotificationCache.initialized;
+      if (showInitialLoading) setLoading(true);
       try {
         const [newOrders, inspections, accepted, declined, sentContracts, paymentSubmissions] = await Promise.all([
           fetchModuleOrders({ status: "order_submitted" }, "dashboard"),
@@ -225,23 +250,51 @@ function NotificationMenu() {
           .slice(0, 8)
           .map((item) => ({ ...item, read: readNotificationIds.has(item.id) }));
 
+        adminNotificationCache.ownerId = ownerId;
+        adminNotificationCache.items = items;
+        adminNotificationCache.initialized = true;
         if (active) setNotifications(items);
       } catch (error) {
         console.error("Failed to load admin notifications:", error);
-        if (active) setNotifications([]);
+        if (active && !adminNotificationCache.initialized) setNotifications([]);
       } finally {
-        hasFetched = true;
+        requestInFlight = false;
         if (active) setLoading(false);
+        if (active && refreshQueued) {
+          refreshQueued = false;
+          scheduleRefresh();
+        }
       }
     };
 
     fetchNotifications();
-    const refreshInterval = window.setInterval(fetchNotifications, 30000);
+    let refreshTimeout = null;
+    const scheduleRefresh = () => {
+      if (refreshTimeout) window.clearTimeout(refreshTimeout);
+      refreshTimeout = window.setTimeout(() => {
+        refreshTimeout = null;
+        if (document.visibilityState === "visible") fetchNotifications();
+      }, 80);
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") scheduleRefresh();
+    };
+    const refreshReadState = (event) => {
+      if (event.key === ADMIN_READ_NOTIFICATIONS_KEY) scheduleRefresh();
+    };
+    const unsubscribeRealtime = subscribeToRealtime(["orders", "reviews"], scheduleRefresh);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener("storage", refreshReadState);
     return () => {
       active = false;
-      window.clearInterval(refreshInterval);
+      if (refreshTimeout) window.clearTimeout(refreshTimeout);
+      unsubscribeRealtime();
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.removeEventListener("storage", refreshReadState);
     };
-  }, [user]);
+  }, [user, ownerId]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
   const filteredNotifications = notifications.filter((notification) => (
@@ -352,7 +405,11 @@ function NotificationMenu() {
 
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {loading ? (
-              <div className={`px-3 py-6 text-center text-sm sm:px-4 sm:py-8 ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Loading admin activity...</div>
+              <div className="space-y-2 px-3 py-3 sm:px-4" aria-label="Loading notifications">
+                {[0, 1].map((row) => (
+                  <div key={row} className={`h-14 animate-pulse rounded-lg ${darkMode ? "bg-slate-700/70" : "bg-slate-100"}`} />
+                ))}
+              </div>
             ) : filteredNotifications.length === 0 ? (
               <div className={`px-3 py-5 text-center sm:px-4 sm:py-6 ${darkMode ? "text-slate-300" : "text-gray-600"}`}>
                 <Bell size={18} className="mx-auto mb-2 text-slate-400 sm:h-[22px] sm:w-[22px]" />

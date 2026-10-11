@@ -91,6 +91,7 @@ import {
   normalizeOrderStatusKey,
 } from "./orderStatusUtils";
 import { getCustomerPaymentProof, getPaymentSummary, isPaymentProofConfirmed, validateCustomerPaymentAmount } from "@/pages/Transactions/paymentProofUtils";
+import { subscribeToRealtime } from "@/lib/realtimeEvents";
 import { buildProductPriceSnapshot, getDefaultBladeCount, getDefaultExtraChargeSelections, getDefaultProductLineTotal, getProductLineBreakdown, getProductLineTotal } from "@/lib/productPricing";
 import { clearPendingProductAction, clearPendingProductWorkflowState, getPendingProductAction, getPendingProductWorkflowState, savePendingProductWorkflowState, updatePendingProductAction } from "@/lib/pendingProductAction";
 import { getOptimizedProductImageUrl, getProductImageSource, getProductImageSrcSet, handleProductImageError, handleProductImageLoad } from "@/lib/productImageUtils";
@@ -605,6 +606,18 @@ function CustomerDashboard() {
       return new Set();
     }
   });
+  useEffect(() => {
+    const synchronizeReadNotifications = (event) => {
+      if (event.key !== CUSTOMER_READ_NOTIFICATIONS_KEY) return;
+      try {
+        setReadNotificationIds(new Set(JSON.parse(event.newValue || "[]")));
+      } catch {
+        setReadNotificationIds(new Set());
+      }
+    };
+    window.addEventListener("storage", synchronizeReadNotifications);
+    return () => window.removeEventListener("storage", synchronizeReadNotifications);
+  }, []);
   const [profileTab, setProfileTab] = useState(() => initialDashboardParams.get("profileTab") === "security" ? "security" : "profile");
   const [profileEditing, setProfileEditing] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -637,6 +650,15 @@ function CustomerDashboard() {
         ? order.contractSentAt || order.contractGeneratedAt || order.updatedAt || order.createdAt
         : order.updatedAt || order.createdAt,
     }];
+
+    if (order.transaction_approved === true && order.transaction_approved_at) {
+      notifications.unshift({
+        ...order,
+        notificationType: "transaction_approved",
+        notificationId: `${orderId}-transaction-approved-${new Date(order.transaction_approved_at).getTime()}`,
+        notificationDate: order.transaction_approved_at,
+      });
+    }
 
     if (Array.isArray(order.payment_records) && order.payment_records.length > 0) {
       order.payment_records.forEach((record) => {
@@ -900,8 +922,12 @@ function CustomerDashboard() {
     };
 
     loadCart();
+    const unsubscribeRealtime = subscribeToRealtime("cart", () => {
+      if (document.visibilityState === "visible") loadCart();
+    });
     return () => {
       active = false;
+      unsubscribeRealtime();
     };
   }, [user]);
 
@@ -1421,9 +1447,13 @@ function CustomerDashboard() {
     };
 
     fetchFeaturedProducts();
+    const unsubscribeRealtime = subscribeToRealtime(["products", "catalog", "reviews"], () => {
+      if (document.visibilityState === "visible") fetchFeaturedProducts();
+    });
 
     return () => {
       active = false;
+      unsubscribeRealtime();
     };
   }, [canUploadFeedback, loading, user?.id]);
 
@@ -1535,13 +1565,13 @@ function CustomerDashboard() {
     };
 
     refreshProductPricing();
-    const refreshInterval = window.setInterval(refreshProductPricing, 30000);
     window.addEventListener("focus", refreshProductPricing);
+    const unsubscribeRealtime = subscribeToRealtime(["products", "catalog"], refreshProductPricing);
 
     return () => {
       active = false;
-      window.clearInterval(refreshInterval);
       window.removeEventListener("focus", refreshProductPricing);
+      unsubscribeRealtime();
     };
   }, [loading, user?.id]);
 
@@ -1579,7 +1609,20 @@ function CustomerDashboard() {
       try {
         const response = await getOrders();
         if (!active) return;
-        setOrders(response.orders || []);
+        const latestOrders = response.orders || [];
+        setOrders(latestOrders);
+        setSelectedOrderForModal((current) => {
+          if (!current) return current;
+          const currentId = String(current._id || current.id || current.tracking || "");
+          const latest = latestOrders.find((order) => String(order._id || order.id || order.tracking || "") === currentId);
+          return latest ? { ...current, ...latest } : current;
+        });
+        setContractPreviewOrder((current) => {
+          if (!current) return current;
+          const currentId = String(current._id || current.id || current.tracking || "");
+          const latest = latestOrders.find((order) => String(order._id || order.id || order.tracking || "") === currentId);
+          return latest ? { ...current, ...latest } : current;
+        });
       } catch {
         if (!active) return;
       } finally {
@@ -1593,15 +1636,15 @@ function CustomerDashboard() {
     };
 
     fetchOrders();
-    const refreshInterval = window.setInterval(refreshOrders, 60000);
     window.addEventListener("focus", refreshOrders);
     document.addEventListener("visibilitychange", refreshOrders);
+    const unsubscribeRealtime = subscribeToRealtime("orders", refreshOrders);
 
     return () => {
       active = false;
-      window.clearInterval(refreshInterval);
       window.removeEventListener("focus", refreshOrders);
       document.removeEventListener("visibilitychange", refreshOrders);
+      unsubscribeRealtime();
     };
   }, [orderOwnerId]);
 
@@ -4524,6 +4567,13 @@ function CustomerDashboard() {
                               (status === "site_inspection" && contractStatus === "sent") ||
                               contractStatus === "sent";
                             const notificationDetails = () => {
+                              if (order.notificationType === "transaction_approved") {
+                                return {
+                                  title: "Transaction approved",
+                                  message: `Your accepted contract for ${order.tracking} was approved. Your project is now eligible for progress monitoring.`,
+                                  color: "text-emerald-600",
+                                };
+                              }
                               if (isDelayNotification) {
                                 return {
                                   title: "Project delay reported",
@@ -8494,6 +8544,9 @@ function CustomerDashboard() {
                       contractStatus === "accepted"
                     );
                     const notificationMessage = () => {
+                      if (order.notificationType === "transaction_approved") {
+                        return `Your accepted contract for ${order.tracking} was approved. Your project is now eligible for progress monitoring.`;
+                      }
                       if (isDelayNotification) return getDelayNotificationMessage(order);
                       if (isPaymentNotification) {
                         if (order.notificationType === "admin_payment_recorded") {
@@ -8532,6 +8585,7 @@ function CustomerDashboard() {
                       admin_payment_recorded: "Payment Recorded by Admin",
                       downpayment_exception_approved: "Downpayment Exception Approved",
                       downpayment_exception_pending: "Awaiting Admin Approval",
+                      transaction_approved: "Transaction approved",
                     }[order.notificationType];
 
                     const notificationIcon = () => {

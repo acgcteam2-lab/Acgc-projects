@@ -17,6 +17,7 @@ const Settings = lazy(() => import("./pages/Settings/Settings"));
 const CustomerDashboard = lazy(() => import("./pages/CustomerDashboard/CustomerDashboard"));
 import AdminCreationModal from "./components/AdminCreationModal";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { RealtimeProvider } from "@/contexts/RealtimeProvider";
 import { useAuth } from "@/contexts/AuthContext";
 import { AdminThemeProvider, useAdminTheme } from "@/contexts/AdminThemeContext";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
@@ -308,9 +309,11 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AdminThemeProvider>
-          <AppRoutes />
-        </AdminThemeProvider>
+        <RealtimeProvider>
+          <AdminThemeProvider>
+            <AppRoutes />
+          </AdminThemeProvider>
+        </RealtimeProvider>
       </AuthProvider>
     </BrowserRouter>
   );

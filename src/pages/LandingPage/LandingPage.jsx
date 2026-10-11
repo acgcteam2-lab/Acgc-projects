@@ -27,6 +27,7 @@ import ProductPriceEstimator from "@/components/ProductPriceEstimator";
 import { getProductEstimatorState } from "@/components/ProductPriceEstimator";
 import { getPaymentSummary } from "@/pages/Transactions/paymentProofUtils";
 import { getProducts } from "../../api/products";
+import { subscribeToRealtime } from "@/lib/realtimeEvents";
 import { getProductReviewSummary, trackOrder } from "../../api/orders";
 import logo from "../../assets/images/ACGCLOGO1.png";
 import { calculateEstimate } from "@/lib/estimator";
@@ -234,6 +235,8 @@ function LandingPage() {
     };
 
     loadFeaturedProducts();
+    const unsubscribeRealtime = subscribeToRealtime(["products", "catalog", "reviews"], loadFeaturedProducts);
+    return unsubscribeRealtime;
   }, []);
 
   useEffect(() => {

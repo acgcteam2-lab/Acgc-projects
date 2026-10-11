@@ -28,6 +28,7 @@ import ProfileAvatar from "../../components/ui/ProfileAvatar";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import { getCustomerPaymentProof, getPaymentSummary, isPaymentProofConfirmed, validateCustomerPaymentAmount } from "./paymentProofUtils";
 import { uploadFiles } from "@/api/uploads";
+import { subscribeToRealtime } from "@/lib/realtimeEvents";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import useNotificationHighlight from "@/hooks/useNotificationHighlight";
 
@@ -108,6 +109,7 @@ function Transactions() {
   const [editPaymentRequestId, setEditPaymentRequestId] = useState("");
   const [showDownpaymentExceptionModal, setShowDownpaymentExceptionModal] = useState(false);
   const [paymentActionLoading, setPaymentActionLoading] = useState(false);
+  const [transactionApprovalOrderId, setTransactionApprovalOrderId] = useState("");
   const paymentActionSubmittingRef = useRef(false);
 
   const isCompletedProject = (order) => {
@@ -671,6 +673,24 @@ function Transactions() {
     }
   };
 
+  const approveTransactionForProgress = async (order) => {
+    if (user?.role !== "admin" || !order || transactionApprovalOrderId) return;
+    const orderId = order._id || order.id;
+    if (!orderId) return;
+    setTransactionApprovalOrderId(String(orderId));
+    try {
+      const response = await updateOrderStatus(orderId, {
+        transaction_approval_action: { action: "approve" },
+      });
+      updateOrderLocally(orderId, response?.order || {});
+      toast.success("Transaction approved. The project is now available in Progress Monitor.");
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to approve this transaction.");
+    } finally {
+      setTransactionApprovalOrderId("");
+    }
+  };
+
   const handleRequestDownpaymentException = async () => {
     if (!editPaymentOrder || paymentActionSubmittingRef.current || paymentActionLoading) return;
     const proof = getCustomerPaymentProof(editPaymentOrder);
@@ -873,6 +893,12 @@ function Transactions() {
         const res = await getAdminOrders({ module: "transactions" });
         if (active && res && res.orders) {
           setOrders(res.orders);
+          setEditPaymentOrder((current) => {
+            if (!current) return current;
+            const currentId = String(current._id || current.id || "");
+            const latest = res.orders.find((order) => String(order._id || order.id || "") === currentId);
+            return latest ? { ...current, ...latest } : current;
+          });
         }
       } catch (err) {
         console.error("Failed to fetch orders", err);
@@ -887,15 +913,15 @@ function Transactions() {
     const refreshOrders = () => {
       if (document.visibilityState === "visible") fetchOrders(false);
     };
-    const interval = window.setInterval(refreshOrders, 15000);
+    const unsubscribeRealtime = subscribeToRealtime(["orders", "reviews"], refreshOrders);
     window.addEventListener("focus", refreshOrders);
     document.addEventListener("visibilitychange", refreshOrders);
 
     return () => {
       active = false;
-      window.clearInterval(interval);
       window.removeEventListener("focus", refreshOrders);
       document.removeEventListener("visibilitychange", refreshOrders);
+      unsubscribeRealtime();
     };
   }, []);
 
@@ -1724,6 +1750,8 @@ function Transactions() {
                       const showNeedsConfirmation = (order.payment_records || []).length > 0
                         ? order.payment_records.some((record) => record.status === "pending")
                         : Boolean(order.payment_proof_submitted_at && !isPaymentProofConfirmed(order));
+                      const needsTransactionApproval = order.transaction_approved !== true
+                        && !["approved", "processing", "completed"].includes(String(order.status || "").toLowerCase());
                       const warrantyStatus = getWarrantyStatus(order);
 
                       return (
@@ -1785,8 +1813,8 @@ function Transactions() {
                               <td className="p-4 text-sm text-slate-600">{installDate}</td>
                               <td className="p-4"><span className={`inline-flex rounded-md px-3 py-1 text-xs font-semibold ${projectCategory === "Completed" ? "bg-rose-50 text-rose-700" : "bg-violet-50 text-violet-700"}`}>{projectCategory}</span></td>
                               {activeTable === "receipts" && <td className="p-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getWarrantyStatusClass(warrantyStatus)}`}>{warrantyStatus}</span></td>}
-                              <td className="p-4"><div className="flex flex-col items-start gap-1.5"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${isFullyPaid ? (darkMode ? "border border-emerald-400/40 bg-emerald-500/15 text-emerald-300" : "bg-emerald-100 text-emerald-700") : (darkMode ? "border border-amber-400/40 bg-amber-500/15 text-amber-300" : "bg-amber-50 text-amber-700")}`}>{statusLabel}</span>{showNeedsConfirmation && (<span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-rose-400/40 bg-rose-500/15 text-rose-300" : "bg-rose-100 text-rose-700"}`}><span aria-hidden="true">🔔</span>Needs Confirmation</span>)}</div></td>
-                              <td className="p-4"><div className="flex flex-wrap justify-center gap-2"><button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>{isFullyPaid ? (<button type="button" title="Fully paid" aria-label="Fully paid. Payment editing is locked." disabled className={`cursor-not-allowed rounded-lg p-2 ${darkMode ? "bg-slate-700 text-slate-400" : "bg-slate-100 text-slate-500"}`}><Lock size={18} aria-hidden="true" /></button>) : (<button type="button" title="Add Payment" aria-label="Add Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>)}<button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button></div></td>
+                              <td className="p-4"><div className="flex flex-col items-start gap-1.5"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${isFullyPaid ? (darkMode ? "border border-emerald-400/40 bg-emerald-500/15 text-emerald-300" : "bg-emerald-100 text-emerald-700") : (darkMode ? "border border-amber-400/40 bg-amber-500/15 text-amber-300" : "bg-amber-50 text-amber-700")}`}>{statusLabel}</span>{needsTransactionApproval && <span className="inline-flex rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">Awaiting transaction approval</span>}{showNeedsConfirmation && (<span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-rose-400/40 bg-rose-500/15 text-rose-300" : "bg-rose-100 text-rose-700"}`}><span aria-hidden="true">🔔</span>Needs Confirmation</span>)}</div></td>
+                              <td className="p-4"><div className="flex flex-wrap justify-center gap-2">{user?.role === "admin" && needsTransactionApproval && <button type="button" disabled={Boolean(transactionApprovalOrderId)} title="Approve transaction and move to Progress Monitor" onClick={() => approveTransactionForProgress(order)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 px-2 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-200 disabled:opacity-60"><CheckCircle size={16} />{transactionApprovalOrderId === String(order._id || order.id) ? "Approving..." : "Approve to Progress"}</button>}<button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>{isFullyPaid ? (<button type="button" title="Fully paid" aria-label="Fully paid. Payment editing is locked." disabled className={`cursor-not-allowed rounded-lg p-2 ${darkMode ? "bg-slate-700 text-slate-400" : "bg-slate-100 text-slate-500"}`}><Lock size={18} aria-hidden="true" /></button>) : (<button type="button" title="Add Payment" aria-label="Add Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>)}<button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button></div></td>
                             </>
                           )}
                         </tr>
@@ -1836,6 +1864,8 @@ function Transactions() {
                 const amountVal = paymentSummary.totalAmount;
                 const paymentMethod = order.payment_method || (order.acceptance_method === "online" ? "Online" : "Cash");
                 const isFullyPaid = paymentSummary.status.key === "paid";
+                const needsTransactionApproval = order.transaction_approved !== true
+                  && !["approved", "processing", "completed"].includes(String(order.status || "").toLowerCase());
 
                 return (
                   <div
@@ -1873,6 +1903,7 @@ function Transactions() {
                       </div>
                     )}
                     <div className="mt-3 flex justify-end gap-2">
+                      {user?.role === "admin" && needsTransactionApproval && <button type="button" disabled={Boolean(transactionApprovalOrderId)} onClick={() => approveTransactionForProgress(order)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 px-2.5 py-2 text-xs font-semibold text-emerald-800 disabled:opacity-60"><CheckCircle size={15} />{transactionApprovalOrderId === String(order._id || order.id) ? "Approving..." : "Approve to Progress"}</button>}
                       <button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>
                       {isFullyPaid ? (
                         <button type="button" title="Fully paid" aria-label="Fully paid. Payment editing is locked." disabled className="cursor-not-allowed rounded-lg bg-slate-100 p-2 text-slate-500">

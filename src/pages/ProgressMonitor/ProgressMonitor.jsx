@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
   Search,
@@ -8,8 +8,10 @@ import {
 } from "lucide-react";
 
 import { getAdminOrders, updateOrderProgress, updateOrderStatus } from "@/api/orders";
+import { subscribeToRealtime } from "@/lib/realtimeEvents";
 import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { getProgressColor } from "@/lib/utils";
+import { isProgressMonitorEligibleOrder } from "@/lib/orderWorkflow";
 import toast, { Toaster } from "react-hot-toast";
 import { uploadFiles } from "@/api/uploads";
 import ProgressViewModal from "../../components/ProgressViewModal";
@@ -293,6 +295,16 @@ function ProgressMonitor() {
 
   const [selectedProject, setSelectedProject] =
     useState(null);
+  const selectedProjectRef = useRef(null);
+  const showEditModalRef = useRef(false);
+
+  useEffect(() => {
+    selectedProjectRef.current = selectedProject;
+  }, [selectedProject]);
+
+  useEffect(() => {
+    showEditModalRef.current = showEditModal;
+  }, [showEditModal]);
 
   const [cancelConfirm, setCancelConfirm] = useState({ open: false, id: null });
   const [cancellingId, setCancellingId] = useState(null);
@@ -343,33 +355,52 @@ function ProgressMonitor() {
   ));
 
   useEffect(() => {
-    const fetchProjects = async () => {
-      setProjectLoading(true);
+    let active = true;
+    let requestInFlight = false;
+    let refreshPending = false;
+    const fetchProjects = async (showLoading = true) => {
+      if (requestInFlight) {
+        if (!showLoading) refreshPending = true;
+        return;
+      }
+      requestInFlight = true;
+      if (showLoading) setProjectLoading(true);
       try {
         const response = await getAdminOrders({ module: "progress_monitoring" });
+        if (!active) return;
         const orders = response.orders || [];
         const projects = orders
-          .filter((order) =>
-            [
-              "approved",
-              "admin_review",
-              "processing",
-              "contract_accepted",
-              "completed",
-            ].includes(order.status)
-            || (order.contract_status && order.contract_status.toString().toLowerCase() === "accepted")
-          )
+          .filter(isProgressMonitorEligibleOrder)
           .flatMap((order) => buildProjectRows(order));
         setProjectList(projects);
+        if (!showEditModalRef.current && selectedProjectRef.current) {
+          const selectedProjectUpdate = projects.find((project) => isSameProjectRow(project, selectedProjectRef.current));
+          if (selectedProjectUpdate) {
+            selectedProjectRef.current = selectedProjectUpdate;
+            setSelectedProject(selectedProjectUpdate);
+          }
+        }
       } catch (error) {
         console.error("Failed to load progress monitor projects", error);
-        setProjectList([]);
+        if (active && showLoading) setProjectList([]);
       } finally {
-        setProjectLoading(false);
+        requestInFlight = false;
+        if (active && showLoading) setProjectLoading(false);
+        if (active && refreshPending) {
+          refreshPending = false;
+          fetchProjects(false);
+        }
       }
     };
 
     fetchProjects();
+    const unsubscribeRealtime = subscribeToRealtime("orders", () => {
+      if (document.visibilityState === "visible") fetchProjects(false);
+    });
+    return () => {
+      active = false;
+      unsubscribeRealtime();
+    };
   }, []);
 
   const handleSave = async (updated, fileContexts = [], onUploadProgress) => {

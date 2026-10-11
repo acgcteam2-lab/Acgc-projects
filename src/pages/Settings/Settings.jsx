@@ -42,6 +42,7 @@ import {
   updateAdminUserAccess,
   updateSystemSettings,
 } from "@/api/users";
+import { subscribeToRealtime } from "@/lib/realtimeEvents";
 
 const PERMISSIONS = [
   { key: "can_request_orders", label: "Can Request Orders", description: "Submit new glass/aluminum orders" },
@@ -187,8 +188,11 @@ function Settings() {
   }, [isSidebarOpen]);
 
   useEffect(() => {
-    getSystemSettings()
-      .then((response) => {
+    let active = true;
+    const loadSystemSettings = async () => {
+      try {
+        const response = await getSystemSettings();
+        if (!active) return;
         setMaintenanceMode(response.maintenance_mode === true);
         if (response.global_permissions) {
           setGlobalPermissions(normalizePermissions(response.global_permissions));
@@ -199,9 +203,18 @@ function Settings() {
           lastBackupAt: response.last_backup_at || null,
           backups: Array.isArray(response.backup_history) ? response.backup_history : [],
         });
-      })
-      .catch((error) => toast.error(error?.data?.message || error?.message || "Unable to load system settings."))
-      .finally(() => setLoadingBackupSettings(false));
+      } catch (error) {
+        if (active) toast.error(error?.data?.message || error?.message || "Unable to load system settings.");
+      } finally {
+        if (active) setLoadingBackupSettings(false);
+      }
+    };
+    loadSystemSettings();
+    const unsubscribeRealtime = subscribeToRealtime("settings", loadSystemSettings);
+    return () => {
+      active = false;
+      unsubscribeRealtime();
+    };
   }, []);
 
   useEffect(() => {

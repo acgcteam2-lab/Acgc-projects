@@ -93,6 +93,7 @@ describe("order email templates", () => {
       ["downpayment_exception_requested", { acceptedAmount: 200, shortfall: 200 }],
       ["contract_accepted", {}],
       ["transaction_update", { confirmedAmount: 200 }],
+      ["transaction_approved", { approvedAt: "2026-10-11T12:00:00.000Z" }],
       ["warranty_notification", { warrantyLines: ["Window: 1 year"] }],
       ["installation_date", { installationDate: "2026-11-01", installationTime: "9:00 AM" }],
     ];

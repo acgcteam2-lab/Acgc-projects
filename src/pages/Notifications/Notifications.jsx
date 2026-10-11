@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getAdminOrders } from "@/api/orders";
+import { subscribeToRealtime } from "@/lib/realtimeEvents";
 import { Bell, CheckCheck, CheckCircle2, ClipboardCheck, CreditCard, Send, ShoppingCart, XCircle } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { formatDateTimeToMMDDYYYY, formatTimeAgo } from "@/lib/dateUtils";
 import { getFinalProjectCost } from "@/lib/orderPricing";
-import { getAdminNotificationId, getAdminReadNotificationIds, markAdminNotificationRead, sortAdminNotificationsNewestFirst } from "@/lib/notificationState";
+import { ADMIN_READ_NOTIFICATIONS_KEY, getAdminNotificationId, getAdminReadNotificationIds, markAdminNotificationRead, sortAdminNotificationsNewestFirst } from "@/lib/notificationState";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -13,7 +14,8 @@ import { getAdminSiteInspectionNotificationMessage } from "@/pages/CustomerDashb
 
 export default function Notifications() {
   const [notifications, setNotifications] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const hasLoadedNotifications = useRef(false);
   const [notificationFilter, setNotificationFilter] = useState("all");
   const { darkMode } = useAdminTheme();
   const { user } = useAuth();
@@ -35,15 +37,24 @@ export default function Notifications() {
   ));
 
   useEffect(() => {
+    let active = true;
+    let requestInFlight = false;
+    let refreshQueued = false;
     const fetch = async () => {
-      setLoading(true);
+      if (!active) return;
+      if (requestInFlight) {
+        refreshQueued = true;
+        return;
+      }
+      requestInFlight = true;
+      if (!hasLoadedNotifications.current) setLoading(true);
       try {
         const staffModules = user?.staff_access?.modules || {};
         const canReadModule = (moduleKey) => user?.role !== "skilled_worker" || (
           staffModules[moduleKey]?.enabled === true && staffModules[moduleKey]?.actions?.view === true
         );
         const fetchModuleOrders = (params, moduleKey) => canReadModule(moduleKey)
-          ? getAdminOrders({ ...params, module: moduleKey })
+          ? getAdminOrders({ ...params, module: moduleKey, view: "notifications", limit: 100 })
           : Promise.resolve({ orders: [] });
         const [newOrdersResp, inspectionsResp, acceptedResp, declinedResp, sentResp, paymentResp] = await Promise.all([
           fetchModuleOrders({ status: "order_submitted" }, "dashboard"),
@@ -119,15 +130,46 @@ export default function Notifications() {
           }),
         ].sort(sortAdminNotificationsNewestFirst);
         const readNotificationIds = getAdminReadNotificationIds();
-        setNotifications(items.map((item) => ({ ...item, read: readNotificationIds.has(item.id) })));
+        if (active) {
+          setNotifications(items.map((item) => ({ ...item, read: readNotificationIds.has(item.id) })));
+        }
       } catch (err) {
         console.error(err);
-        setNotifications([]);
       } finally {
-        setLoading(false);
+        requestInFlight = false;
+        hasLoadedNotifications.current = true;
+        if (active) setLoading(false);
+        if (active && refreshQueued) {
+          refreshQueued = false;
+          refreshTimeout = window.setTimeout(() => {
+            refreshTimeout = null;
+            fetch();
+          }, 0);
+        }
       }
     };
     fetch();
+    let refreshTimeout = null;
+    const scheduleRefresh = () => {
+      if (refreshTimeout) window.clearTimeout(refreshTimeout);
+      refreshTimeout = window.setTimeout(() => {
+        refreshTimeout = null;
+        if (document.visibilityState === "visible") fetch();
+      }, 80);
+    };
+    const unsubscribeRealtime = subscribeToRealtime(["orders", "reviews"], scheduleRefresh);
+    window.addEventListener("focus", scheduleRefresh);
+    const refreshReadState = (event) => {
+      if (event.key === ADMIN_READ_NOTIFICATIONS_KEY) scheduleRefresh();
+    };
+    window.addEventListener("storage", refreshReadState);
+    return () => {
+      active = false;
+      if (refreshTimeout) window.clearTimeout(refreshTimeout);
+      window.removeEventListener("focus", scheduleRefresh);
+      window.removeEventListener("storage", refreshReadState);
+      unsubscribeRealtime();
+    };
   }, [user]);
 
   return (

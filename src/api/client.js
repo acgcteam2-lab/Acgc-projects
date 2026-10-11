@@ -1,3 +1,5 @@
+import { getRealtimeClientId } from "@/lib/realtimeClientId";
+
 const rawApiBase = import.meta.env.VITE_API_BASE_URL;
 let API_BASE;
 if (rawApiBase) {
@@ -39,6 +41,8 @@ export async function apiFetch(path, options = {}) {
   if (token && token !== "null" && token !== "undefined") {
     headers.Authorization = `Bearer ${token}`;
   }
+  const realtimeClientId = getRealtimeClientId();
+  if (realtimeClientId) headers["X-Client-Id"] = realtimeClientId;
 
   const maxRetries = options._retries || 3;
   let attempt = 0;

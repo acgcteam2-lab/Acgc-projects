@@ -278,6 +278,23 @@ const getEventContent = (event, order, audience, extra) => {
         ...(asNumber(extra.confirmedAmount) > 0 ? [["Additional payment", money(extra.confirmedAmount)]] : []),
       ],
     },
+    transaction_approved: {
+      title: "Transaction approved",
+      summary: "Your accepted contract has been approved by our team. Your project is now eligible to appear in progress monitoring.",
+      subject: `Transaction approved - ${orderIdOf(order)}`,
+      status: statusLabel(order?.status || "Approved"),
+      action: "View project status",
+      path: "customer-dashboard?tab=orders",
+      next: "You can follow project stages from your My Orders page as work progresses.",
+      fields: [
+        ["Order reference", order?.tracking || orderIdOf(order)],
+        ["Contract status", statusLabel(order?.contract_status || "Accepted")],
+        ["Transaction approval date", dateTime(extra.approvedAt || order?.transaction_approved_at)],
+        ["Total project cost", money(total)],
+        ["Current payment status", statusLabel(order?.payment_status || "Pending")],
+        ["Remaining project balance", money(balance)],
+      ],
+    },
     warranty_notification: {
       title: "Warranty details",
       summary: "Warranty coverage is now recorded for the following products.",

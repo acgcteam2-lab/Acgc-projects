@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import logo from "../../assets/images/ACGCLOGO1.png";
 import { useAuth } from "../../contexts/AuthContext";
@@ -18,11 +18,13 @@ import {
 } from "lucide-react";
 
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
+import { prefetchAdminRoute } from "@/lib/adminRoutePrefetch";
 
 function Sidebar({ isOpen, onToggle }) {
   const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const location = useLocation();
+  const navigate = useNavigate();
   const { logout, user } = useAuth();
   const { darkMode } = useAdminTheme();
   const canViewStaffModule = (moduleKey) => user?.role !== "skilled_worker" || (
@@ -36,11 +38,7 @@ function Sidebar({ isOpen, onToggle }) {
   };
 
   const handleLogoClick = () => {
-    if (window.location.pathname === "/dashboard") {
-      window.location.reload();
-      return;
-    }
-    window.location.assign("/dashboard");
+    navigate("/dashboard");
   };
 
   const mobileNavItems = [
@@ -101,6 +99,7 @@ function Sidebar({ isOpen, onToggle }) {
             isOpen={isOpen}
             active={location.pathname === "/dashboard"}
             darkMode={darkMode}
+            onIntent={() => prefetchAdminRoute("/dashboard")}
           />}
 
           {canViewStaffModule("site_inspection") && <MenuItem
@@ -110,6 +109,7 @@ function Sidebar({ isOpen, onToggle }) {
             isOpen={isOpen}
             active={location.pathname === "/site-inspection"}
             darkMode={darkMode}
+            onIntent={() => prefetchAdminRoute("/site-inspection")}
           />}
 
           {canViewStaffModule("transactions") && <MenuItem
@@ -119,6 +119,7 @@ function Sidebar({ isOpen, onToggle }) {
             isOpen={isOpen}
             active={location.pathname === "/transactions"}
             darkMode={darkMode}
+            onIntent={() => prefetchAdminRoute("/transactions")}
           />}
 
           {canViewStaffModule("progress_monitoring") && <MenuItem
@@ -128,6 +129,7 @@ function Sidebar({ isOpen, onToggle }) {
             isOpen={isOpen}
             active={location.pathname === "/progress-monitor"}
             darkMode={darkMode}
+            onIntent={() => prefetchAdminRoute("/progress-monitor")}
           />}
 
           {canViewStaffModule("product_management") && <MenuItem
@@ -137,6 +139,7 @@ function Sidebar({ isOpen, onToggle }) {
             isOpen={isOpen}
             active={location.pathname === "/product"}
             darkMode={darkMode}
+            onIntent={() => prefetchAdminRoute("/product")}
           />}
 
           {canViewStaffModule("profile") && <MenuItem
@@ -146,6 +149,7 @@ function Sidebar({ isOpen, onToggle }) {
             isOpen={isOpen}
             active={location.pathname === "/profile"}
             darkMode={darkMode}
+            onIntent={() => prefetchAdminRoute("/profile")}
           />}
 
           {canViewStaffModule("settings") && <MenuItem
@@ -155,6 +159,7 @@ function Sidebar({ isOpen, onToggle }) {
             isOpen={isOpen}
             active={location.pathname === "/settings"}
             darkMode={darkMode}
+            onIntent={() => prefetchAdminRoute("/settings")}
           />}
 
           {/* LOGOUT */}
@@ -194,6 +199,8 @@ function Sidebar({ isOpen, onToggle }) {
             aria-label={label}
             aria-current={active ? "page" : undefined}
             title={label}
+            onPointerEnter={() => prefetchAdminRoute(to)}
+            onFocus={() => prefetchAdminRoute(to)}
             className={`group flex h-[58px] min-w-0 flex-1 flex-col items-center justify-center rounded-lg px-0.5 text-center transition-[transform,background-color,color] duration-200 ease-out hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.94] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand motion-reduce:transform-none motion-reduce:transition-none ${active ? darkMode ? "text-white" : "text-slate-900" : darkMode ? "text-slate-400 hover:bg-slate-800 hover:text-slate-100" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}
           >
             <span
@@ -263,11 +270,14 @@ function MenuItem({
   active,
   nested = false,
   darkMode = false,
+  onIntent,
 }) {
   return (
     <Link
       to={to}
       title={label}
+      onPointerEnter={onIntent}
+      onFocus={onIntent}
       className={`group relative grid min-h-10 w-full items-center rounded-lg px-3 py-2 text-sm transition-[grid-template-columns,gap,background-color,color,transform] duration-200 ease-out hover:translate-x-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 motion-reduce:transition-none motion-reduce:hover:translate-x-0 ${
         active
           ? darkMode
