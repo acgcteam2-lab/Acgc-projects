@@ -1,13 +1,26 @@
 import express from "express";
 import jwt from "jsonwebtoken";
-import { createHash, randomBytes, randomInt, timingSafeEqual } from "crypto";
+import { Buffer } from "node:buffer";
+import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import mongoose from "mongoose";
+import process from "node:process";
 import { promises as fs } from "node:fs";
 import multer from "multer";
 import User from "../models/User.js";
 import Admin from "../models/Admin.js";
+import AdminRecoveryAttempt from "../models/AdminRecoveryAttempt.js";
+import AdminRecoveryAudit from "../models/AdminRecoveryAudit.js";
+import AdminRecoveryState from "../models/AdminRecoveryState.js";
 import SystemSetting from "../models/SystemSetting.js";
 import { authMiddleware, roleMiddleware, staffModulePermission } from "../middleware/auth.js";
 import { sendMail } from "../config/mailer.js";
+import {
+  getRecoveryRetryDelaySeconds,
+  hashRecoveryIp,
+  isValidAdminRecord,
+  recoveryConfigurationIsValid,
+  verifyRecoveryCredentials,
+} from "../services/adminRecoverySecurity.js";
 import {
   createSystemBackup,
   deleteSystemBackup,
@@ -158,12 +171,275 @@ const buildAddressFromRequest = (reqBody) => {
 };
 
 const router = express.Router();
+const ADMIN_RECOVERY_STATE_KEY = "primary-administrator";
+const RECOVERY_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+const RECOVERY_SESSION_MS = 5 * 60 * 1000;
 const hashVerificationToken = (token) => createHash("sha256").update(token).digest("hex");
 const verificationHashesMatch = (firstHash, secondHash) => {
   const first = Buffer.from(String(firstHash || ""), "hex");
   const second = Buffer.from(String(secondHash || ""), "hex");
   return first.length === second.length && first.length > 0 && timingSafeEqual(first, second);
 };
+
+const findValidAdministrator = async () => {
+  const [admins, legacyAdmins] = await Promise.all([
+    Admin.find({}).select("+password").lean(),
+    User.find({ role: "admin" }).select("+password").lean(),
+  ]);
+  return [...admins, ...legacyAdmins].find(isValidAdminRecord) || null;
+};
+
+const recordRecoveryFailure = async (key) => {
+  while (true) {
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - RECOVERY_ATTEMPT_WINDOW_MS);
+    const current = await AdminRecoveryAttempt.findOne({ key }).lean();
+    if (!current) {
+      const nextAllowedAt = new Date(now.getTime() + getRecoveryRetryDelaySeconds(1) * 1000);
+      try {
+        await AdminRecoveryAttempt.create({
+          key,
+          window_started_at: now,
+          failed_attempts: 1,
+          next_allowed_at: nextAllowedAt,
+          expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+        });
+        return { retryAfterSeconds: 0 };
+      } catch (error) {
+        if (error.code === 11000) continue;
+        throw error;
+      }
+    }
+
+    const isExpiredWindow = new Date(current.window_started_at) <= cutoff;
+    const failedAttempts = isExpiredWindow ? 1 : (Number(current.failed_attempts) || 0) + 1;
+    const retryAfterSeconds = getRecoveryRetryDelaySeconds(failedAttempts);
+    const nextAllowedAt = new Date(now.getTime() + retryAfterSeconds * 1000);
+    const filter = { key, window_started_at: current.window_started_at };
+    const update = isExpiredWindow
+      ? { $set: { window_started_at: now, failed_attempts: 1, next_allowed_at: nextAllowedAt, expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000) } }
+      : { $set: { failed_attempts: failedAttempts, next_allowed_at: nextAllowedAt, expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000) } };
+    filter.failed_attempts = Number(current.failed_attempts) || 0;
+
+    const updated = await AdminRecoveryAttempt.findOneAndUpdate(filter, update, { new: true }).lean();
+    if (!updated) continue;
+    return { retryAfterSeconds: 0 };
+  }
+};
+
+const recoveryUnavailable = (res) => res.status(403).json({
+  success: false,
+  message: "Recovery is unavailable or the provided recovery details are invalid.",
+});
+
+const validateRecoveryProfile = (body = {}) => {
+  const { email, username, password, first_name, last_name } = body;
+  return Boolean(
+    typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) && email.length <= 254 &&
+    typeof username === "string" && /^[a-zA-Z0-9._-]{3,50}$/.test(username.trim()) &&
+    typeof first_name === "string" && first_name.trim() && first_name.trim().length <= 80 &&
+    typeof last_name === "string" && last_name.trim() && last_name.trim().length <= 80 &&
+    typeof password === "string" && password.length >= 12 && password.length <= 128 &&
+    /[a-z]/.test(password) && /[A-Z]/.test(password) && /\d/.test(password) && /[^A-Za-z0-9]/.test(password)
+  );
+};
+
+const normalizeRecoveryProfile = (body) => ({
+  email: body.email.trim().toLowerCase(),
+  username: body.username.trim().toLowerCase(),
+  password: body.password,
+  first_name: body.first_name.trim(),
+  last_name: body.last_name.trim(),
+  phone: typeof body.phone === "string" ? body.phone.trim().slice(0, 40) : "",
+  street_address: typeof body.street_address === "string" ? body.street_address.trim().slice(0, 200) : "",
+  city: typeof body.city === "string" ? body.city.trim().slice(0, 100) : "",
+  province: typeof body.province === "string" ? body.province.trim().slice(0, 100) : "",
+  zip_code: typeof body.zip_code === "string" ? body.zip_code.trim().slice(0, 20) : "",
+});
+
+router.post("/admin-recovery/verify", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    if (mongoose.connection.readyState !== 1 || !recoveryConfigurationIsValid()) {
+      return recoveryUnavailable(res);
+    }
+    if (await findValidAdministrator()) return recoveryUnavailable(res);
+
+    const attemptKey = hashRecoveryIp(req.ip);
+    const attempt = await AdminRecoveryAttempt.findOne({ key: attemptKey }).lean();
+    const retryAfterSeconds = Math.ceil((new Date(attempt?.next_allowed_at || 0).getTime() - Date.now()) / 1000);
+    if (retryAfterSeconds > 0) {
+      res.set("Retry-After", String(retryAfterSeconds));
+      return res.status(429).json({ success: false, message: `Please wait ${retryAfterSeconds} seconds before trying again.` });
+    }
+
+    const timestamp = Date.now();
+    const totpStep = verifyRecoveryCredentials(req.body || {}, process.env, timestamp);
+    if (totpStep === null) {
+      await recordRecoveryFailure(attemptKey);
+      return res.status(401).json({
+        success: false,
+        message: "Recovery is unavailable or the provided recovery details are invalid.",
+      });
+    }
+
+    const state = await AdminRecoveryState.findOneAndUpdate(
+      { key: ADMIN_RECOVERY_STATE_KEY },
+      { $setOnInsert: { last_totp_step: -1 } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    const recoverySession = randomBytes(32).toString("base64url");
+    const claimedState = await AdminRecoveryState.findOneAndUpdate(
+      {
+        _id: state._id,
+        completed_at: null,
+        last_totp_step: { $lt: totpStep },
+      },
+      {
+        $set: {
+          last_totp_step: totpStep,
+          recovery_session_hash: hashVerificationToken(recoverySession),
+          recovery_session_expires_at: new Date(timestamp + RECOVERY_SESSION_MS),
+        },
+      },
+      { new: true }
+    ).lean();
+    if (!claimedState) return recoveryUnavailable(res);
+
+    await AdminRecoveryAttempt.deleteOne({ key: attemptKey });
+    return res.json({ success: true, recoverySession, expiresIn: RECOVERY_SESSION_MS / 1000 });
+  } catch (error) {
+    console.error("[admin-recovery] Verification failed:", error.name || "Error");
+    return res.status(mongoose.connection.readyState === 1 ? 500 : 503).json({
+      success: false,
+      message: "Unable to complete recovery right now. Please try again later.",
+    });
+  }
+});
+
+router.post("/admin-recovery/restore", async (req, res) => {
+  let lockId = null;
+  let stateId = null;
+  let recoveryAuditId = null;
+  let restoredAccount = false;
+  res.set("Cache-Control", "no-store");
+  try {
+    if (mongoose.connection.readyState !== 1 || !recoveryConfigurationIsValid()) {
+      return recoveryUnavailable(res);
+    }
+    const { recoverySession } = req.body || {};
+    if (typeof recoverySession !== "string" || recoverySession.length < 40 || recoverySession.length > 64 || !validateRecoveryProfile(req.body)) {
+      return res.status(400).json({ success: false, message: "Enter valid administrator details and a strong password." });
+    }
+    const recoverySessionHash = hashVerificationToken(recoverySession);
+    const state = await AdminRecoveryState.findOne({
+      key: ADMIN_RECOVERY_STATE_KEY,
+      recovery_session_hash: recoverySessionHash,
+      recovery_session_expires_at: { $gt: new Date() },
+      completed_at: null,
+    }).lean();
+    if (!state) return recoveryUnavailable(res);
+
+    lockId = randomBytes(16).toString("hex");
+    const lockedState = await AdminRecoveryState.findOneAndUpdate(
+      {
+        _id: state._id,
+        recovery_session_hash: recoverySessionHash,
+        recovery_session_expires_at: { $gt: new Date() },
+        completed_at: null,
+        $or: [
+          { lock_expires_at: null },
+          { lock_expires_at: { $lte: new Date() } },
+        ],
+      },
+      { $set: { lock_id: lockId, lock_expires_at: new Date(Date.now() + 60_000) } },
+      { new: true }
+    ).lean();
+    if (!lockedState) return recoveryUnavailable(res);
+    stateId = lockedState._id;
+
+    if (await findValidAdministrator()) return recoveryUnavailable(res);
+
+    const profile = normalizeRecoveryProfile(req.body);
+    const identityQuery = { $or: [{ email: profile.email }, { username: profile.username }] };
+    const [adminMatches, userMatches] = await Promise.all([
+      Admin.find(identityQuery).select("+password"),
+      User.find(identityQuery).select("+password"),
+    ]);
+    const corruptAdmin = adminMatches.find((account) => !isValidAdminRecord(account));
+    const corruptLegacyAdmin = userMatches.find((account) => account.role === "admin" && !isValidAdminRecord(account));
+    const restoreTarget = corruptAdmin || corruptLegacyAdmin || null;
+    const conflictingAccount = [...adminMatches, ...userMatches].find((account) =>
+      account._id.toString() !== restoreTarget?._id.toString()
+    );
+    if (conflictingAccount) {
+      return res.status(409).json({ success: false, message: "Those account details cannot be used. Contact system support." });
+    }
+
+    const audit = await AdminRecoveryAudit.create({
+      action: "administrator_restored",
+      account_id: restoreTarget?._id || new mongoose.Types.ObjectId(),
+      account_username: profile.username,
+      account_email: profile.email,
+      source_ip_hash: hashRecoveryIp(req.ip),
+      user_agent: String(req.get("user-agent") || "").slice(0, 300),
+    });
+    recoveryAuditId = audit._id;
+
+    const account = restoreTarget || new Admin();
+    if (restoreTarget) account.session_version = (Number(account.session_version) || 0) + 1;
+    Object.assign(account, profile);
+    account.is_active = true;
+    if (account instanceof User) account.role = "admin";
+    if (account instanceof User) {
+      account.email_verified = true;
+      account.email_verification_token = null;
+      account.email_verification_expires = null;
+    }
+    await account.save();
+    restoredAccount = true;
+
+    audit.account_id = account._id;
+    audit.outcome = "success";
+    await audit.save();
+    await AdminRecoveryState.updateOne(
+      { _id: stateId, lock_id: lockId, recovery_session_hash: recoverySessionHash },
+      {
+        $set: { completed_at: new Date() },
+        $unset: {
+          recovery_session_hash: 1,
+          recovery_session_expires_at: 1,
+          lock_id: 1,
+          lock_expires_at: 1,
+        },
+      }
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "Administrator access has been restored. Sign in with the new administrator account.",
+    });
+  } catch (error) {
+    console.error("[admin-recovery] Restore failed:", error.name || "Error");
+    if (recoveryAuditId) {
+      await AdminRecoveryAudit.updateOne(
+        { _id: recoveryAuditId },
+        { $set: { outcome: restoredAccount ? "success" : "failed" } }
+      ).catch(() => {});
+    }
+    return res.status(mongoose.connection.readyState === 1 ? 500 : 503).json({
+      success: false,
+      message: "Unable to complete recovery right now. Please try again later.",
+    });
+  } finally {
+    if (stateId && lockId) {
+      await AdminRecoveryState.updateOne(
+        { _id: stateId, lock_id: lockId, completed_at: null },
+        { $unset: { lock_id: 1, lock_expires_at: 1 } }
+      ).catch(() => {});
+    }
+  }
+});
 
 const sendVerificationEmail = async (user, token) => {
   const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
@@ -424,9 +700,7 @@ router.post("/register", async (req, res) => {
       });
     }
 
-    const adminExists =
-      (await Admin.exists({})) ||
-      (await User.exists({ role: "admin" }));
+    const adminExists = await findValidAdministrator();
     if (!adminExists) {
       return res.status(403).json({
         success: false,
@@ -814,33 +1088,25 @@ router.post("/reset-password", async (req, res) => {
  * Check whether an admin user exists in the system
  */
 router.get("/admin-exists", async (req, res) => {
-  console.info("[auth] GET /api/auth/admin-exists");
   try {
-    const adminCount = await Admin.countDocuments({});
-    const legacyAdminCount = await User.countDocuments({ role: "admin" });
-    res.json({ exists: adminCount + legacyAdminCount > 0 });
+    res.json({ exists: Boolean(await findValidAdministrator()) });
   } catch (error) {
-    console.error("Admin exists check error:", error);
+    console.error("Admin exists check error:", error.name || "Error");
     res.status(500).json({
       success: false,
       message: "Error checking admin status",
-      error: error.message,
     });
   }
 });
 
 router.get("/admin-status", async (req, res) => {
-  console.info("[auth] GET /api/auth/admin-status");
   try {
-    const adminCount = await Admin.countDocuments({});
-    const legacyAdminCount = await User.countDocuments({ role: "admin" });
-    res.json({ exists: adminCount + legacyAdminCount > 0 });
+    res.json({ exists: Boolean(await findValidAdministrator()) });
   } catch (error) {
-    console.error("Admin status check error:", error);
+    console.error("Admin status check error:", error.name || "Error");
     res.status(500).json({
       success: false,
       message: "Error checking admin status",
-      error: error.message,
     });
   }
 });
@@ -992,115 +1258,10 @@ router.patch("/users/:id", authMiddleware, staffModulePermission("settings", "ma
   }
 });
 
-/**
- * POST /api/auth/create-admin
- * Create the first admin user if none exists
- */
-router.post("/create-admin", async (req, res) => {
-  try {
-    const {
-      email,
-      username,
-      password,
-      first_name,
-      last_name,
-      phone,
-      street_address,
-      city,
-      province,
-      zip_code,
-    } = req.body;
-
-    if (!email || !username || !password || !first_name || !last_name) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Email, username, password, first_name, and last_name are required to create the admin account",
-      });
-    }
-
-    const adminExists =
-      (await Admin.exists({})) ||
-      (await User.exists({ role: "admin" }));
-    if (adminExists) {
-      return res.status(403).json({
-        success: false,
-        message: "An admin account already exists.",
-      });
-    }
-
-    const existingUser = await User.findOne({
-      $or: [
-        { email: email.toLowerCase().trim() },
-        { username: username.toLowerCase().trim() },
-      ],
-    });
-
-    const existingAdmin = await Admin.findOne({
-      $or: [
-        { email: email.toLowerCase().trim() },
-        { username: username.toLowerCase().trim() },
-      ],
-    });
-
-    const legacyAdmin = await User.findOne({
-      $or: [
-        { email: email.toLowerCase().trim() },
-        { username: username.toLowerCase().trim() },
-      ],
-      role: "admin",
-    });
-
-    if (existingUser || existingAdmin || legacyAdmin) {
-      return res.status(400).json({
-        success: false,
-        message: "A user already exists with that email or username",
-      });
-    }
-
-    const admin = new Admin({
-      email,
-      username,
-      password,
-      first_name,
-      last_name,
-      phone: phone || "",
-      street_address: street_address || "",
-      city: city || "",
-      province: province || "",
-      zip_code: zip_code || "",
-    });
-
-    await admin.save();
-
-    const token = jwt.sign(
-      { id: admin._id, email: admin.email, role: "admin", auth_source: "admin", session_version: admin.session_version || 0 },
-      process.env.JWT_SECRET || "your-secret-key",
-      { expiresIn: "7d" }
-    );
-
-    res.status(201).json({
-      success: true,
-      message: "Admin account created successfully",
-      token,
-      user: {
-        id: admin._id,
-        email: admin.email,
-        username: admin.username,
-        first_name: admin.first_name,
-        last_name: admin.last_name,
-        role: "admin",
-      },
-    });
-  } catch (error) {
-    console.error("Create admin error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error creating admin user",
-      error: error.message,
-    });
-  }
-});
+router.post("/create-admin", (_req, res) => res.status(410).json({
+  success: false,
+  message: "Public administrator creation is disabled. Use the configured recovery procedure or trusted server-side provisioning.",
+}));
 
 /**
  * POST /api/auth/login
@@ -1148,7 +1309,7 @@ router.post("/login", async (req, res) => {
     const isPasswordValid = await user.comparePassword(password);
     console.info(`[auth] Password comparison result: ${isPasswordValid}`);
     
-    if (!isPasswordValid) {
+    if (!isPasswordValid || user.is_active === false) {
       console.warn(`[auth] Invalid password for user: ${user.email}`);
       return res.status(401).json({
         success: false,

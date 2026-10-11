@@ -147,6 +147,7 @@ function Dashboard() {
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [scrollToWarrantyOnOpen, setScrollToWarrantyOnOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
   const [selectedOrderLoading, setSelectedOrderLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
@@ -164,6 +165,8 @@ function Dashboard() {
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
 
   const [recentTransactionsPage, setRecentTransactionsPage] = useState(1);
+  const [activeProjectsPage, setActiveProjectsPage] = useState(1);
+  const [activeWarrantiesPage, setActiveWarrantiesPage] = useState(1);
   const [contractNotifications, setContractNotifications] = useState([]);
   const [contractNotificationsLoading, setContractNotificationsLoading] = useState(false);
   const [contractPage, setContractPage] = useState(1);
@@ -208,8 +211,9 @@ function Dashboard() {
 
   
 
-  const handleViewOrder = async (orderId) => {
+  const handleViewOrder = async (orderId, { scrollToWarranty = false } = {}) => {
     if (!orderId) return;
+    setScrollToWarrantyOnOpen(scrollToWarranty);
     try {
       setSelectedOrderLoading(true);
       const resp = await getAdminOrder(orderId, "dashboard");
@@ -432,7 +436,15 @@ function Dashboard() {
 
     return activeProjectStatuses.has(status) && !isCompleted;
   };
-  const activeProjectsCount = orders.filter(isActiveProject).length;
+  const dashboardPanelPageSize = 5;
+  const allActiveProjects = orders.filter(isActiveProject);
+  const activeProjectsCount = allActiveProjects.length;
+  const activeProjectsPageCount = Math.max(1, Math.ceil(activeProjectsCount / dashboardPanelPageSize));
+  const safeActiveProjectsPage = Math.min(activeProjectsPage, activeProjectsPageCount);
+  const activeProjects = allActiveProjects.slice(
+    (safeActiveProjectsPage - 1) * dashboardPanelPageSize,
+    safeActiveProjectsPage * dashboardPanelPageSize,
+  );
   const isWarrantyCurrentlyActive = ({ status, start, expiry }) => {
     const now = new Date();
     return (!start || start <= now) && (
@@ -452,14 +464,17 @@ function Dashboard() {
     };
     warrantyGroups.set(orderId, group);
   });
-  const warrantiesToDisplay = [...warrantyGroups.values()].slice(0, 5);
+  const allWarrantiesToDisplay = [...warrantyGroups.values()];
+  const activeWarrantiesPageCount = Math.max(1, Math.ceil(allWarrantiesToDisplay.length / dashboardPanelPageSize));
+  const safeActiveWarrantiesPage = Math.min(activeWarrantiesPage, activeWarrantiesPageCount);
+  const warrantiesToDisplay = allWarrantiesToDisplay.slice(
+    (safeActiveWarrantiesPage - 1) * dashboardPanelPageSize,
+    safeActiveWarrantiesPage * dashboardPanelPageSize,
+  );
   const activeWarrantiesCount = activeWarranties.length;
   const pendingInspectionCount = orders.filter(
     (order) => String(order.status || "").toLowerCase() === "site_inspection",
   ).length;
-  const activeProjects = orders
-    .filter(isActiveProject)
-    .slice(0, 5);
   const orderStatusGroups = [
     {
       label: "In progress",
@@ -592,7 +607,7 @@ function Dashboard() {
                 <button
                   type="button"
                   onClick={() => {
-                    const warranty = warrantiesToDisplay[0];
+                    const warranty = allWarrantiesToDisplay[0];
                     if (warranty) handleViewOrder(warranty.order._id || warranty.order.id);
                   }}
                   className={`rounded-2xl border p-3 text-left transition ${darkMode ? "border-green-400/80 bg-green-950/50 hover:bg-green-900/70" : "border-green-500 bg-green-50/50 hover:bg-green-100"}`}
@@ -640,7 +655,7 @@ function Dashboard() {
             <button
               type="button"
               onClick={() => {
-                const warranty = warrantiesToDisplay[0];
+                const warranty = allWarrantiesToDisplay[0];
                 if (warranty) handleViewOrder(warranty.order._id || warranty.order.id);
               }}
               className="group rounded-3xl bg-white p-6 text-left shadow transition duration-200 hover:-translate-y-1 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-green-500"
@@ -885,13 +900,6 @@ function Dashboard() {
                     {activeProjectsCount} projects currently in progress
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => navigate("/progress-monitor", { state: { statusFilter: "All" } })}
-                  className="text-sm font-semibold text-red-600 hover:text-red-700"
-                >
-                  View all
-                </button>
               </div>
 
               <div className="mt-5 space-y-3">
@@ -926,6 +934,43 @@ function Dashboard() {
                   </p>
                 )}
               </div>
+              {activeProjectsCount > 0 && (
+                <div className="mt-4 flex flex-col items-center justify-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 sm:flex-row">
+                  <div className="flex flex-wrap items-center justify-center gap-2" role="navigation" aria-label="Active projects pagination">
+                    <button
+                      type="button"
+                      onClick={() => setActiveProjectsPage(Math.max(1, safeActiveProjectsPage - 1))}
+                      disabled={safeActiveProjectsPage === 1}
+                      className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Previous
+                    </button>
+                    {Array.from({ length: Math.min(5, activeProjectsPageCount) }, (_, index) => {
+                      const firstPage = Math.max(1, Math.min(safeActiveProjectsPage - 2, activeProjectsPageCount - 4));
+                      const pageNumber = firstPage + index;
+                      return (
+                        <button
+                          key={pageNumber}
+                          type="button"
+                          onClick={() => setActiveProjectsPage(pageNumber)}
+                          aria-current={pageNumber === safeActiveProjectsPage ? "page" : undefined}
+                          className={`h-10 w-10 rounded-lg ${pageNumber === safeActiveProjectsPage ? "bg-red-600 text-white" : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"}`}
+                        >
+                          {pageNumber}
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => setActiveProjectsPage(Math.min(activeProjectsPageCount, safeActiveProjectsPage + 1))}
+                      disabled={safeActiveProjectsPage === activeProjectsPageCount}
+                      className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </section>
 
             <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
@@ -936,13 +981,6 @@ function Dashboard() {
                     {activeWarrantiesCount} warranties currently active
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => navigate("/transactions", { state: { activeTable: "receipts" } })}
-                  className="text-sm font-semibold text-red-600 hover:text-red-700"
-                >
-                  View all
-                </button>
               </div>
 
               <div className="mt-5 space-y-3">
@@ -956,7 +994,7 @@ function Dashboard() {
                     <button
                       type="button"
                       key={key}
-                      onClick={() => handleViewOrder(order._id || order.id)}
+                      onClick={() => handleViewOrder(order._id || order.id, { scrollToWarranty: true })}
                       className="flex w-full items-center justify-between gap-4 rounded-2xl border border-gray-100 p-4 text-left transition hover:border-green-200 hover:bg-green-50/40"
                     >
                       <div className="min-w-0">
@@ -976,13 +1014,58 @@ function Dashboard() {
                   </p>
                 )}
               </div>
+              {allWarrantiesToDisplay.length > 0 && (
+                <div className="mt-4 flex flex-col items-center justify-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 sm:flex-row">
+                  <div className="flex flex-wrap items-center justify-center gap-2" role="navigation" aria-label="Active warranties pagination">
+                    <button
+                      type="button"
+                      onClick={() => setActiveWarrantiesPage(Math.max(1, safeActiveWarrantiesPage - 1))}
+                      disabled={safeActiveWarrantiesPage === 1}
+                      className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Previous
+                    </button>
+                    {Array.from({ length: Math.min(5, activeWarrantiesPageCount) }, (_, index) => {
+                      const firstPage = Math.max(1, Math.min(safeActiveWarrantiesPage - 2, activeWarrantiesPageCount - 4));
+                      const pageNumber = firstPage + index;
+                      return (
+                        <button
+                          key={pageNumber}
+                          type="button"
+                          onClick={() => setActiveWarrantiesPage(pageNumber)}
+                          aria-current={pageNumber === safeActiveWarrantiesPage ? "page" : undefined}
+                          className={`h-10 w-10 rounded-lg ${pageNumber === safeActiveWarrantiesPage ? "bg-red-600 text-white" : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"}`}
+                        >
+                          {pageNumber}
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => setActiveWarrantiesPage(Math.min(activeWarrantiesPageCount, safeActiveWarrantiesPage + 1))}
+                      disabled={safeActiveWarrantiesPage === activeWarrantiesPageCount}
+                      className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </section>
           </div>
 
         </main>
       </div>
 
-      <TransactionDetailsModal order={selectedOrder} onClose={() => setSelectedOrder(null)} />
+      <TransactionDetailsModal
+        order={selectedOrder}
+        scrollToWarranty={scrollToWarrantyOnOpen}
+        darkMode={darkMode}
+        onClose={() => {
+          setSelectedOrder(null);
+          setScrollToWarrantyOnOpen(false);
+        }}
+      />
 
       {selectedProject && (
         <ProgressViewModal

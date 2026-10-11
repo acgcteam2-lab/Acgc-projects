@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 const ForgotPassword = lazy(() => import("./pages/ForgotPassword/ForgotPassword"));
+const AdminRecovery = lazy(() => import("./pages/AdminRecovery/AdminRecovery"));
 const LandingPage = lazy(() => import("./pages/LandingPage/LandingPage"));
 const Login = lazy(() => import("./pages/Login/Login"));
 const Signup = lazy(() => import("./pages/Signup/Signup"));
@@ -82,6 +83,7 @@ function AppRoutes() {
     "/verify-email",
     "/forgot-password",
     "/reset-password",
+    "/admin-recovery",
     "/track-order",
   ]);
   const isPublicLightRoute = publicLightRoutes.has(location.pathname);
@@ -258,6 +260,7 @@ function AppRoutes() {
           <Route path="/signup" element={<Signup />} />
           <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/admin-recovery" element={<AdminRecovery />} />
           <Route
             path="/dashboard"
             element={

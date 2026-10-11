@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { XCircle } from "lucide-react";
 import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { getPaymentSummary } from "@/pages/Transactions/paymentProofUtils";
@@ -43,7 +44,25 @@ const computeWarrantyExpiryDate = (start, periodValue) => {
   return expiry;
 };
 
-function TransactionDetailsModal({ order, onClose, onViewContract }) {
+function TransactionDetailsModal({ order, onClose, onViewContract, scrollToWarranty = false, darkMode = false }) {
+  const contentRef = useRef(null);
+  const warrantyHeadingRef = useRef(null);
+
+  useEffect(() => {
+    if (!order || !scrollToWarranty) return undefined;
+
+    const frame = window.requestAnimationFrame(() => {
+      const content = contentRef.current;
+      const heading = warrantyHeadingRef.current;
+      if (!content || !heading) return;
+
+      const offset = heading.getBoundingClientRect().top - content.getBoundingClientRect().top;
+      content.scrollTo({ top: content.scrollTop + offset - 8, behavior: "smooth" });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [order?._id, scrollToWarranty]);
+
   if (!order) return null;
 
   const previewItems = Array.isArray(order.items) ? order.items : [];
@@ -160,7 +179,7 @@ function TransactionDetailsModal({ order, onClose, onViewContract }) {
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-100 p-3">
+        <div ref={contentRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-100 p-3">
           <div className="mb-3 flex flex-wrap gap-2">
             <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${paymentSummary.status.key === "paid" ? "border-emerald-200 bg-emerald-100 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
               {paymentSummary.status.label}
@@ -219,8 +238,14 @@ function TransactionDetailsModal({ order, onClose, onViewContract }) {
                 </div>
               </div>
 
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                <h4 className="mb-3 border-b border-slate-200 pb-2 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-500">WARRANTY INFORMATION</h4>
+              <div className={`rounded-md border p-3 transition-colors duration-500 ${scrollToWarranty
+                ? darkMode
+                  ? "border-amber-500/60 bg-slate-800 ring-2 ring-amber-400/20 shadow-sm"
+                  : "border-amber-400 bg-amber-50 ring-2 ring-amber-200 shadow-sm"
+                : "border-slate-200 bg-slate-50"}`}>
+                <h4 ref={warrantyHeadingRef} className={`mb-3 border-b pb-2 text-[10px] font-extrabold uppercase tracking-[0.18em] ${scrollToWarranty
+                  ? darkMode ? "border-amber-700 text-amber-300" : "border-amber-300 text-amber-900"
+                  : "border-slate-200 text-slate-500"}`}>WARRANTY INFORMATION</h4>
                 <div className={hasBatchItems ? "space-y-3" : "space-y-2 text-[13px] text-slate-700"}>
                   {hasBatchItems ? previewItems.map((item, index) => {
                     const itemName = item.name || item.product_name || `Product ${index + 1}`;

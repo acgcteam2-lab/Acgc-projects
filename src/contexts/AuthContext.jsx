@@ -6,7 +6,6 @@ import {
   register as registerApi,
   getMe,
   adminExists as adminExistsApi,
-  createAdmin as createAdminApi,
   updateProfile as updateProfileApi,
 } from "@/api/auth";
 import { normalizeUserProfile } from "@/lib/userProfile";
@@ -215,15 +214,6 @@ export function AuthProvider({ children }) {
     return registerApi(payload);
   };
 
-  const createAdmin = async (payload) => {
-    setAuthError("");
-    const response = await createAdminApi(payload);
-    setToken(response.token);
-    const userProfile = normalizeAndPersistUser(response.user);
-    setAdminExists(true);
-    return { ...response, user: userProfile };
-  };
-
   const updateProfile = async (payload) => {
     setAuthError("");
     const response = await updateProfileApi(payload);
@@ -249,7 +239,6 @@ export function AuthProvider({ children }) {
     adminError,
     login,
     register,
-    createAdmin,
     updateProfile,
     refreshUser,
     logout,

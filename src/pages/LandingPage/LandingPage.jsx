@@ -1054,7 +1054,7 @@ function LandingPage() {
                 }}
                 className="group flex h-full w-full min-w-0 flex-col overflow-hidden rounded-[20px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff7f7_100%)] shadow-[0_12px_30px_rgba(15,23,42,0.07)] transition-all duration-300 ease-out hover:-translate-y-1 hover:border-red-200 hover:shadow-[0_22px_55px_rgba(127,29,29,0.12)] motion-reduce:transition-none max-md:min-h-[124px] max-md:flex-row"
               >
-                <div className="relative aspect-[4/3] overflow-hidden bg-slate-100 max-md:aspect-auto max-md:w-[clamp(5.5rem,30vw,7rem)] max-md:shrink-0">
+                <div className="relative aspect-[4/3] overflow-hidden bg-slate-100 max-md:aspect-auto max-md:w-[clamp(6.5rem,36vw,8rem)] max-md:shrink-0">
                   <div data-product-image-skeleton className="absolute inset-0 animate-pulse bg-slate-200 motion-reduce:animate-none" />
                   <img
                     src={image || PRODUCT_IMAGE_PLACEHOLDER}
@@ -1077,8 +1077,11 @@ function LandingPage() {
                         <span aria-label="Top Product" title="Top Product" className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-amber-300/80 bg-amber-200/90 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-amber-950 backdrop-blur-sm max-md:gap-px max-md:px-1 max-md:py-0.5 max-md:text-[7px] max-md:tracking-normal">
                           <Star className="size-[11px] shrink-0 max-md:size-2" fill="currentColor" aria-hidden="true" /> Top Product
                         </span>
+                        <span title={product.category || "General"} className="hidden min-w-0 max-w-[55%] truncate whitespace-nowrap rounded-full border border-white/25 bg-slate-950/40 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.1em] text-slate-100 backdrop-blur-sm md:inline-flex">
+                          {product.category || "General"}
+                        </span>
                         <span className="hidden max-md:inline-flex max-md:max-w-full max-md:truncate max-md:whitespace-nowrap max-md:rounded-full max-md:border max-md:border-white/25 max-md:bg-slate-950/40 max-md:px-1 max-md:py-0.5 max-md:text-[7px] max-md:font-medium max-md:uppercase max-md:tracking-normal max-md:text-slate-100">
-                          {category}
+                          {product.category || "General"}
                         </span>
                       </>
                     ) : (
@@ -1087,14 +1090,9 @@ function LandingPage() {
                       </span>
                     )}
                   </div>
-                  <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3 max-md:p-1.5">
-                    <span className="max-w-[70%] truncate rounded-full border border-white/25 bg-slate-950/40 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.1em] text-slate-100 backdrop-blur-sm max-md:hidden">
-                      {category}
-                    </span>
-                  </div>
                 </div>
 
-                <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 max-md:gap-2 max-md:p-2.5">
+                <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 max-md:gap-2 max-md:p-3">
                   <div className="min-w-0">
                     <h3 className="line-clamp-2 text-[17px] font-black leading-tight text-slate-900 max-md:text-sm" title={productName}>{productName}</h3>
                     <p className="mt-1 truncate text-[12px] font-medium text-slate-600 max-md:text-[10px]">{category}</p>

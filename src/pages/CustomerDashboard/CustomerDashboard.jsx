@@ -69,7 +69,7 @@ import {
 import { uploadFiles } from "@/api/uploads";
 import ContractModal from "../../components/ContractModal";
 import OtpCodeInput from "@/components/OtpCodeInput";
-import ProductPriceEstimator from "@/components/ProductPriceEstimator";
+import ProductPriceEstimator, { getProductEstimatorState } from "@/components/ProductPriceEstimator";
 import { formatOrderItemMeasurements } from "@/components/OrderProgressTimeline";
 import OrderTimelineModal from "@/components/OrderTimelineModal";
 import { calculateEstimate } from "@/lib/estimator";
@@ -2173,6 +2173,11 @@ function CustomerDashboard() {
       setCartActionError("Pricing estimates are disabled for your account.");
       return false;
     }
+    const bladeCountError = getProductEstimatorState(product, { blade_count, sale_mode, frame_type, custom_frame_size }).bladeCountError;
+    if (bladeCountError) {
+      setCartActionError(bladeCountError);
+      return false;
+    }
     if (!cartLoaded) {
       setCartActionError("Your cart is still loading. Please try again.");
       return false;
@@ -2333,6 +2338,11 @@ function CustomerDashboard() {
       return;
     }
     if (!cartDecisionProduct) return;
+    const bladeCountError = getProductEstimatorState(cartDecisionProduct, estimateForm).bladeCountError;
+    if (bladeCountError) {
+      setCartActionError(bladeCountError);
+      return;
+    }
     const needsDimensions = cartDecisionProduct?.pricing_method !== "blade"
       || (estimateForm.sale_mode === "frame" && estimateForm.custom_frame_size);
     if (needsDimensions && (!estimateForm.width || !estimateForm.height)) {
@@ -2352,6 +2362,11 @@ function CustomerDashboard() {
   const handleEstimateAfterEstimation = async () => {
     if (!canRequestOrders) {
       setCartActionError("Your estimate is ready, but order requests are disabled for your account.");
+      return;
+    }
+    const bladeCountError = getProductEstimatorState(cartDecisionProduct, estimateForm).bladeCountError;
+    if (bladeCountError) {
+      setCartActionError(bladeCountError);
       return;
     }
     const needsDimensions = cartDecisionProduct?.pricing_method !== "blade"
@@ -2412,6 +2427,13 @@ function CustomerDashboard() {
   };
 
   const handleConfirmAndContinue = async () => {
+    if (deliveryConfirmMode === "estimate") {
+      const bladeCountError = getProductEstimatorState(cartDecisionProduct, estimateForm).bladeCountError;
+      if (bladeCountError) {
+        setDeliveryConfirmError(bladeCountError);
+        return;
+      }
+    }
     if (!validateDeliveryConfirmForm()) return;
     setOrderRequestLoading(true);
 
@@ -2454,6 +2476,13 @@ function CustomerDashboard() {
     if (!orderReviewAgreed) {
       setCartActionError("Please confirm the payment policy before submitting.");
       return;
+    }
+    if (reviewOrderMode !== "orderNow" && cartDecisionProduct) {
+      const bladeCountError = getProductEstimatorState(cartDecisionProduct, estimateForm).bladeCountError;
+      if (bladeCountError) {
+        setCartActionError(bladeCountError);
+        return;
+      }
     }
 
     setCartActionError("");
@@ -4326,6 +4355,7 @@ function CustomerDashboard() {
       : isPieceEstimator
         ? Number(productEstimatorResult?.estimated_price) > 0
       : productEstimatorWidth > 0 && productEstimatorHeight > 0 && Number(productEstimatorResult?.estimated_price) > 0;
+  const productEstimatorBladeCountError = getProductEstimatorState(selectedProduct, productEstimatorForm).bladeCountError;
 
   const estimateArea = estimateResult.estimated_area || 0;
   const estimateTotalArea = estimateArea;
@@ -5251,7 +5281,7 @@ function CustomerDashboard() {
                         }`}
                         onClick={() => handleViewProduct(product)}
                       >
-                        <div className={`relative aspect-[4/3] overflow-hidden ${darkMode ? "bg-slate-900" : "bg-slate-100"} max-md:aspect-auto max-md:w-[clamp(5.5rem,30vw,7rem)] max-md:shrink-0`}>
+                        <div className={`relative aspect-[4/3] overflow-hidden ${darkMode ? "bg-slate-900" : "bg-slate-100"} max-md:aspect-auto max-md:w-[clamp(6.5rem,36vw,8rem)] max-md:shrink-0`}>
                           <div data-product-image-skeleton className="absolute inset-0 animate-pulse bg-slate-200 motion-reduce:animate-none" />
                           <img
                             src={getProductImage(product, 480) || PRODUCT_IMAGE_PLACEHOLDER}
@@ -5276,8 +5306,11 @@ function CustomerDashboard() {
                                   <Star className="size-[11px] shrink-0 max-md:size-2" fill="currentColor" aria-hidden="true" />
                                   Top Product
                                 </span>
+                                <span title={product.category || "General"} className="hidden min-w-0 max-w-[55%] truncate whitespace-nowrap rounded-full border border-white/25 bg-slate-950/40 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.10em] text-slate-100 backdrop-blur-sm md:inline-flex">
+                                  {product.category || "General"}
+                                </span>
                                 <span className="hidden max-md:inline-flex max-md:max-w-full max-md:truncate max-md:whitespace-nowrap max-md:rounded-full max-md:border max-md:border-white/25 max-md:bg-slate-950/40 max-md:px-1 max-md:py-0.5 max-md:text-[7px] max-md:font-medium max-md:uppercase max-md:tracking-normal max-md:text-slate-100">
-                                  {product.product_type || product.category || "General"}
+                                  {product.category || "General"}
                                 </span>
                               </>
                             ) : (
@@ -5288,10 +5321,6 @@ function CustomerDashboard() {
                           </div>
 
                           <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3 max-md:p-1.5">
-                            <div className="max-w-[70%] truncate whitespace-nowrap rounded-full border border-white/25 bg-slate-950/40 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.10em] text-slate-100 backdrop-blur-sm max-md:hidden">
-                              {product.product_type || product.category || "General"}
-                            </div>
-
                             {canRequestOrders && (
                               <div className="hidden gap-1.5 md:flex">
                                 <button
@@ -5323,7 +5352,7 @@ function CustomerDashboard() {
                           </div>
                         </div>
 
-                        <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 max-md:gap-2 max-md:p-2.5">
+                        <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 max-md:gap-2 max-md:p-3">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
                               <h3 className={`line-clamp-2 text-[17px] font-black leading-tight max-md:text-sm ${darkMode ? "text-white" : "text-slate-900"}`} title={product.name}>{product.name}</h3>
@@ -5838,6 +5867,10 @@ function CustomerDashboard() {
                         <button
                           type="button"
                           onClick={() => {
+                            if (productEstimatorBladeCountError) {
+                              toast.error(productEstimatorBladeCountError);
+                              return;
+                            }
                             if (hasProductEstimatorEstimate) {
                               openEstimatedProductOrder(selectedProduct);
                             } else {
@@ -5854,6 +5887,10 @@ function CustomerDashboard() {
                         <button
                           type="button"
                           onClick={() => {
+                            if (productEstimatorBladeCountError) {
+                              toast.error(productEstimatorBladeCountError);
+                              return;
+                            }
                             if (hasProductEstimatorEstimate) {
                               if (!canEstimatePricing) {
                                 showPermissionNotice("Pricing estimates are disabled for your account.");

@@ -270,7 +270,9 @@ function Login() {
                   >
                     Sign Up
                   </Link>
-
+                  <Link to="/admin-recovery" className="basis-full text-center text-xs font-semibold text-slate-500 underline underline-offset-4 hover:text-red-700">
+                    Administrator account recovery
+                  </Link>
                 </div>
 
               </form>

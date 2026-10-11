@@ -87,6 +87,24 @@ export const getProductEstimatorState = (product, form = {}) => {
   const bladeCountMinimum = form.sale_mode === "frame" && !form.custom_frame_size && selectedFrameBladeCount > 0
     ? selectedFrameBladeCount
     : minimumBlades;
+  const hasBladeCountInput = form.blade_count !== "" && form.blade_count !== null && form.blade_count !== undefined;
+  const requestedBladeCount = Number(form.blade_count);
+  const bladeLimitContext = form.sale_mode === "frame"
+    ? form.custom_frame_size
+      ? "custom frame"
+      : selectedFrame?.name
+        ? `${selectedFrame.name} frame`
+        : "selected frame"
+    : "blades only";
+  const bladeCountError = isBladeEstimator && hasBladeCountInput
+    ? !Number.isInteger(requestedBladeCount)
+      ? "Enter a whole number of blades."
+      : requestedBladeCount < bladeCountMinimum
+        ? `Minimum for ${bladeLimitContext} is ${bladeCountMinimum} blade${bladeCountMinimum === 1 ? "" : "s"}.`
+        : maximumBlades > 0 && requestedBladeCount > maximumBlades
+          ? `Maximum for ${bladeLimitContext} is ${maximumBlades} blade${maximumBlades === 1 ? "" : "s"}.`
+          : ""
+    : "";
   const bladeCount = Number(form.blade_count) || bladeCountMinimum;
   const needsDimensions = isMeterEstimator || (!isBladeEstimator && !isPieceEstimator) || (form.sale_mode === "frame" && Boolean(form.custom_frame_size));
   const item = {
@@ -131,6 +149,7 @@ export const getProductEstimatorState = (product, form = {}) => {
     isBladeEstimator &&
     selectedGlass &&
     Number(selectedGlass.price_per_blade ?? product.price_per_blade) > 0 &&
+    !bladeCountError &&
     bladeCount >= bladeCountMinimum &&
     (maximumBlades <= 0 || bladeCount <= maximumBlades) &&
     (item.sale_mode === "blades_only"
@@ -172,6 +191,7 @@ export const getProductEstimatorState = (product, form = {}) => {
     minimumBlades,
     maximumBlades,
     bladeCountMinimum,
+    bladeCountError,
     selectedGlass,
     selectedFrame,
     glassTypes,
@@ -194,6 +214,7 @@ function ProductPriceEstimator({ product, form, onFormChange, darkMode = false, 
     minimumBlades,
     maximumBlades,
     bladeCountMinimum,
+    bladeCountError,
     selectedGlass,
     selectedFrame,
     glassTypes,
@@ -328,12 +349,15 @@ function ProductPriceEstimator({ product, form, onFormChange, darkMode = false, 
               step="1"
               value={form.blade_count ?? ""}
               onChange={(event) => updateForm({ blade_count: event.target.value })}
+              aria-invalid={Boolean(bladeCountError)}
+              aria-describedby={bladeCountError ? "product-blade-count-error" : "product-blade-count-help"}
               className={fieldClass}
               placeholder={`min ${bladeCountMinimum}`}
             />
-            <span className={`mt-1 block text-[10px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+            <span id="product-blade-count-help" className={`mt-1 block text-[10px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
               Minimum for {bladeLimitContext}: <strong>{bladeCountMinimum} blade{bladeCountMinimum === 1 ? "" : "s"}</strong>. {showMaximumBlades ? <>Maximum: <strong>{maximumBlades} blade{maximumBlades === 1 ? "" : "s"}</strong>. </> : null}Final count is confirmed by our team.
             </span>
+            {bladeCountError && <span id="product-blade-count-error" role="alert" className="mt-1 block text-[11px] font-semibold text-red-600">{bladeCountError}</span>}
           </label>
 
           {lineItems.length > 0 && (

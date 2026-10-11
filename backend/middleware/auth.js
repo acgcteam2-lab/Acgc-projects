@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import process from "node:process";
 import User from "../models/User.js";
 import Admin from "../models/Admin.js";
 
@@ -26,17 +27,17 @@ export const authMiddleware = async (req, res, next) => {
 
     let account;
     if (decoded.auth_source === "admin") {
-      account = await Admin.findById(decoded.id).select("session_version email first_name last_name phone role").lean();
+      account = await Admin.findById(decoded.id).select("session_version email first_name last_name phone role is_active").lean();
     } else if (decoded.auth_source === "user") {
-      account = await User.findById(decoded.id).select("session_version email first_name last_name phone role").lean();
+      account = await User.findById(decoded.id).select("session_version email first_name last_name phone role is_active").lean();
     } else if (decoded.role === "admin") {
-      account = await Admin.findById(decoded.id).select("session_version email first_name last_name phone role").lean()
-        || await User.findById(decoded.id).select("session_version email first_name last_name phone role").lean();
+      account = await Admin.findById(decoded.id).select("session_version email first_name last_name phone role is_active").lean()
+        || await User.findById(decoded.id).select("session_version email first_name last_name phone role is_active").lean();
     } else {
-      account = await User.findById(decoded.id).select("session_version email first_name last_name phone role").lean();
+      account = await User.findById(decoded.id).select("session_version email first_name last_name phone role is_active").lean();
     }
 
-    if (!account || Number(decoded.session_version || 0) !== Number(account.session_version || 0)) {
+    if (!account || account.is_active === false || Number(decoded.session_version || 0) !== Number(account.session_version || 0)) {
       return res.status(401).json({
         success: false,
         code: "SESSION_REVOKED",

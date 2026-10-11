@@ -33,7 +33,12 @@ export const login = (payload) => apiFetch("/auth/login", {
 
 export const adminExists = () => apiFetch("/auth/admin-exists");
 
-export const createAdmin = (payload) => apiFetch("/auth/create-admin", {
+export const verifyAdminRecovery = (payload) => apiFetch("/auth/admin-recovery/verify", {
+  method: "POST",
+  body: JSON.stringify(payload),
+});
+
+export const restoreAdminRecovery = (payload) => apiFetch("/auth/admin-recovery/restore", {
   method: "POST",
   body: JSON.stringify(payload),
 });

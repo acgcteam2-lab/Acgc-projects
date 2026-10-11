@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "predev": "kill-port 5000",
     "dev": "cross-env NODE_OPTIONS=--no-deprecation concurrently -k --raw \"npm --prefix backend run dev\" \"node ./scripts/waitForBackend.cjs && npm run dev:frontend\"",
     "dev:debug": "cross-env DEBUG_API=true NODE_OPTIONS=--no-deprecation concurrently -k --raw \"npm --prefix backend run dev\" \"node ./scripts/waitForBackend.cjs && npm run dev:frontend\"",
     "dev:frontend": "vite --host 0.0.0.0",
