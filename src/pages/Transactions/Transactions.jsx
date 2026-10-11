@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   FileText,
   CheckCircle,
@@ -34,6 +34,7 @@ function Transactions() {
   const isMobile = useIsMobile();
   const { user } = useAuth();
   const { darkMode } = useAdminTheme();
+  const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] =
     useState(() => {
       if (typeof window === "undefined") return true;
@@ -55,13 +56,9 @@ function Transactions() {
           ? "projects"
           : requestedTable
       );
-      try {
-        window.history.replaceState({}, document.title);
-      } catch (e) {
-        // ignore
-      }
+      navigate(`${location.pathname}${location.search}${location.hash}`, { replace: true, state: null });
     }
-  }, []);
+  }, [location, navigate]);
 
   useEffect(() => {
     localStorage.setItem("sidebarOpen", JSON.stringify(isSidebarOpen));

@@ -253,4 +253,6 @@ const ProductSchema = new mongoose.Schema(
   }
 );
 
+ProductSchema.index({ is_featured: -1, createdAt: -1 });
+
 export default mongoose.model("Product", ProductSchema);

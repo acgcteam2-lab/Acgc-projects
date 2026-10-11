@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   X,
@@ -36,20 +36,33 @@ import { getDefaultProductLineTotal, getProductLineTotal } from "../../lib/produ
 import { getDefaultExtraChargeSelections } from "@/lib/productPricing";
 import { savePendingProductAction } from "@/lib/pendingProductAction";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { getOptimizedProductImageUrl, getProductImageSource, getProductImageSrcSet, handleProductImageError, handleProductImageLoad, PRODUCT_IMAGE_PLACEHOLDER } from "@/lib/productImageUtils";
 
 function LandingPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const isMobile = useIsMobile();
-  const [active, setActive] = useState("home");
+  const initialSearchParams = new URLSearchParams(location.search);
+  const lastLocationSearchRef = useRef(location.search);
+  const restoringLocationStateRef = useRef(false);
+  const pushSectionHistoryRef = useRef(false);
+  const validSections = ["home", "products", "about", "track-order"];
+  const [active, setActive] = useState(() => {
+    const section = initialSearchParams.get("section");
+    return validSections.includes(section) ? section : "home";
+  });
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [productEstimatorForm, setProductEstimatorForm] = useState({ unit: "in", width: "0", height: "0", quantity: 1, blade_glass_type: "", sale_mode: "blades_only", frame_type: "", custom_frame_size: false, blade_count: 1 });
   const [featuredProducts, setFeaturedProducts] = useState([]);
   const [catalogProducts, setCatalogProducts] = useState([]);
-  const [productSearch, setProductSearch] = useState("");
-  const [productCategory, setProductCategory] = useState("All");
-  const [productType, setProductType] = useState("All");
-  const [productPage, setProductPage] = useState(1);
-  const [productsPerPage, setProductsPerPage] = useState(8);
+  const [productSearch, setProductSearch] = useState(() => initialSearchParams.get("q") || "");
+  const [productCategory, setProductCategory] = useState(() => initialSearchParams.get("category") || "All");
+  const [productType, setProductType] = useState(() => initialSearchParams.get("type") || "All");
+  const [productPage, setProductPage] = useState(() => Math.max(1, Number(initialSearchParams.get("page")) || 1));
+  const [productsPerPage, setProductsPerPage] = useState(() => {
+    const requested = Number(initialSearchParams.get("perPage"));
+    return [4, 8, 12, 16].includes(requested) ? requested : 8;
+  });
   const [featuredProductStats, setFeaturedProductStats] = useState({});
   const [featuredRatingStats, setFeaturedRatingStats] = useState({
     average: 0,
@@ -64,8 +77,56 @@ function LandingPage() {
   const [trackingLoading, setTrackingLoading] = useState(false);
   const [showAllTrackedItems, setShowAllTrackedItems] = useState(false);
   const [pendingActionError, setPendingActionError] = useState("");
+  useEffect(() => {
+    if (lastLocationSearchRef.current === location.search) return;
+    lastLocationSearchRef.current = location.search;
+    restoringLocationStateRef.current = true;
+    const params = new URLSearchParams(location.search);
+    const section = params.get("section");
+    setActive(validSections.includes(section) ? section : "home");
+    setProductSearch(params.get("q") || "");
+    setProductCategory(params.get("category") || "All");
+    setProductType(params.get("type") || "All");
+    setProductPage(Math.max(1, Number(params.get("page")) || 1));
+    const requestedPageSize = Number(params.get("perPage"));
+    setProductsPerPage([4, 8, 12, 16].includes(requestedPageSize) ? requestedPageSize : 8);
+  }, [location.search]);
+
+  useEffect(() => {
+    if (restoringLocationStateRef.current) {
+      restoringLocationStateRef.current = false;
+      pushSectionHistoryRef.current = false;
+      return;
+    }
+    const params = new URLSearchParams(location.search);
+    if (params.get("section") !== active) {
+      if (active === "home") params.delete("section");
+      else params.set("section", active);
+    }
+    if (productSearch.trim()) params.set("q", productSearch.trim());
+    else params.delete("q");
+    if (productCategory !== "All") params.set("category", productCategory);
+    else params.delete("category");
+    if (productType !== "All") params.set("type", productType);
+    else params.delete("type");
+    if (productPage > 1) params.set("page", String(productPage));
+    else params.delete("page");
+    if (productsPerPage !== 8) params.set("perPage", String(productsPerPage));
+    else params.delete("perPage");
+
+    const nextSearch = params.toString();
+    if (nextSearch !== location.search.replace(/^\?/, "")) {
+      const replace = !pushSectionHistoryRef.current;
+      pushSectionHistoryRef.current = false;
+      navigate(`${location.pathname}${nextSearch ? `?${nextSearch}` : ""}${location.hash}`, { replace });
+    } else {
+      pushSectionHistoryRef.current = false;
+    }
+  }, [active, location.hash, location.pathname, location.search, navigate, productCategory, productPage, productSearch, productType, productsPerPage]);
+
   const trackingPaymentSummary = trackingResult ? getPaymentSummary(trackingResult) : null;
   const scrollToSection = (sectionId) => {
+    if (sectionId !== active) pushSectionHistoryRef.current = true;
     setActive(sectionId);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -108,6 +169,10 @@ function LandingPage() {
         const response = await getProducts();
         const activeProducts = (response.products || []).filter((product) => product.is_active !== false);
 
+        setCatalogProducts(activeProducts);
+        setFeaturedProducts(activeProducts.slice(0, 3));
+        setIsLoadingFeatured(false);
+
         const productReviewData = await Promise.all(
           activeProducts.map(async (product) => {
             try {
@@ -131,15 +196,9 @@ function LandingPage() {
         );
 
         const stats = {};
-        const sortedProducts = productReviewData
-          .sort((a, b) => {
-            if (b.averageRating !== a.averageRating) return b.averageRating - a.averageRating;
-            return b.ratingsCount - a.ratingsCount;
-          })
-          .map(({ product, averageRating, ratingsCount }) => {
-            stats[product._id || product.id] = { averageRating, ratingsCount };
-            return product;
-          });
+        productReviewData.forEach(({ product, averageRating, ratingsCount }) => {
+          stats[product._id || product.id] = { averageRating, ratingsCount };
+        });
 
         const totalRatings = productReviewData.reduce((sum, entry) => sum + entry.ratingsCount, 0);
         const ratingCounts = productReviewData.reduce((counts, entry) => {
@@ -154,7 +213,6 @@ function LandingPage() {
         );
 
         setCatalogProducts(activeProducts);
-        setFeaturedProducts(sortedProducts.slice(0, 3));
         setFeaturedProductStats(stats);
         setFeaturedRatingStats({
           average: totalRatings ? weightedRatingTotal / totalRatings : 0,
@@ -194,29 +252,9 @@ function LandingPage() {
     };
   }, [selectedProduct]);
 
-  const isLocalBlobOrFile = (url) =>
-    typeof url === "string" && (url.startsWith("blob:") || url.startsWith("file:"));
-
-  const getProductImage = (product) => {
-    if (!product) return "";
-    const imageCandidates = [product.image_url, product.image];
-    if (Array.isArray(product.images) && product.images.length > 0) {
-      imageCandidates.push(product.images[0]);
-    }
-    if (product.images && typeof product.images === "object") {
-      const images = Object.values(product.images).flat().filter(Boolean);
-      if (images.length > 0) imageCandidates.push(images[0]);
-    }
-
-    for (const candidate of imageCandidates) {
-      if (typeof candidate === "string" && candidate.trim()) {
-        if (!isLocalBlobOrFile(candidate)) {
-          return resolveBackendImageUrl(candidate);
-        }
-      }
-    }
-
-    return "";
+  const getProductImage = (product, width = 640) => {
+    const source = getProductImageSource(product);
+    return source ? getOptimizedProductImageUrl(resolveBackendImageUrl(source), width) : "";
   };
 
   const getProductDefaultDimensions = (product) => {
@@ -461,7 +499,7 @@ function LandingPage() {
     setPendingActionError("");
     setSelectedProduct(null);
     navigate("/login", {
-      state: { from: { pathname: "/customer-dashboard", search: "?resumeLandingProduct=1" } },
+      state: { from: { pathname: "/customer-dashboard", search: "?tab=products&resumeLandingProduct=1" } },
     });
   };
 
@@ -819,15 +857,21 @@ function LandingPage() {
                       className="group flex h-full min-w-0 flex-col overflow-hidden rounded-[26px] border border-white/65 bg-white/[0.2] shadow-[0_18px_38px_rgba(15,23,42,0.08)] backdrop-blur-xl transition hover:shadow-[0_24px_48px_rgba(127,29,29,0.12)]"
                     >
                       <div className="relative aspect-[4/3] w-full overflow-hidden bg-slate-100/70">
-                        {imageUrl ? (
-                          <img
-                            src={imageUrl}
-                            alt={product.product_name || product.name || "Featured product"}
-                            className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
-                          />
-                        ) : (
-                          <div className="h-full w-full bg-gradient-to-br from-red-600/20 via-white/10 to-slate-900/10" />
-                        )}
+                        <div data-product-image-skeleton className="absolute inset-0 animate-pulse bg-slate-200 motion-reduce:animate-none" />
+                        <img
+                          src={imageUrl || PRODUCT_IMAGE_PLACEHOLDER}
+                          srcSet={getProductImageSrcSet(imageUrl)}
+                          sizes="(max-width: 768px) 100vw, 33vw"
+                          alt={product.product_name || product.name || "Featured product"}
+                          width="640"
+                          height="480"
+                          loading="eager"
+                          fetchPriority={index === 0 ? "high" : "auto"}
+                          decoding="async"
+                          onLoad={handleProductImageLoad}
+                          onError={handleProductImageError}
+                          className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+                        />
                         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
                         <span className="absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-full border border-amber-200/80 bg-amber-100/95 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-amber-950 shadow-lg backdrop-blur-sm">
                           <Star size={12} fill="currentColor" aria-hidden="true" />
@@ -991,11 +1035,21 @@ function LandingPage() {
                 className="group flex h-full w-full min-w-0 flex-col overflow-hidden rounded-[20px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff7f7_100%)] shadow-[0_12px_30px_rgba(15,23,42,0.07)] transition-all duration-300 ease-out hover:-translate-y-1 hover:border-red-200 hover:shadow-[0_22px_55px_rgba(127,29,29,0.12)] motion-reduce:transition-none max-md:min-h-[124px] max-md:flex-row"
               >
                 <div className="relative aspect-[4/3] overflow-hidden bg-slate-100 max-md:aspect-auto max-md:w-[clamp(5.5rem,30vw,7rem)] max-md:shrink-0">
-                  {image ? (
-                    <img src={image} alt={productName} className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-110 motion-reduce:transition-none" />
-                  ) : (
-                    <div className="flex h-full items-center justify-center bg-gradient-to-br from-red-600/10 to-slate-100 text-sm text-slate-500">No image available</div>
-                  )}
+                  <div data-product-image-skeleton className="absolute inset-0 animate-pulse bg-slate-200 motion-reduce:animate-none" />
+                  <img
+                    src={image || PRODUCT_IMAGE_PLACEHOLDER}
+                    srcSet={getProductImageSrcSet(image)}
+                    sizes={isMobile ? "30vw" : "(max-width: 1280px) 33vw, 25vw"}
+                    alt={productName}
+                    width="640"
+                    height="480"
+                    loading={index < (isMobile ? 2 : 4) ? "eager" : "lazy"}
+                    fetchPriority={index === 0 ? "high" : "auto"}
+                    decoding="async"
+                    onLoad={handleProductImageLoad}
+                    onError={handleProductImageError}
+                    className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-110 motion-reduce:transition-none"
+                  />
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
                   <div className="absolute left-3 right-3 top-3 flex items-start justify-between gap-2">
                     {product.is_featured ? (
@@ -1139,18 +1193,21 @@ function LandingPage() {
 
       <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto p-4 sm:p-6 md:grid-cols-[1.1fr_0.9fr]">
         <div className="min-w-0 space-y-4">
-          <div className="overflow-hidden rounded-2xl bg-slate-100">
-            {getProductImage(selectedProduct) ? (
-              <img
-                src={getProductImage(selectedProduct)}
-                alt={selectedProduct.product_name || selectedProduct.name || "Product"}
-                className="aspect-[4/3] max-h-[340px] w-full object-cover"
-              />
-            ) : (
-              <div className="flex aspect-[4/3] items-center justify-center bg-gradient-to-br from-red-600/10 to-slate-100 text-sm text-slate-500">
-                No image available
-              </div>
-            )}
+          <div className="relative aspect-[4/3] overflow-hidden rounded-2xl bg-slate-100">
+            <div data-product-image-skeleton className="absolute inset-0 animate-pulse bg-slate-200 motion-reduce:animate-none" />
+            <img
+              src={getProductImage(selectedProduct, 960) || PRODUCT_IMAGE_PLACEHOLDER}
+              srcSet={getProductImageSrcSet(getProductImage(selectedProduct, 960))}
+              sizes="(max-width: 768px) 100vw, 50vw"
+              alt={selectedProduct.product_name || selectedProduct.name || "Product"}
+              width="960"
+              height="720"
+              loading="eager"
+              decoding="async"
+              onLoad={handleProductImageLoad}
+              onError={handleProductImageError}
+              className="aspect-[4/3] max-h-[340px] w-full object-cover"
+            />
           </div>
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <h3 className="text-base font-bold text-slate-900">Product Details</h3>

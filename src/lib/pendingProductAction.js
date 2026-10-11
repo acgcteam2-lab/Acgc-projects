@@ -84,6 +84,21 @@ export const clearPendingProductAction = (expectedId) => {
   }
 };
 
+export const updatePendingProductAction = (expectedId, updates) => {
+  const storage = getStorage();
+  if (!storage || !expectedId || !updates || typeof updates !== "object") return null;
+
+  try {
+    const current = JSON.parse(storage.getItem(STORAGE_KEY) || "null");
+    if (current?.id !== expectedId || current.version !== STORAGE_VERSION) return null;
+    const updated = { ...current, ...updates, id: current.id, productId: current.productId };
+    storage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    return updated;
+  } catch {
+    return null;
+  }
+};
+
 export const preservePendingProductRedirect = (from) => {
   const storage = getStorage();
   const pendingAction = getPendingProductAction();
@@ -128,5 +143,66 @@ export const consumePendingProductRedirect = () => {
       // Ignore unavailable storage cleanup.
     }
     return null;
+  }
+};
+
+const getSessionStorage = () => {
+  try {
+    return typeof window === "undefined" ? null : window.sessionStorage;
+  } catch {
+    return null;
+  }
+};
+
+const getWorkflowStorageKey = (actionId, customerId) => (
+  `acgc-product-workflow:${encodeURIComponent(customerId)}:${encodeURIComponent(actionId)}`
+);
+
+export const savePendingProductWorkflowState = (actionId, customerId, state) => {
+  const storage = getSessionStorage();
+  const pendingAction = getPendingProductAction();
+  if (!storage || !customerId || pendingAction?.id !== actionId) return false;
+
+  try {
+    storage.setItem(getWorkflowStorageKey(actionId, customerId), JSON.stringify({
+      actionId,
+      expiresAt: pendingAction.expiresAt,
+      state,
+    }));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export const getPendingProductWorkflowState = (actionId, customerId) => {
+  const storage = getSessionStorage();
+  if (!storage || !customerId) return null;
+
+  try {
+    const key = getWorkflowStorageKey(actionId, customerId);
+    const saved = JSON.parse(storage.getItem(key) || "null");
+    if (
+      !saved ||
+      saved.actionId !== actionId ||
+      !Number.isFinite(Number(saved.expiresAt)) ||
+      Number(saved.expiresAt) <= Date.now()
+    ) {
+      storage.removeItem(key);
+      return null;
+    }
+    return saved.state || null;
+  } catch {
+    return null;
+  }
+};
+
+export const clearPendingProductWorkflowState = (actionId, customerId) => {
+  const storage = getSessionStorage();
+  if (!storage || !customerId || !actionId) return;
+  try {
+    storage.removeItem(getWorkflowStorageKey(actionId, customerId));
+  } catch {
+    // Ignore unavailable storage cleanup.
   }
 };

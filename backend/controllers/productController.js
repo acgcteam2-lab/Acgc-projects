@@ -151,7 +151,11 @@ export const listProducts = async (req, res) => {
       filter.$or = [{ name: regex }, { sku: regex }, { description: regex }];
     }
 
-    const products = await Product.find(filter).sort({ is_featured: -1, createdAt: -1 });
+    const productQuery = Product.find(filter).sort({ is_featured: -1, createdAt: -1 });
+    if (adminOnly !== "true") {
+      productQuery.select("name sku category description unit_price unit measurement_unit stock_quantity is_featured image_url images product_type product_name pricing_method variant base_price price_per_sqft price_per_blade customization customization_fee extra_charges size_limits standard_size width height blade_count blade_glass_types sell_blades_only sell_with_frame blade_frame_types allow_custom_frame_size custom_frame_size_unit custom_frame_price minimum_blades maximum_blades customer_can_choose_blade_count default_blade_glass_type default_sale_mode default_frame_type show_price_per_blade estimated_area estimated_price estimated_price_override is_active");
+    }
+    const products = await productQuery.lean();
     res.json({ success: true, products });
   } catch (error) {
     console.error("List products error:", error);

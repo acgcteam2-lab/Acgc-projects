@@ -93,7 +93,8 @@ import {
 } from "./orderStatusUtils";
 import { getPaymentSummary, isPaymentProofConfirmed } from "@/pages/Transactions/paymentProofUtils";
 import { buildProductPriceSnapshot, getDefaultBladeCount, getDefaultExtraChargeSelections, getDefaultProductLineTotal, getProductLineBreakdown, getProductLineTotal } from "@/lib/productPricing";
-import { clearPendingProductAction, getPendingProductAction } from "@/lib/pendingProductAction";
+import { clearPendingProductAction, clearPendingProductWorkflowState, getPendingProductAction, getPendingProductWorkflowState, savePendingProductWorkflowState, updatePendingProductAction } from "@/lib/pendingProductAction";
+import { getOptimizedProductImageUrl, getProductImageSource, getProductImageSrcSet, handleProductImageError, handleProductImageLoad } from "@/lib/productImageUtils";
 import { getFinalProjectCost } from "@/lib/orderPricing";
 import { getPhilippinePhoneError, isValidPhilippinePhone, normalizePhoneInput } from "@/lib/phoneValidation";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
@@ -254,6 +255,11 @@ function CustomerDashboard() {
   const orderOwnerId = user?.id || user?._id;
   const navigate = useNavigate();
   const location = useLocation();
+  const initialDashboardParams = new URLSearchParams(location.search);
+  const validCustomerTabs = ["home", "products", "orders", "cart", "about", "notifications", "profile", "contracts"];
+  const lastCustomerSearchRef = useRef(location.search);
+  const restoringCustomerLocationRef = useRef(false);
+  const pushCustomerTabHistoryRef = useRef(false);
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   useEffect(() => {
     if (loading || user?.role !== "customer") return undefined;
@@ -290,7 +296,14 @@ function CustomerDashboard() {
   const canShowRatings = accountPermissions.show_ratings_homepage && !accountPermissions.view_only_access;
   const isProductModalReadOnly = !canRequestOrders && !canEstimatePricing;
 
-  const [activeTab, setActiveTab] = useState("home");
+  const [activeTab, setActiveTabState] = useState(() => {
+    const tab = initialDashboardParams.get("tab");
+    return validCustomerTabs.includes(tab) ? tab : "home";
+  });
+  const setActiveTab = (tab) => {
+    if (tab !== activeTab) pushCustomerTabHistoryRef.current = true;
+    setActiveTabState(tab);
+  };
   useEffect(() => {
     if (!canRequestOrders && activeTab === "cart") setActiveTab("home");
   }, [activeTab, canRequestOrders]);
@@ -318,11 +331,15 @@ function CustomerDashboard() {
   const cartItemsRef = useRef([]);
   const cartSaveQueueRef = useRef(Promise.resolve());
   const [cartLoaded, setCartLoaded] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("All");
-  const [productTypeFilter, setProductTypeFilter] = useState("All");
-  const [productPage, setProductPage] = useState(1);
-  const [productsPerPage, setProductsPerPage] = useState(8);
+  const [searchQuery, setSearchQuery] = useState(() => initialDashboardParams.get("productQ") || "");
+  const [categoryFilter, setCategoryFilter] = useState(() => initialDashboardParams.get("productCategory") || "All");
+  const [productTypeFilter, setProductTypeFilter] = useState(() => initialDashboardParams.get("productType") || "All");
+  const [productPage, setProductPage] = useState(() => Math.max(1, Number(initialDashboardParams.get("productPage")) || 1));
+  const [productsPerPage, setProductsPerPage] = useState(() => {
+    const requested = Number(initialDashboardParams.get("productPerPage"));
+    return [4, 8, 12, 16].includes(requested) ? requested : 8;
+  });
+  const browseFiltersRef = useRef({ searchQuery, categoryFilter, productTypeFilter, productsPerPage });
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [productError, setProductError] = useState("");
   const [selectedProduct, setSelectedProduct] = useState(null);
@@ -443,15 +460,19 @@ function CustomerDashboard() {
   const [cancelRequestModal, setCancelRequestModal] = useState({ open: false, order: null });
   const [expandedOrderId, setExpandedOrderId] = useState(null);
   const [highlightedOrderId, setHighlightedOrderId] = useState(null);
-  const [orderFilter, setOrderFilter] = useState("all");
-  const [orderPage, setOrderPage] = useState(1);
+  const validOrderFilters = ["all", "order", "review", "completed", "reviewed", "cancel"];
+  const [orderFilter, setOrderFilter] = useState(() => {
+    const filter = initialDashboardParams.get("orderFilter");
+    return validOrderFilters.includes(filter) ? filter : "all";
+  });
+  const [orderPage, setOrderPage] = useState(() => Math.max(1, Number(initialDashboardParams.get("orderPage")) || 1));
   const [orderViewMode, setOrderViewMode] = useState("view2");
   const [selectedOrderForModal, setSelectedOrderForModal] = useState(null);
   const [timelineNotificationTarget, setTimelineNotificationTarget] = useState(null);
   const [contractSummaryExpanded, setContractSummaryExpanded] = useState(true);
-  const [contractHistoryTab, setContractHistoryTab] = useState("accepted");
-  const [contractPage, setContractPage] = useState(1);
-  const [warrantyHistoryTab, setWarrantyHistoryTab] = useState(null);
+  const [contractHistoryTab, setContractHistoryTab] = useState(() => initialDashboardParams.get("contractFilter") === "rejected" ? "rejected" : "accepted");
+  const [contractPage, setContractPage] = useState(() => Math.max(1, Number(initialDashboardParams.get("contractPage")) || 1));
+  const [warrantyHistoryTab, setWarrantyHistoryTab] = useState(() => ["active", "expired"].includes(initialDashboardParams.get("warrantyTab")) ? initialDashboardParams.get("warrantyTab") : null);
 
   const commitCartItems = (updater) => {
     if (!cartLoaded) throw new Error("Your cart is still loading. Please try again.");
@@ -503,10 +524,6 @@ function CustomerDashboard() {
     safeContractPage * CONTRACT_PAGE_SIZE
   );
   const displayedContracts = isMobile ? contractsInTab : paginatedContracts;
-
-  useEffect(() => {
-    setContractPage(1);
-  }, [contractHistoryTab, contractsInTab.length]);
 
   // Expand batch warranties so each product has its own transaction record.
   const warrantyRecords = orders.flatMap((order) => {
@@ -588,7 +605,7 @@ function CustomerDashboard() {
       return new Set();
     }
   });
-  const [profileTab, setProfileTab] = useState("profile");
+  const [profileTab, setProfileTab] = useState(() => initialDashboardParams.get("profileTab") === "security" ? "security" : "profile");
   const [profileEditing, setProfileEditing] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordModalError, setPasswordModalError] = useState("");
@@ -819,17 +836,86 @@ function CustomerDashboard() {
   }, [user]);
 
   useEffect(() => {
-    const activeTabFromState = location.state?.activeTab;
-    const activeTabFromQuery = new URLSearchParams(location.search).get("tab");
-    const tab = activeTabFromState || activeTabFromQuery;
+    const params = new URLSearchParams(location.search);
+    if (lastCustomerSearchRef.current !== location.search) {
+      lastCustomerSearchRef.current = location.search;
+      restoringCustomerLocationRef.current = true;
+      const tab = params.get("tab");
+      setActiveTab(validCustomerTabs.includes(tab) ? tab : "home");
+      const restoredFilters = {
+        searchQuery: params.get("productQ") || "",
+        categoryFilter: params.get("productCategory") || "All",
+        productTypeFilter: params.get("productType") || "All",
+        productsPerPage: [4, 8, 12, 16].includes(Number(params.get("productPerPage")))
+          ? Number(params.get("productPerPage"))
+          : 8,
+      };
+      browseFiltersRef.current = restoredFilters;
+      setSearchQuery(restoredFilters.searchQuery);
+      setCategoryFilter(restoredFilters.categoryFilter);
+      setProductTypeFilter(restoredFilters.productTypeFilter);
+      setProductsPerPage(restoredFilters.productsPerPage);
+      setProductPage(Math.max(1, Number(params.get("productPage")) || 1));
+      const orderFilterParam = params.get("orderFilter");
+      setOrderFilter(validOrderFilters.includes(orderFilterParam) ? orderFilterParam : "all");
+      setOrderPage(Math.max(1, Number(params.get("orderPage")) || 1));
+      setContractHistoryTab(params.get("contractFilter") === "rejected" ? "rejected" : "accepted");
+      setContractPage(Math.max(1, Number(params.get("contractPage")) || 1));
+      setWarrantyHistoryTab(["active", "expired"].includes(params.get("warrantyTab")) ? params.get("warrantyTab") : null);
+      setProfileTab(params.get("profileTab") === "security" ? "security" : "profile");
+      return;
+    }
 
-    if (tab) {
-      setActiveTab(tab);
-      if (activeTabFromState) {
-        navigate(location.pathname, { replace: true, state: {} });
-      }
+    const stateTab = location.state?.activeTab;
+    if (validCustomerTabs.includes(stateTab)) {
+      setActiveTab(stateTab);
+      navigate(`${location.pathname}${location.search}`, { replace: true, state: {} });
     }
   }, [location, navigate]);
+
+  useEffect(() => {
+    if (restoringCustomerLocationRef.current) {
+      restoringCustomerLocationRef.current = false;
+      pushCustomerTabHistoryRef.current = false;
+      return;
+    }
+
+    const params = new URLSearchParams(location.search);
+    if (activeTab === "home") params.delete("tab");
+    else params.set("tab", activeTab);
+    if (searchQuery.trim()) params.set("productQ", searchQuery.trim());
+    else params.delete("productQ");
+    if (categoryFilter !== "All") params.set("productCategory", categoryFilter);
+    else params.delete("productCategory");
+    if (productTypeFilter !== "All") params.set("productType", productTypeFilter);
+    else params.delete("productType");
+    if (productPage > 1) params.set("productPage", String(productPage));
+    else params.delete("productPage");
+    if (productsPerPage !== 8) params.set("productPerPage", String(productsPerPage));
+    else params.delete("productPerPage");
+    if (orderFilter !== "all") params.set("orderFilter", orderFilter);
+    else params.delete("orderFilter");
+    if (orderPage > 1) params.set("orderPage", String(orderPage));
+    else params.delete("orderPage");
+    if (contractHistoryTab !== "accepted") params.set("contractFilter", contractHistoryTab);
+    else params.delete("contractFilter");
+    if (contractPage > 1) params.set("contractPage", String(contractPage));
+    else params.delete("contractPage");
+    if (warrantyHistoryTab) params.set("warrantyTab", warrantyHistoryTab);
+    else params.delete("warrantyTab");
+    if (profileTab !== "profile") params.set("profileTab", profileTab);
+    else params.delete("profileTab");
+
+    const nextSearch = params.toString();
+    if (nextSearch !== location.search.replace(/^\?/, "")) {
+      lastCustomerSearchRef.current = nextSearch ? `?${nextSearch}` : "";
+      const replace = !pushCustomerTabHistoryRef.current;
+      pushCustomerTabHistoryRef.current = false;
+      navigate(`${location.pathname}${nextSearch ? `?${nextSearch}` : ""}${location.hash}`, { replace });
+    } else {
+      pushCustomerTabHistoryRef.current = false;
+    }
+  }, [activeTab, categoryFilter, contractHistoryTab, contractPage, location.hash, location.pathname, location.search, navigate, orderFilter, orderPage, productPage, productTypeFilter, productsPerPage, profileTab, searchQuery, warrantyHistoryTab]);
 
   const selectedCartItems = cartItems.filter((item) => item.selected);
   const selectedItemCount = selectedCartItems.length;
@@ -1196,6 +1282,8 @@ function CustomerDashboard() {
         }
 
         const eligibleProducts = productsList.filter((product) => product.is_active !== false);
+        setFeaturedProducts(eligibleProducts.slice(0, 3));
+        setFeaturedProductsLoading(false);
 
         if (!canUploadFeedback) {
           setFeaturedRatingStats({ average: 0, total: 0, counts: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } });
@@ -1251,16 +1339,7 @@ function CustomerDashboard() {
           counts: featuredRatingCounts,
         });
 
-        const sortedProducts = productReviewData
-          .sort((a, b) => {
-            if (b.averageRating !== a.averageRating) return b.averageRating - a.averageRating;
-            return b.ratingsCount - a.ratingsCount;
-          })
-          .map((entry) => entry.product)
-          .slice(0, 3);
-
         if (!active) return;
-        setFeaturedProducts(sortedProducts);
       } catch (error) {
         if (!active) return;
         setFeaturedProducts([]);
@@ -1279,7 +1358,13 @@ function CustomerDashboard() {
   }, [canUploadFeedback, loading, user?.id]);
 
   useEffect(() => {
-    setProductPage(1);
+    const previousFilters = browseFiltersRef.current;
+    const currentFilters = { searchQuery, categoryFilter, productTypeFilter, productsPerPage };
+    const filtersChanged = previousFilters && Object.keys(currentFilters).some(
+      (key) => previousFilters[key] !== currentFilters[key]
+    );
+    browseFiltersRef.current = currentFilters;
+    if (filtersChanged) setProductPage(1);
   }, [searchQuery, categoryFilter, productTypeFilter, productsPerPage]);
 
   useEffect(() => {
@@ -1299,6 +1384,7 @@ function CustomerDashboard() {
           (firstProduct, secondProduct) => Number(Boolean(secondProduct.is_featured)) - Number(Boolean(firstProduct.is_featured)),
         );
         setProducts(productsList);
+        setIsLoadingProducts(false);
 
         if (!canUploadFeedback) {
           setProductReviewStats({});
@@ -1657,6 +1743,10 @@ function CustomerDashboard() {
     if (!pendingAction || pendingLandingActionIdRef.current === pendingAction.id) return;
 
     const selection = pendingAction.selection || {};
+    const resumeState = {
+      ...(pendingAction.resumeState || {}),
+      ...(getPendingProductWorkflowState(pendingAction.id, user?.id || user?._id) || {}),
+    };
     const snapshot = pendingAction.productSnapshot || {};
     const product = {
       ...snapshot,
@@ -1691,22 +1781,24 @@ function CustomerDashboard() {
       extra_charges: extraCharges,
     });
     setEstimateFormErrors({});
-    setDeliveryConfirmMode("estimate");
-    setDeliveryConfirmForm({
+    setDeliveryConfirmMode(resumeState.deliveryConfirmMode || "estimate");
+    setDeliveryConfirmForm(resumeState.deliveryConfirmForm || {
       phone: profileForm.phone || user.phone || "",
       street_address: profileForm.street_address || user.street_address || "",
       city: profileForm.city || user.city || "",
       province: profileForm.province || user.province || "",
       zip_code: profileForm.zip_code || user.zip_code || "",
     });
-    setDeliveryConfirmNotes(selection.notes || "");
+    setDeliveryConfirmNotes(resumeState.deliveryConfirmNotes ?? selection.notes ?? "");
     setDeliveryConfirmError("");
     setCartActionError("");
     setOrderReviewAgreed(false);
     setActiveTab("products");
     setResumeProductRefreshing(true);
     setResumeProductRefreshError("");
-    setShowDeliveryConfirmModal(true);
+    setShowDeliveryConfirmModal(resumeState.step !== "review");
+    setShowOrderReviewModal(resumeState.step === "review");
+    setReviewOrderMode(resumeState.reviewOrderMode || "estimate");
   }, [canRequestOrders, location.search, loading, profileForm.city, profileForm.phone, profileForm.province, profileForm.street_address, profileForm.zip_code, user?.city, user?.id, user?.phone, user?.province, user?.street_address, user?.zip_code]);
 
   useEffect(() => {
@@ -1737,8 +1829,10 @@ function CustomerDashboard() {
           setResumeProductRefreshing(false);
           setResumeProductRefreshError("");
           clearPendingProductAction(pendingAction.id);
+          clearPendingProductWorkflowState(pendingAction.id, user?.id || user?._id);
           pendingLandingActionIdRef.current = "";
           search.delete("resumeLandingProduct");
+          search.set("tab", "products");
           navigate(`${location.pathname}${search.size ? `?${search}` : ""}`, { replace: true });
           return;
         }
@@ -1779,15 +1873,17 @@ function CustomerDashboard() {
           };
         });
         setActiveTab("products");
-        setShowDeliveryConfirmModal(true);
+        const resumeAtReview = pendingAction.resumeState?.step === "review";
+        setShowDeliveryConfirmModal(!resumeAtReview);
+        setShowOrderReviewModal(resumeAtReview);
 
         landingResumeAttemptRef.current = pendingAction.id;
-        pendingLandingActionIdRef.current = "";
         setResumeProductRefreshing(false);
         setResumeProductRefreshError("");
-        clearPendingProductAction(pendingAction.id);
-        search.delete("resumeLandingProduct");
-        navigate(`${location.pathname}${search.size ? `?${search}` : ""}`, { replace: true });
+        search.set("tab", "products");
+        if (search.toString() !== location.search.replace(/^\?/, "")) {
+          navigate(`${location.pathname}?${search}`, { replace: true });
+        }
       } catch (error) {
         if (!active) return;
         landingResumeAttemptRef.current = "";
@@ -1803,6 +1899,38 @@ function CustomerDashboard() {
       if (resumeProductRefreshRef.current === resumeLandingProduct) resumeProductRefreshRef.current = null;
     };
   }, [canRequestOrders, location.pathname, location.search, loading, navigate, profileForm.city, profileForm.phone, profileForm.province, profileForm.street_address, profileForm.zip_code, user?.city, user?.id, user?.phone, user?.province, user?.street_address, user?.zip_code]);
+
+  useEffect(() => {
+    const pendingActionId = pendingLandingActionIdRef.current;
+    if (!pendingActionId) return;
+    const pendingAction = getPendingProductAction();
+    if (!pendingAction || pendingAction.id !== pendingActionId) return;
+
+    updatePendingProductAction(pendingActionId, {
+      selection: {
+        ...pendingAction.selection,
+        width: estimateForm.width,
+        height: estimateForm.height,
+        unit: estimateForm.unit,
+        quantity: estimateForm.quantity,
+        notes: estimateForm.notes,
+        customized: estimateForm.customized,
+        blade_glass_type: estimateForm.blade_glass_type,
+        sale_mode: estimateForm.sale_mode,
+        frame_type: estimateForm.frame_type,
+        custom_frame_size: estimateForm.custom_frame_size,
+        blade_count: estimateForm.blade_count,
+        extra_charges: estimateForm.extra_charges,
+      },
+    });
+    savePendingProductWorkflowState(pendingActionId, user?.id || user?._id, {
+      step: showOrderReviewModal ? "review" : "delivery",
+      deliveryConfirmMode,
+      deliveryConfirmForm,
+      deliveryConfirmNotes,
+      reviewOrderMode,
+    });
+  }, [deliveryConfirmForm, deliveryConfirmMode, deliveryConfirmNotes, estimateForm, reviewOrderMode, showOrderReviewModal, user?.id, user?._id]);
 
   const handleAddToCart = async (product, extraCharges = getDefaultExtraChargeSelections(product)) => {
     if (!canRequestOrders) {
@@ -2223,6 +2351,17 @@ function CustomerDashboard() {
           order_type: "online_order",
         });
 
+        if (pendingLandingActionIdRef.current) {
+          const pendingActionId = pendingLandingActionIdRef.current;
+          clearPendingProductAction(pendingActionId);
+          clearPendingProductWorkflowState(pendingActionId, user?.id || user?._id);
+          pendingLandingActionIdRef.current = "";
+          landingResumeAttemptRef.current = "";
+          const search = new URLSearchParams(location.search);
+          search.delete("resumeLandingProduct");
+          search.set("tab", "products");
+          navigate(`${location.pathname}?${search}`, { replace: true });
+        }
         setOrderRequestMessage(getOrderSubmissionMessage(response, "Order requested"));
         addCreatedOrderToMyOrders(response.order);
         setOrderSuccessData(response.order);
@@ -2552,13 +2691,17 @@ function CustomerDashboard() {
     setDeliveryConfirmError("");
     setShowDeliveryConfirmModal(false);
     if (pendingLandingActionIdRef.current) {
-      clearPendingProductAction(pendingLandingActionIdRef.current);
+      const pendingActionId = pendingLandingActionIdRef.current;
+      clearPendingProductAction(pendingActionId);
+      clearPendingProductWorkflowState(pendingActionId, user?.id || user?._id);
       pendingLandingActionIdRef.current = "";
       landingResumeAttemptRef.current = "";
       setResumeProductRefreshing(false);
       setResumeProductRefreshError("");
       const search = new URLSearchParams(location.search);
       search.delete("resumeLandingProduct");
+      if (activeTab === "home") search.delete("tab");
+      else search.set("tab", activeTab);
       navigate(`${location.pathname}${search.size ? `?${search}` : ""}`, { replace: true });
     }
     if (deliveryConfirmMode === "orderNow") {
@@ -3349,15 +3492,9 @@ function CustomerDashboard() {
     return details;
   };
 
-  const getProductImage = (product) => {
-    let candidate = null;
-    if (product?.image_url) candidate = product.image_url;
-    if (!candidate && product?.image) candidate = product.image;
-    if (!candidate && product?.images && typeof product.images === "object") {
-      const images = Object.values(product.images).flat().filter(Boolean);
-      if (images.length > 0) candidate = images[0];
-    }
-    return ensureAbsoluteUrl(candidate);
+  const getProductImage = (product, width = 640) => {
+    const source = getProductImageSource(product);
+    return source ? getOptimizedProductImageUrl(ensureAbsoluteUrl(source), width) : "";
   };
 
   const getProductImages = (product) => {
@@ -3372,7 +3509,7 @@ function CustomerDashboard() {
       }
       const rawUrl = typeof value === "object" && value ? value.url : value;
       if (typeof rawUrl !== "string" || !rawUrl.trim()) return;
-      const url = ensureAbsoluteUrl(rawUrl);
+      const url = getOptimizedProductImageUrl(ensureAbsoluteUrl(rawUrl), 1200);
       if (seen.has(url) || url === PRODUCT_IMAGE_PLACEHOLDER) return;
       seen.add(url);
       images.push({ url, label });
@@ -4663,7 +4800,7 @@ function CustomerDashboard() {
               </div>
             ) : (
               <div className="grid gap-5 md:grid-cols-3">
-                {featuredProducts.map((product) => {
+                {featuredProducts.map((product, index) => {
                   const reviewStats = productReviewStats[product._id || product.id] || { averageRating: 0, ratingsCount: 0 };
                   const averageRating = Number(reviewStats.averageRating) || 0;
                   const reviewsCount = Number(reviewStats.ratingsCount) || 0;
@@ -4676,9 +4813,19 @@ function CustomerDashboard() {
                       }`}
                     >
                       <div className={`relative aspect-[4/3] w-full overflow-hidden ${darkMode ? "bg-slate-900" : "bg-slate-100"}`}>
+                        <div data-product-image-skeleton className="absolute inset-0 animate-pulse bg-slate-200 motion-reduce:animate-none" />
                         <img
-                          src={getProductImage(product)}
+                          src={getProductImage(product, 720) || PRODUCT_IMAGE_PLACEHOLDER}
+                          srcSet={getProductImageSrcSet(getProductImage(product, 720))}
+                          sizes="(max-width: 768px) 100vw, 33vw"
                           alt={product.name}
+                          width="720"
+                          height="540"
+                          loading="eager"
+                          fetchPriority={index === 0 ? "high" : "auto"}
+                          decoding="async"
+                          onLoad={handleProductImageLoad}
+                          onError={handleProductImageError}
                           className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
@@ -4815,7 +4962,7 @@ function CustomerDashboard() {
               ) : (
                 <>
                   <div className="grid w-full min-w-0 grid-cols-1 gap-3 sm:gap-5 md:grid-cols-3 xl:grid-cols-4">
-                    {displayedProducts.map((product) => (
+                    {displayedProducts.map((product, index) => (
                       <div
                         key={product._id || product.name}
                         className={`customer-product-card group relative flex h-full w-full min-w-0 cursor-pointer flex-col overflow-hidden rounded-[26px] border transition-all duration-300 ease-out hover:-translate-y-1 motion-reduce:transition-none max-md:min-h-[124px] max-md:flex-row max-md:rounded-[18px] ${
@@ -4826,7 +4973,21 @@ function CustomerDashboard() {
                         onClick={() => handleViewProduct(product)}
                       >
                         <div className={`relative aspect-[4/3] overflow-hidden ${darkMode ? "bg-slate-900" : "bg-slate-100"} max-md:aspect-auto max-md:w-[clamp(5.5rem,30vw,7rem)] max-md:shrink-0`}>
-                          <img src={getProductImage(product)} alt={product.name} className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-110 motion-reduce:transition-none" />
+                          <div data-product-image-skeleton className="absolute inset-0 animate-pulse bg-slate-200 motion-reduce:animate-none" />
+                          <img
+                            src={getProductImage(product, 480) || PRODUCT_IMAGE_PLACEHOLDER}
+                            srcSet={getProductImageSrcSet(getProductImage(product, 480), [240, 480, 720])}
+                            sizes={isMobile ? "30vw" : "(max-width: 1280px) 33vw, 25vw"}
+                            alt={product.name}
+                            width="480"
+                            height="360"
+                            loading={index < (isMobile ? 2 : 4) ? "eager" : "lazy"}
+                            fetchPriority={index === 0 ? "high" : "auto"}
+                            decoding="async"
+                            onLoad={handleProductImageLoad}
+                            onError={handleProductImageError}
+                            className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-110 motion-reduce:transition-none"
+                          />
                           <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
 
                           <div className="absolute left-3 top-3 right-3 flex items-start justify-between gap-2">
@@ -5098,10 +5259,18 @@ function CustomerDashboard() {
                       {/* Left: Product Image & Description */}
                       <div className={`min-w-0 space-y-4 ${isProductModalReadOnly ? darkMode ? "rounded-xl bg-slate-800 p-2" : "rounded-xl bg-slate-50 p-2" : ""}`}>
                         <div className="space-y-2">
-                          <div className="overflow-hidden rounded-2xl bg-slate-100 shadow-sm">
+                          <div className="relative aspect-[4/3] overflow-hidden rounded-2xl bg-slate-100 shadow-sm">
+                            <div data-product-image-skeleton className="absolute inset-0 animate-pulse bg-slate-200 motion-reduce:animate-none" />
                             <img
+                                                            onLoad={handleProductImageLoad}
                               src={activeProductImage.url}
+                              srcSet={getProductImageSrcSet(activeProductImage.url, [480, 960, 1200])}
+                              sizes="(max-width: 768px) 100vw, 50vw"
                               alt={`${selectedProduct.name} - ${activeProductImage.label}`}
+                              width="1200"
+                              height="900"
+                              loading="eager"
+                              decoding="async"
                               className="aspect-[4/3] max-h-[300px] w-full object-cover"
                               onError={(event) => {
                                 event.currentTarget.onerror = null;
@@ -5120,7 +5289,7 @@ function CustomerDashboard() {
                                   aria-pressed={selectedProductImageIndex === index}
                                   className={`h-16 w-20 shrink-0 overflow-hidden rounded-lg border-2 transition ${selectedProductImageIndex === index ? "border-red-600" : "border-transparent hover:border-red-300"}`}
                                 >
-                                  <img src={image.url} alt="" className="h-full w-full object-cover" />
+                                  <img src={image.url || PRODUCT_IMAGE_PLACEHOLDER} alt="" width="120" height="120" loading="lazy" decoding="async" onError={handleProductImageError} className="h-full w-full object-cover" />
                                 </button>
                               ))}
                             </div>
@@ -5445,7 +5614,17 @@ function CustomerDashboard() {
                             >
                               <div className="flex min-w-0 items-center gap-3">
                                 <div className={`h-12 w-12 shrink-0 overflow-hidden rounded-lg border ${darkMode ? "border-slate-600 bg-slate-700" : "border-slate-200 bg-slate-50"}`}>
-                                  <img src={getProductImage(selectedProduct)} alt={selectedProduct?.name || "Product"} className="h-full w-full object-cover" />
+                                  <img
+                                    src={getProductImage(selectedProduct, 480) || PRODUCT_IMAGE_PLACEHOLDER}
+                                    srcSet={getProductImageSrcSet(getProductImage(selectedProduct, 480), [240, 480, 720])}
+                                    alt={selectedProduct?.name || "Product"}
+                                    width="480"
+                                    height="480"
+                                    loading="lazy"
+                                    decoding="async"
+                                    onError={handleProductImageError}
+                                    className="h-full w-full object-cover"
+                                  />
                                 </div>
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center justify-between gap-2">
@@ -5521,7 +5700,7 @@ function CustomerDashboard() {
                         {/* Product Preview Card */}
                         <div className="rounded-2xl border-2 border-white-200 bg-gray-100 p-6">
                           <div className="flex items-center gap-4">
-                            <img src={getProductImage(cartDecisionProduct)} alt={cartDecisionProduct.name} className="w-28 h-28 rounded-2xl object-cover bg-white shadow-md flex-shrink-0" />
+                            <img src={getProductImage(cartDecisionProduct, 320) || PRODUCT_IMAGE_PLACEHOLDER} alt={cartDecisionProduct.name} width="112" height="112" loading="lazy" decoding="async" onError={handleProductImageError} className="w-28 h-28 rounded-2xl object-cover bg-white shadow-md flex-shrink-0" />
                             <div className="flex-1">
                               <p className="text-sm text-slate-600 font-medium">Selected Product</p>
                               <h4 className="text-2xl font-bold text-slate-900 mt-1">{cartDecisionProduct.name}</h4>
@@ -5578,7 +5757,7 @@ function CustomerDashboard() {
                       <div className="px-6 py-8 space-y-6">
                         {/* Product Compact Card */}
                         <div className="flex items-center gap-3 rounded-xl bg-gray-50 p-4 border border-gray-200">
-                          <img src={getProductImage(cartDecisionProduct)} alt={cartDecisionProduct.name} className="w-16 h-16 rounded-lg object-cover bg-white" />
+                          <img src={getProductImage(cartDecisionProduct, 160) || PRODUCT_IMAGE_PLACEHOLDER} alt={cartDecisionProduct.name} width="64" height="64" loading="lazy" decoding="async" onError={handleProductImageError} className="w-16 h-16 rounded-lg object-cover bg-white" />
                           <div className="flex-1 min-w-0">
                             <p className="text-sm text-gray-600">Estimating for</p>
                             <p className="font-semibold text-gray-900 truncate">{cartDecisionProduct.name}</p>
@@ -5929,8 +6108,13 @@ function CustomerDashboard() {
                         <div className="flex items-start gap-4">
                           <div className="h-24 w-24 overflow-hidden rounded-3xl border border-gray-200 bg-gray-100">
                             <img
-                              src={getProductImage(confirmProduct)}
+                              src={getProductImage(confirmProduct, 160) || PRODUCT_IMAGE_PLACEHOLDER}
                               alt={confirmProduct?.name || "Product preview"}
+                              width="96"
+                              height="96"
+                              loading="lazy"
+                              decoding="async"
+                              onError={handleProductImageError}
                               className="h-full w-full object-cover"
                             />
                           </div>
@@ -6094,8 +6278,13 @@ function CustomerDashboard() {
                         <div className="flex items-center gap-4">
                           <div className="h-24 w-24 overflow-hidden rounded-3xl border border-gray-200 bg-gray-100">
                             <img
-                              src={getProductImage(orderNowProduct)}
+                              src={getProductImage(orderNowProduct, 160) || PRODUCT_IMAGE_PLACEHOLDER}
                               alt={orderNowProduct.name}
+                              width="96"
+                              height="96"
+                              loading="lazy"
+                              decoding="async"
+                              onError={handleProductImageError}
                               className="h-full w-full object-cover"
                             />
                           </div>
@@ -6344,8 +6533,13 @@ function CustomerDashboard() {
                                 <div className="flex items-start gap-3">
                                   <div className={`h-16 w-16 flex-shrink-0 overflow-hidden rounded-lg border ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-100"}`}>
                                     <img
-                                      src={getProductImage(item)}
+                                      src={getProductImage(item, 160) || PRODUCT_IMAGE_PLACEHOLDER}
                                       alt={item.name || "Product"}
+                                      width="64"
+                                      height="64"
+                                      loading="lazy"
+                                      decoding="async"
+                                      onError={handleProductImageError}
                                       className="h-full w-full object-cover"
                                     />
                                   </div>
@@ -7883,7 +8077,7 @@ function CustomerDashboard() {
                           className="h-5 w-5 rounded border-gray-300 text-red-600 focus:ring-red-500"
                         />
                         <div className={`h-16 w-16 overflow-hidden rounded-xl border sm:h-[72px] sm:w-[72px] ${darkMode ? "border-slate-600 bg-slate-800" : "border-slate-200 bg-slate-100"}`}>
-                          <img src={getProductImage(item)} alt={item.name} className="h-full w-full object-cover" />
+                          <img src={getProductImage(item, 240) || PRODUCT_IMAGE_PLACEHOLDER} alt={item.name} width="240" height="240" loading="lazy" decoding="async" onError={handleProductImageError} className="h-full w-full object-cover" />
                         </div>
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
@@ -8883,7 +9077,7 @@ function CustomerDashboard() {
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => { setContractHistoryTab("accepted"); setWarrantyHistoryTab(null); }}
+                  onClick={() => { setContractHistoryTab("accepted"); setWarrantyHistoryTab(null); setContractPage(1); }}
                   className={`px-4 py-2 rounded-2xl font-black text-sm transition ${
                     contractHistoryTab === "accepted" && !warrantyHistoryTab
                       ? "bg-red-600 text-white shadow-sm"
@@ -8896,7 +9090,7 @@ function CustomerDashboard() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setContractHistoryTab("rejected"); setWarrantyHistoryTab(null); }}
+                  onClick={() => { setContractHistoryTab("rejected"); setWarrantyHistoryTab(null); setContractPage(1); }}
                   className={`px-4 py-2 rounded-2xl font-black text-sm transition ${
                     contractHistoryTab === "rejected" && !warrantyHistoryTab
                       ? "bg-red-600 text-white shadow-sm"

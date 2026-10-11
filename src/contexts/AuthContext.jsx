@@ -1,5 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   login as loginApi,
   register as registerApi,
@@ -15,6 +16,7 @@ let authInitializationStarted = false;
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
+  const navigate = useNavigate();
   const [user, setUser] = useState(() => {
     const storedUser = localStorage.getItem("user");
     return storedUser ? normalizeUserProfile(JSON.parse(storedUser)) : null;
@@ -59,12 +61,12 @@ export function AuthProvider({ children }) {
     const handleSessionRevoked = () => {
       clearAuth();
       setLogoutLoading(true);
-      window.history.replaceState(null, "", "/login");
+      navigate("/login", { replace: true, state: null });
       window.setTimeout(() => setLogoutLoading(false), 3000);
     };
     window.addEventListener("auth:session-revoked", handleSessionRevoked);
     return () => window.removeEventListener("auth:session-revoked", handleSessionRevoked);
-  }, [clearAuth]);
+  }, [clearAuth, navigate]);
 
   const accountId = user?._id || user?.id;
   useEffect(() => {
@@ -222,7 +224,7 @@ export function AuthProvider({ children }) {
     clearAuth();
     setLogoutLoading(true);
     if (typeof window !== "undefined") {
-      window.history.replaceState(null, "", "/login");
+      navigate("/login", { replace: true, state: null });
       window.setTimeout(() => setLogoutLoading(false), 3000);
     }
   };

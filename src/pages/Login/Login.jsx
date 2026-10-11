@@ -57,13 +57,19 @@ function Login() {
 
       const requestedPath = location.state?.from?.pathname;
       const requestedSearch = location.state?.from?.search || "";
+      const requestedHash = location.state?.from?.hash || "";
       const isCustomer = response.user?.role === "customer";
+      const isCustomerDestination = requestedPath === "/customer-dashboard"
+        || requestedPath?.startsWith("/customer-dashboard/");
+      const isSafeAdminDestination = requestedPath?.startsWith("/")
+        && !requestedPath.startsWith("//")
+        && !isCustomerDestination;
       const destination = isCustomer
-        ? requestedPath?.startsWith("/customer-dashboard")
-          ? `${requestedPath}${requestedSearch}`
+        ? isCustomerDestination
+          ? `${requestedPath}${requestedSearch}${requestedHash}`
           : "/customer-dashboard"
-        : requestedPath && !requestedPath.startsWith("/customer-dashboard")
-          ? requestedPath
+        : isSafeAdminDestination
+          ? `${requestedPath}${requestedSearch}${requestedHash}`
           : "/dashboard";
       setRedirecting(true);
       navigate(destination, { replace: true });

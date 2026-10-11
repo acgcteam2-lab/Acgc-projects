@@ -1,20 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
-import ForgotPassword from "./pages/ForgotPassword/ForgotPassword";
-import LandingPage from "./pages/LandingPage/LandingPage";
-import Login from "./pages/Login/Login";
-import Signup from "./pages/Signup/Signup";
-import VerifyEmail from "./pages/VerifyEmail/VerifyEmail";
-import Dashboard from "./pages/Dashboard/Dashboard";
-import TrackOrder from "./pages/TrackOrder/TrackOrder";
-import SiteInspection from "./pages/SiteInspection/SiteInspection";
-import Notifications from "./pages/Notifications/Notifications";
-import Transactions from "./pages/Transactions/Transactions";
-import ProgressMonitor from "./pages/ProgressMonitor/ProgressMonitor";
-import Product from "./pages/Product/Product";
-import AdminProfile from "./pages/AdminProfile/AdminProfile";
-import Settings from "./pages/Settings/Settings";
-import CustomerDashboard from "./pages/CustomerDashboard/CustomerDashboard";
+const ForgotPassword = lazy(() => import("./pages/ForgotPassword/ForgotPassword"));
+const LandingPage = lazy(() => import("./pages/LandingPage/LandingPage"));
+const Login = lazy(() => import("./pages/Login/Login"));
+const Signup = lazy(() => import("./pages/Signup/Signup"));
+const VerifyEmail = lazy(() => import("./pages/VerifyEmail/VerifyEmail"));
+const Dashboard = lazy(() => import("./pages/Dashboard/Dashboard"));
+const TrackOrder = lazy(() => import("./pages/TrackOrder/TrackOrder"));
+const SiteInspection = lazy(() => import("./pages/SiteInspection/SiteInspection"));
+const Notifications = lazy(() => import("./pages/Notifications/Notifications"));
+const Transactions = lazy(() => import("./pages/Transactions/Transactions"));
+const ProgressMonitor = lazy(() => import("./pages/ProgressMonitor/ProgressMonitor"));
+const Product = lazy(() => import("./pages/Product/Product"));
+const AdminProfile = lazy(() => import("./pages/AdminProfile/AdminProfile"));
+const Settings = lazy(() => import("./pages/Settings/Settings"));
+const CustomerDashboard = lazy(() => import("./pages/CustomerDashboard/CustomerDashboard"));
 import AdminCreationModal from "./components/AdminCreationModal";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -215,6 +215,7 @@ function AppRoutes() {
         </div>
       )}
       <AdminCreationModal />
+      <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-slate-50"><LoaderCircle className="animate-spin text-red-600" size={40} aria-label="Loading page" /></div>}>
       <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<Login />} />
@@ -236,7 +237,7 @@ function AppRoutes() {
           <Route
             path="/site-inspection"
             element={
-              <ProtectedRoute requiredModule="site_inspection">
+              <ProtectedRoute roles={["admin", "skilled_worker"]} requiredModule="site_inspection">
                 <SiteInspection />
               </ProtectedRoute>
             }
@@ -244,7 +245,7 @@ function AppRoutes() {
           <Route
             path="/notifications"
             element={
-              <ProtectedRoute requiredModule="transactions">
+              <ProtectedRoute roles={["admin", "skilled_worker"]} requiredModule="transactions">
                 <Notifications />
               </ProtectedRoute>
             }
@@ -252,7 +253,7 @@ function AppRoutes() {
           <Route
             path="/transactions"
             element={
-              <ProtectedRoute requiredModule="transactions">
+              <ProtectedRoute roles={["admin", "skilled_worker"]} requiredModule="transactions">
                 <Transactions />
               </ProtectedRoute>
             }
@@ -260,7 +261,7 @@ function AppRoutes() {
           <Route
             path="/progress-monitor"
             element={
-              <ProtectedRoute requiredModule="progress_monitoring">
+              <ProtectedRoute roles={["admin", "skilled_worker"]} requiredModule="progress_monitoring">
                 <ProgressMonitor />
               </ProtectedRoute>
             }
@@ -276,7 +277,7 @@ function AppRoutes() {
           <Route
             path="/profile"
             element={
-              <ProtectedRoute requiredModule="profile">
+              <ProtectedRoute roles={["admin", "skilled_worker"]} requiredModule="profile">
                 <AdminProfile />
               </ProtectedRoute>
             }
@@ -284,7 +285,7 @@ function AppRoutes() {
           <Route
             path="/settings"
             element={
-              <ProtectedRoute requiredModule="settings">
+              <ProtectedRoute roles={["admin", "skilled_worker"]} requiredModule="settings">
                 <Settings />
               </ProtectedRoute>
             }
@@ -298,19 +299,20 @@ function AppRoutes() {
             }
           />
       </Routes>
+      </Suspense>
     </div>
   );
 }
 
 function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
+    <BrowserRouter>
+      <AuthProvider>
         <AdminThemeProvider>
           <AppRoutes />
         </AdminThemeProvider>
-      </BrowserRouter>
-    </AuthProvider>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
 

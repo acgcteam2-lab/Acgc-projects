@@ -65,7 +65,10 @@ app.use(async (req, res, next) => {
 });
 
 // Serve uploaded files
-app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads"), {
+  maxAge: "1d",
+  immutable: true,
+}));
 
 const getHealthModel = () => {
   const readyStates = [

@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearPendingProductAction,
+  clearPendingProductWorkflowState,
   consumePendingProductRedirect,
   getPendingProductAction,
+  getPendingProductWorkflowState,
   preservePendingProductRedirect,
   savePendingProductAction,
+  savePendingProductWorkflowState,
 } from "@/lib/pendingProductAction";
 
 const customerDestination = {
@@ -14,6 +17,7 @@ const customerDestination = {
 
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
 });
 
 describe("pending product actions", () => {
@@ -56,5 +60,20 @@ describe("pending product actions", () => {
     clearPendingProductAction(first.id);
 
     expect(getPendingProductAction().id).toBe(second.id);
+  });
+
+  it("keeps unfinished workflow details in the current account session", () => {
+    const pending = savePendingProductAction({ actionType: "direct", productId: "product-1", selection: {} });
+    const resumeState = {
+      step: "delivery",
+      deliveryConfirmForm: { phone: "09171234567", street_address: "123 Main St" },
+    };
+
+    expect(savePendingProductWorkflowState(pending.id, "customer-1", resumeState)).toBe(true);
+    expect(getPendingProductWorkflowState(pending.id, "customer-1")).toEqual(resumeState);
+    expect(getPendingProductWorkflowState(pending.id, "customer-2")).toBeNull();
+
+    clearPendingProductWorkflowState(pending.id, "customer-1");
+    expect(getPendingProductWorkflowState(pending.id, "customer-1")).toBeNull();
   });
 });
