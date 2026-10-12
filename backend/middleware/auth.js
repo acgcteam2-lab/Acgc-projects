@@ -2,6 +2,8 @@ import jwt from "jsonwebtoken";
 import process from "node:process";
 import User from "../models/User.js";
 import Admin from "../models/Admin.js";
+import SystemSetting from "../models/SystemSetting.js";
+import { isCustomerPermissionEnabled } from "../services/customerPermissions.js";
 
 /**
  * Authentication Middleware
@@ -58,6 +60,12 @@ export const authMiddleware = async (req, res, next) => {
   }
 };
 
+export const optionalAuthMiddleware = (req, res, next) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) return next();
+  return authMiddleware(req, res, next);
+};
+
 /**
  * Role Check Middleware
  * Verifies user has required role
@@ -89,7 +97,7 @@ export const roleMiddleware = (requiredRoles) => {
 export const staffModulePermission = (moduleFromRequest, action = "view") => async (req, res, next) => {
   try {
     if (!req.user) return res.status(401).json({ success: false, message: "Not authenticated" });
-    if (req.user.role === "admin") return next();
+    if (["admin", "super_admin"].includes(req.user.role)) return next();
     if (req.user.role !== "skilled_worker") {
       return res.status(403).json({ success: false, message: "Insufficient permissions" });
     }
@@ -112,12 +120,17 @@ export const staffModulePermission = (moduleFromRequest, action = "view") => asy
 
 export const permissionMiddleware = (permission) => async (req, res, next) => {
   try {
-    if (!req.user) return res.status(401).json({ success: false, message: "Not authenticated" });
-    if (req.user.role !== "customer") return next();
+    if (req.user && req.user.role !== "customer") return next();
 
-    const user = await User.findById(req.user.id).select("access_permissions").lean();
-    const permissions = user?.access_permissions || {};
-    const allowed = !permissions.view_only_access && permissions[permission] !== false;
+    const [user, settings] = await Promise.all([
+      req.user ? User.findById(req.user.id).select("access_permissions").lean() : Promise.resolve(null),
+      SystemSetting.findOne({ key: "global" }).select("global_permissions").lean(),
+    ]);
+    const allowed = isCustomerPermissionEnabled(
+      permission,
+      user?.access_permissions || {},
+      settings?.global_permissions || {}
+    );
     if (!allowed) {
       return res.status(403).json({ success: false, message: "This action is disabled for your account." });
     }

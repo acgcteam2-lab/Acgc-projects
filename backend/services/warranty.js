@@ -41,12 +41,15 @@ export const buildWarrantyCoverage = (startDate, period, customDays, now = new D
 };
 
 export const isCompletedInstallationStage = (stage) => {
-  const key = String(stage?.key || "").toLowerCase();
-  const name = String(stage?.name || "").toLowerCase();
-  const isInstallation = (key.includes("installation") || name.includes("installation"))
-    && !key.includes("schedul")
-    && !name.includes("schedul");
-  return isInstallation && (stage.completed === true || ["done", "completed"].includes(String(stage.status || "").toLowerCase()));
+  const key = String(stage?.key || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const name = String(stage?.name || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const isInstallation = key === "installation" || name === "installation";
+  const subStages = Array.isArray(stage?.subStages) ? stage.subStages : [];
+  const stageCompleted = stage.completed === true || ["done", "completed"].includes(String(stage.status || "").toLowerCase());
+  const subStagesCompleted = subStages.every((subStage) =>
+    subStage.completed === true || ["done", "completed"].includes(String(subStage.status || "").toLowerCase())
+  );
+  return isInstallation && stageCompleted && subStagesCompleted;
 };
 
 export const applyInstallationWarranty = (order, stages, itemIndex, now = new Date()) => {

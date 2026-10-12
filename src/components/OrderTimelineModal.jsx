@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Clipboard, Copy, MessageCircle, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Clipboard, Copy, X } from "lucide-react";
 import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import ItemCard from "./ItemCard";
+import { formatOrderItemMeasurements } from "./OrderProgressTimeline";
 import {
   buildCustomerOrderTimelineSteps,
   getOrderItemImageSource,
@@ -12,7 +13,6 @@ import {
   getTimelineFocusStage,
 } from "./orderTimelineUtils";
 
-const DEFAULT_SUPPORT_EMAIL = "acgc.services00@email.com";
 const getItemKey = (item, index) => String(item?._id || item?.id || `item-${index}`);
 const EMPTY_ITEMS = [];
 
@@ -118,7 +118,7 @@ export default function OrderTimelineModal({
   darkMode = false,
   loading = false,
   getItemImage,
-  getItemDimension,
+  getItemDimension = formatOrderItemMeasurements,
   fallbackImage = "",
   onContactSupport,
   onUploadProgressPhoto,
@@ -234,15 +234,6 @@ export default function OrderTimelineModal({
     }
   };
 
-  const handleContactSupport = () => {
-    if (onContactSupport) {
-      onContactSupport();
-      return;
-    }
-    const subject = encodeURIComponent(`Order support: ${trackingId}`);
-    window.location.href = `mailto:${supportEmail}?subject=${subject}`;
-  };
-
   const handleDialogKeyDown = (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -287,7 +278,6 @@ export default function OrderTimelineModal({
     return next;
   });
 
-  const supportEmail = order?.supportEmail || order?.support_email || DEFAULT_SUPPORT_EMAIL;
   const isEmpty = items.length === 0 || rows.every((row) => row.stages.length === 0);
 
   return (
@@ -407,15 +397,7 @@ export default function OrderTimelineModal({
           )}
         </div>
 
-        <footer className={`flex shrink-0 items-center justify-between gap-3 border-t px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
-          <button
-            type="button"
-            onClick={handleContactSupport}
-            className={`inline-flex items-center gap-2 rounded-lg px-2 py-2 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 hover:bg-slate-100"}`}
-          >
-            <MessageCircle size={15} aria-hidden="true" />
-            Contact support
-          </button>
+        <footer className={`flex shrink-0 items-center justify-end gap-3 border-t px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
           <button
             type="button"
             onClick={onClose}

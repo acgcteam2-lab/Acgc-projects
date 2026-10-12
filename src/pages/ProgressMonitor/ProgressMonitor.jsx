@@ -24,6 +24,7 @@ import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import { useAuth } from "@/contexts/AuthContext";
 import { recordActivity } from "@/lib/activityLog";
+import { buildBatchProductTimelineStages, calculateStageProgressPercent } from "@/lib/orderTimeline";
 
 const normalizeStageStatus = (value) =>
   String(value ?? "")
@@ -112,10 +113,13 @@ export const formatOrderStatus = (status, contractStatus) => {
 
 export const getProjectStatus = (order, stages = order?.progress_stages ?? []) => {
   if (Array.isArray(stages) && stages.length > 0) {
-    const allCompleted = stages.every((stage) =>
-      stage.completed === true ||
-      ["done", "completed"].includes(normalizeStageStatus(stage.status))
-    );
+    const allCompleted = stages.every((stage) => {
+      const stageCompleted = stage.completed === true || ["done", "completed"].includes(normalizeStageStatus(stage.status));
+      const subStages = Array.isArray(stage.subStages) ? stage.subStages : [];
+      return stageCompleted && subStages.every((subStage) =>
+        subStage.completed === true || ["done", "completed"].includes(normalizeStageStatus(subStage.status))
+      );
+    });
     if (allCompleted) return "Completed";
   }
 
@@ -138,6 +142,17 @@ export const getProjectStatus = (order, stages = order?.progress_stages ?? []) =
     : null;
 
   if (nextStage?.name) return nextStage.name;
+
+  const firstIncompleteStage = Array.isArray(stages)
+    ? stages.find((stage) => {
+        const stageCompleted = stage.completed === true || ["done", "completed"].includes(normalizeStageStatus(stage.status));
+        const subStages = Array.isArray(stage.subStages) ? stage.subStages : [];
+        return !stageCompleted || !subStages.every((subStage) =>
+          subStage.completed === true || ["done", "completed"].includes(normalizeStageStatus(subStage.status))
+        );
+      })
+    : null;
+  if (firstIncompleteStage?.name) return firstIncompleteStage.name;
 
   return formatOrderStatus(order?.status, order?.contract_status);
 };
@@ -235,7 +250,9 @@ const buildProjectRows = (order) => {
           : "TBD"),
       installation: formatDateToMMMDDYYYY(order.estimated_installation_date) || "TBD",
       estimated_installation_date: order.estimated_installation_date,
-      progress: itemProgress ?? mapProgressFromStatus(order.status, order.progress),
+      progress: stages.length > 0
+        ? calculateStageProgressPercent(buildBatchProductTimelineStages(order, item || { progress_stages: stages }, index))
+        : itemProgress ?? mapProgressFromStatus(order.status, order.progress),
       stages,
       status: getProjectStatus(order, stages),
       statusKey: order.status,
@@ -268,6 +285,10 @@ const isSameProjectRow = (currentProject, targetProject) => {
 function ProgressMonitor() {
   const isMobile = useIsMobile();
   const { user } = useAuth();
+  const canUploadProgressPhoto = user?.role !== "skilled_worker" || (
+    user.staff_access?.modules?.progress_monitoring?.enabled === true &&
+    user.staff_access.modules.progress_monitoring.actions?.upload_progress_photo === true
+  );
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] =
     useState(() => {
@@ -283,7 +304,7 @@ function ProgressMonitor() {
     localStorage.setItem("sidebarOpen", JSON.stringify(isSidebarOpen));
   }, [isSidebarOpen]);
 
-  const [statusFilter, setStatusFilter] = useState(() => location.state?.statusFilter || "Pending");
+  const [statusFilter, setStatusFilter] = useState(() => location.state?.statusFilter || "All");
 
   const [search, setSearch] =
     useState("");
@@ -1028,7 +1049,7 @@ function ProgressMonitor() {
           )}
 
           {showEditModal && selectedProject && (
-            <ProgressEditModal project={selectedProject} onClose={() => setShowEditModal(false)} onSave={handleSave} />
+            <ProgressEditModal project={selectedProject} onClose={() => setShowEditModal(false)} onSave={handleSave} canUploadProgressPhoto={canUploadProgressPhoto} />
           )}
 
           {cancelConfirm.open && (

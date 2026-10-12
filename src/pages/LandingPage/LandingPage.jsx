@@ -5,6 +5,7 @@ import {
   X,
   ArrowRight,
   ShoppingBag,
+  ShoppingCart,
   Search,
   Package,
   BriefcaseBusiness,
@@ -22,9 +23,12 @@ import {
   CircleCheck,
   CircleX,
 } from "lucide-react";
+import toast, { Toaster } from "react-hot-toast";
 import OrderProgressTimeline from "@/components/OrderProgressTimeline";
 import ProductPriceEstimator from "@/components/ProductPriceEstimator";
 import { getProductEstimatorState } from "@/components/ProductPriceEstimator";
+import { useAuth } from "@/contexts/AuthContext";
+import { getCart, saveCart } from "@/api/cart";
 import { getPaymentSummary } from "@/pages/Transactions/paymentProofUtils";
 import { getProducts } from "../../api/products";
 import { subscribeToRealtime } from "@/lib/realtimeEvents";
@@ -33,26 +37,36 @@ import logo from "../../assets/images/ACGCLOGO1.png";
 import { calculateEstimate } from "@/lib/estimator";
 import { getFinalProjectCost } from "@/lib/orderPricing";
 import { resolveBackendImageUrl } from "../../lib/resolveBackendImageUrl";
-import { getDefaultProductLineTotal, getProductLineTotal } from "../../lib/productPricing";
-import { getDefaultExtraChargeSelections } from "@/lib/productPricing";
+import { buildProductPriceSnapshot, getDefaultBladeCount, getDefaultExtraChargeSelections, getDefaultProductLineTotal, getProductLineTotal } from "@/lib/productPricing";
 import { savePendingProductAction } from "@/lib/pendingProductAction";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useCustomerPermissions } from "@/hooks/useCustomerPermissions";
 import { getOptimizedProductImageUrl, getProductImageSource, getProductImageSrcSet, handleProductImageError, handleProductImageLoad, PRODUCT_IMAGE_PLACEHOLDER } from "@/lib/productImageUtils";
+
+const createLandingCartId = () => globalThis.crypto?.randomUUID?.()
+  || `landing-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
 function LandingPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, loading: authLoading } = useAuth();
+  const customerPermissions = useCustomerPermissions();
   const isMobile = useIsMobile();
   const initialSearchParams = new URLSearchParams(location.search);
   const lastLocationSearchRef = useRef(location.search);
   const restoringLocationStateRef = useRef(false);
   const pushSectionHistoryRef = useRef(false);
+  const resumedPendingCartActionRef = useRef("");
+  const handleAddToCartRef = useRef(null);
   const validSections = ["home", "products", "about", "track-order"];
   const [active, setActive] = useState(() => {
     const section = initialSearchParams.get("section");
     return validSections.includes(section) ? section : "home";
   });
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [showLoginRequired, setShowLoginRequired] = useState(false);
+  const [pendingGuestCartAdd, setPendingGuestCartAdd] = useState(null);
+  const [addingCartProductId, setAddingCartProductId] = useState("");
   const [productEstimatorForm, setProductEstimatorForm] = useState({ unit: "in", width: "0", height: "0", quantity: 1, blade_glass_type: "", sale_mode: "blades_only", frame_type: "", custom_frame_size: false, blade_count: 1 });
   const [featuredProducts, setFeaturedProducts] = useState([]);
   const [catalogProducts, setCatalogProducts] = useState([]);
@@ -71,6 +85,7 @@ function LandingPage() {
     counts: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
   });
   const [isLoadingFeatured, setIsLoadingFeatured] = useState(false);
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
   const [featuredError, setFeaturedError] = useState("");
   const [trackingNumber, setTrackingNumber] = useState("");
   const [trackingResult, setTrackingResult] = useState(null);
@@ -158,7 +173,14 @@ function LandingPage() {
 
   const openProductDetails = (product) => {
     setSelectedProduct(product);
-    setProductEstimatorForm({ unit: "in", width: "0", height: "0", ...getDefaultBladeSelections(product) });
+    const dimensions = getProductDefaultDimensions(product);
+    setProductEstimatorForm({
+      unit: dimensions.unit || "in",
+      width: String(dimensions.width || 0),
+      height: String(dimensions.height || 0),
+      quantity: 1,
+      ...getDefaultBladeSelections(product),
+    });
   };
 
   useEffect(() => {
@@ -172,6 +194,7 @@ function LandingPage() {
 
         setCatalogProducts(activeProducts);
         setFeaturedProducts(activeProducts.slice(0, 3));
+        setCatalogLoaded(true);
         setIsLoadingFeatured(false);
 
         const productReviewData = await Promise.all(
@@ -224,6 +247,7 @@ function LandingPage() {
         console.error("Failed to load featured products", error);
         setCatalogProducts([]);
         setFeaturedProducts([]);
+        setCatalogLoaded(true);
         setFeaturedProductStats({});
         setFeaturedRatingStats({ average: 0, total: 0, counts: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } });
         setFeaturedError(
@@ -276,6 +300,222 @@ function LandingPage() {
       customized: false,
     };
   };
+
+  const getDefaultCartOptions = (product) => ({
+    ...getProductDefaultDimensions(product),
+    ...getDefaultBladeSelections(product),
+    extra_charges: getDefaultExtraChargeSelections(product),
+    useProductDefaults: true,
+  });
+
+  const needsProductConfiguration = (product, options) => {
+    const method = String(product?.pricing_method || product?.unit || "").toLowerCase();
+    const isBlade = ["blade", "per_blade"].includes(method);
+    const isMeter = ["meter", "per_meter"].includes(method);
+    const isPiece = ["piece", "per_piece", "set", "per_set"].includes(method);
+    const width = Number(options.width) || 0;
+    const height = Number(options.height) || 0;
+
+    if (isPiece) return false;
+    if (isMeter) return width <= 0;
+    if (isBlade) {
+      const hasGlassOptions = Array.isArray(product.blade_glass_types) && product.blade_glass_types.length > 0;
+      const needsCustomFrameDimensions = options.sale_mode === "frame" && Boolean(options.custom_frame_size);
+      return (product.customer_can_choose_blade_count && Number(options.blade_count) <= 0)
+        || (hasGlassOptions && !options.blade_glass_type)
+        || (needsCustomFrameDimensions && (width <= 0 || height <= 0));
+    }
+    return width <= 0 || height <= 0;
+  };
+
+  const buildLandingCartItem = (product, options) => {
+    const productId = String(product?._id || product?.id || "");
+    const quantity = Math.max(1, Number(options.quantity) || 1);
+    const defaults = getProductDefaultDimensions(product, quantity);
+    const useProductDefaults = options.useProductDefaults === true;
+    const dimensions = {
+      width: useProductDefaults ? defaults.width : Number(options.width) || 0,
+      height: useProductDefaults ? defaults.height : Number(options.height) || 0,
+      unit: options.measurementUnit || options.unit || defaults.unit || "in",
+      quantity,
+      customized: useProductDefaults
+        ? false
+        : Boolean(options.customized)
+          || Number(options.width) !== defaults.width
+          || Number(options.height) !== defaults.height,
+    };
+    const item = {
+      ...product,
+      _id: productId,
+      product_id: productId,
+      name: product.name || product.product_name || "Product",
+      image_url: getProductImageSource(product) || product.image_url || "",
+      variant: product.variant || product.color || product.variant_name || "",
+      quantity,
+      unit: product.unit || "piece",
+      width: dimensions.width,
+      height: dimensions.height,
+      measurementUnit: dimensions.unit,
+      measurement_unit: dimensions.unit,
+      dimensions,
+      customized: dimensions.customized,
+      notes: options.notes || "",
+      blade_glass_type: options.blade_glass_type || product.default_blade_glass_type || "",
+      sale_mode: options.sale_mode || product.default_sale_mode || "blades_only",
+      frame_type: options.frame_type || product.default_frame_type || "",
+      custom_frame_size: Boolean(options.custom_frame_size),
+      blade_count: getDefaultBladeCount(product, options),
+      extra_charges: Array.isArray(options.extra_charges)
+        ? options.extra_charges
+        : getDefaultExtraChargeSelections(product),
+      estimated_price: Number(options.estimated_price) || 0,
+      is_estimate: dimensions.customized,
+    };
+
+    return {
+      ...item,
+      ...buildProductPriceSnapshot(product, item),
+    };
+  };
+
+  const getCartProductId = (item) => {
+    const productId = item?.product_id || item?._id || item?.id;
+    return String(typeof productId === "object" ? productId?._id || productId?.id || "" : productId || "");
+  };
+
+  const getCartItemSignature = (item) => JSON.stringify({
+    productId: getCartProductId(item),
+    variant: item.variant || item.color || "",
+    width: Number(item.dimensions?.width ?? item.width) || 0,
+    height: Number(item.dimensions?.height ?? item.height) || 0,
+    unit: item.dimensions?.unit || item.measurement_unit || item.measurementUnit || "in",
+    bladeGlassType: item.blade_glass_type || "",
+    saleMode: item.sale_mode || "",
+    frameType: item.frame_type || "",
+    customFrameSize: Boolean(item.custom_frame_size),
+    bladeCount: Number(item.blade_count) || 0,
+    extraCharges: (item.extra_charges || [])
+      .filter((charge) => charge.is_optional)
+      .map((charge) => [charge.name || charge.label || "", charge.is_selected !== false]),
+  });
+
+  const handleAddToCart = async (product, options = null) => {
+    if (!customerPermissions.can_request_orders) {
+      toast.error("Order requests are currently unavailable.");
+      return false;
+    }
+    if (authLoading) {
+      toast("Checking your account. Please try again in a moment.");
+      return false;
+    }
+    if (!user) {
+      setPendingGuestCartAdd({
+        actionId: createLandingCartId(),
+        productId: String(product?._id || product?.id || ""),
+        product,
+        options,
+      });
+      setShowLoginRequired(true);
+      return false;
+    }
+    if (user.role !== "customer") {
+      toast.error("Please log in with a customer account to add products to your cart.");
+      return false;
+    }
+
+    const cartOptions = options || getDefaultCartOptions(product);
+    if (needsProductConfiguration(product, cartOptions)) {
+      if (String(selectedProduct?._id || selectedProduct?.id || "") !== String(product._id || product.id || "")) {
+        openProductDetails(product);
+      }
+      toast("Choose the required product options before adding it to your cart.");
+      return false;
+    }
+
+    const productId = String(product._id || product.id || "");
+    if (!productId) {
+      toast.error("This product cannot be added to the cart right now.");
+      return false;
+    }
+
+    setAddingCartProductId(productId);
+    try {
+      const cartResponse = await getCart();
+      const currentItems = Array.isArray(cartResponse.items) ? cartResponse.items : [];
+      const cartItem = buildLandingCartItem(product, cartOptions);
+      const signature = getCartItemSignature(cartItem);
+      const matchingItem = currentItems.find((item) => getCartItemSignature(item) === signature);
+      let nextItems;
+
+      if (matchingItem) {
+        const quantity = Math.max(1, Number(matchingItem.quantity) || 1) + cartItem.quantity;
+        const updatedItem = {
+          ...matchingItem,
+          quantity,
+          selected: true,
+          dimensions: { ...(matchingItem.dimensions || {}), quantity },
+        };
+        nextItems = currentItems.map((item) => item.cartId === matchingItem.cartId
+          ? { ...updatedItem, ...buildProductPriceSnapshot(product, updatedItem) }
+          : item);
+      } else {
+        nextItems = [
+          ...currentItems,
+          {
+            ...cartItem,
+            cartId: createLandingCartId(),
+            selected: true,
+          },
+        ];
+      }
+
+      const savedCart = await saveCart(nextItems);
+      if (savedCart?.success === false) throw new Error(savedCart.message || "Unable to save your cart.");
+      toast.success(`${cartItem.name} added to your cart.`);
+      return true;
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to add this product to your cart.");
+      return false;
+    } finally {
+      setAddingCartProductId("");
+    }
+  };
+
+  useEffect(() => {
+    handleAddToCartRef.current = handleAddToCart;
+  });
+
+  useEffect(() => {
+    const pendingCartAdd = location.state?.pendingCartAdd;
+    if (
+      !pendingCartAdd?.actionId ||
+      authLoading ||
+      user?.role !== "customer" ||
+      !catalogLoaded ||
+      resumedPendingCartActionRef.current === pendingCartAdd.actionId
+    ) return;
+
+    resumedPendingCartActionRef.current = pendingCartAdd.actionId;
+    const clearPendingAction = () => {
+      const nextState = { ...(location.state || {}) };
+      delete nextState.pendingCartAdd;
+      navigate(`${location.pathname}${location.search}${location.hash}`, {
+        replace: true,
+        state: Object.keys(nextState).length ? nextState : null,
+      });
+    };
+    const product = catalogProducts.find((item) => String(item._id || item.id || "") === pendingCartAdd.productId)
+      || pendingCartAdd.product;
+
+    if (!product || !pendingCartAdd.productId) {
+      toast.error("We couldn't find that product after login. Please choose it again.");
+      clearPendingAction();
+      return;
+    }
+
+    Promise.resolve(handleAddToCartRef.current?.(product, pendingCartAdd.options || null))
+      .finally(clearPendingAction);
+  }, [authLoading, catalogLoaded, catalogProducts, location.hash, location.pathname, location.search, location.state, navigate, user?.role]);
 
   const getProductPrice = (product) => {
     if (!product) return "Contact us";
@@ -433,8 +673,24 @@ function LandingPage() {
   const selectedProductRating = selectedProduct
     ? featuredProductStats[selectedProduct._id || selectedProduct.id] || { averageRating: 0, ratingsCount: 0 }
     : { averageRating: 0, ratingsCount: 0 };
+  const selectedProductDimensions = selectedProduct
+    ? selectedProduct.dimensions || selectedProduct.standard_size || (
+        selectedProduct.width > 0 || selectedProduct.height > 0
+          ? `${selectedProduct.width || 0}" x ${selectedProduct.height || 0}"`
+          : "N/A"
+      )
+    : "N/A";
+  const isProductModalReadOnly = !customerPermissions.can_request_orders && !customerPermissions.can_estimate_pricing;
 
   const continueProductActionAfterLogin = (actionType) => {
+    if (actionType === "estimate" && !customerPermissions.can_estimate_pricing) {
+      toast.error("Price estimation is currently unavailable.");
+      return;
+    }
+    if (actionType !== "estimate" && !customerPermissions.can_request_orders) {
+      toast.error("Order requests are currently unavailable.");
+      return;
+    }
     if (!selectedProduct) return;
     const productId = String(selectedProduct._id || selectedProduct.id || "");
     if (!productId) {
@@ -508,6 +764,11 @@ function LandingPage() {
 
   const handleTrackOrder = async (event) => {
     event.preventDefault();
+    if (!customerPermissions.can_track_products) {
+      setTrackingError("Order tracking is currently unavailable.");
+      setTrackingResult(null);
+      return;
+    }
     const tracking = trackingNumber.trim();
     if (!tracking) {
       setTrackingError("Please enter your tracking number.");
@@ -639,6 +900,7 @@ function LandingPage() {
 
   return (
   <div className="flex min-h-screen flex-col overflow-x-hidden bg-white text-gray-900">
+      <Toaster position="bottom-right" />
 
       {/* NAVBAR */}
 
@@ -854,15 +1116,12 @@ function LandingPage() {
                       key={product._id || product.id || index}
                       role="button"
                       tabIndex={0}
-                      aria-label={`View ${product.product_name || product.name || "featured product"} details`}
-                      onClick={() => {
-                        scrollToSection("products");
-                        openProductDetails(product);
-                      }}
+                      aria-label={`View details for ${product.product_name || product.name || "featured product"}`}
+                      onClick={() => openProductDetails(product)}
                       onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return;
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
-                          scrollToSection("products");
                           openProductDetails(product);
                         }
                       }}
@@ -890,27 +1149,60 @@ function LandingPage() {
                           className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
-                        <h3 className="absolute inset-x-4 bottom-4 line-clamp-2 text-lg font-black leading-tight text-white drop-shadow-[0_2px_5px_rgba(0,0,0,0.9)] sm:text-xl">
+                        <h3 className="absolute inset-x-4 bottom-14 line-clamp-2 text-lg font-black leading-tight text-white drop-shadow-[0_2px_5px_rgba(0,0,0,0.9)] sm:text-xl">
                           {product.product_name || product.name || "Product"}
                         </h3>
                         <span className="absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-full border border-amber-200/80 bg-amber-100/95 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-amber-950 shadow-lg backdrop-blur-sm">
                           <Star size={12} fill="currentColor" aria-hidden="true" />
                           Featured
                         </span>
+                        {customerPermissions.can_request_orders && <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3">
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openProductDetails(product);
+                              }}
+                              className="inline-flex size-8 items-center justify-center rounded-xl border border-red-200 bg-white/90 text-red-700 shadow-lg transition hover:border-red-300 hover:bg-red-600 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                              aria-label="View product details"
+                              title="View product details"
+                            >
+                              <Package size={16} aria-hidden="true" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleAddToCart(product);
+                              }}
+                              disabled={!customerPermissions.can_request_orders || addingCartProductId === String(product._id || product.id || "")}
+                              className="inline-flex size-8 items-center justify-center rounded-xl border border-slate-200 bg-white/90 text-slate-700 shadow-lg transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+                              aria-label="Add to cart"
+                              title={customerPermissions.can_request_orders ? "Add to cart" : "Order requests are unavailable"}
+                            >
+                              {addingCartProductId === String(product._id || product.id || "")
+                                ? <LoaderCircle size={16} className="animate-spin" aria-hidden="true" />
+                                : <ShoppingCart size={16} aria-hidden="true" />}
+                            </button>
+                          </div>
+                        </div>}
                       </div>
 
                       <div className="flex flex-1 flex-col gap-4 p-4 sm:p-5">
                         <p className="line-clamp-3 min-h-[4.5rem] text-sm leading-6 text-slate-700">
                           {product.description || "Premium aluminum and glass solution for modern spaces."}
                         </p>
-                        <div className="flex items-center gap-2">
-                          <div className="flex shrink-0 items-center gap-0.5 text-amber-500">
-                            {renderRatingStars(averageRating, 14)}
+                        {customerPermissions.show_ratings_homepage && (
+                          <div className="flex items-center gap-2">
+                            <div className="flex shrink-0 items-center gap-0.5 text-amber-500">
+                              {renderRatingStars(averageRating, 14)}
+                            </div>
+                            <span className="text-xs font-semibold text-slate-600">
+                              {averageRating > 0 ? `${averageRating.toFixed(1)} (${reviewsCount})` : "New"}
+                            </span>
                           </div>
-                          <span className="text-xs font-semibold text-slate-600">
-                            {averageRating > 0 ? `${averageRating.toFixed(1)} (${reviewsCount})` : "New"}
-                          </span>
-                        </div>
+                        )}
                         <div className="mt-auto border-t border-white/60 pt-3">
                           <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Starting from</p>
                           <p className="mt-1 text-2xl font-black text-red-700">{getProductPrice(product)}</p>
@@ -923,7 +1215,7 @@ function LandingPage() {
             )}
           </div>
 
-          <section className="mt-8 rounded-[30px] border border-white/60 bg-white/[0.32] px-6 py-8 shadow-[0_20px_48px_rgba(15,23,42,0.06)] backdrop-blur-2xl sm:px-10">
+          {customerPermissions.show_ratings_homepage && <section className="mt-8 rounded-[30px] border border-white/60 bg-white/[0.32] px-6 py-8 shadow-[0_20px_48px_rgba(15,23,42,0.06)] backdrop-blur-2xl sm:px-10">
             <h2 className="text-center text-3xl font-black text-slate-900">Customer Ratings</h2>
             <div className="mt-8 grid gap-8 md:grid-cols-[220px_1fr] md:items-center">
               <div className="text-center">
@@ -953,7 +1245,7 @@ function LandingPage() {
                 })}
               </div>
             </div>
-          </section>
+          </section>}
         </section>
       )}
 
@@ -1047,12 +1339,13 @@ function LandingPage() {
                 aria-label={`View details for ${productName}`}
                 onClick={() => openProductDetails(product)}
                 onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return;
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
                     openProductDetails(product);
                   }
                 }}
-                className="group flex h-full w-full min-w-0 flex-col overflow-hidden rounded-[20px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff7f7_100%)] shadow-[0_12px_30px_rgba(15,23,42,0.07)] transition-all duration-300 ease-out hover:-translate-y-1 hover:border-red-200 hover:shadow-[0_22px_55px_rgba(127,29,29,0.12)] motion-reduce:transition-none max-md:min-h-[124px] max-md:flex-row"
+                className="group flex h-full w-full min-w-0 cursor-pointer flex-col overflow-hidden rounded-[20px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff7f7_100%)] shadow-[0_12px_30px_rgba(15,23,42,0.07)] transition-all duration-300 ease-out hover:-translate-y-1 hover:border-red-200 hover:shadow-[0_22px_55px_rgba(127,29,29,0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 motion-reduce:transition-none max-md:min-h-[124px] max-md:flex-row"
               >
                 <div className="relative aspect-[4/3] overflow-hidden bg-slate-100 max-md:aspect-auto max-md:w-[clamp(6.5rem,36vw,8rem)] max-md:shrink-0">
                   <div data-product-image-skeleton className="absolute inset-0 animate-pulse bg-slate-200 motion-reduce:animate-none" />
@@ -1090,6 +1383,37 @@ function LandingPage() {
                       </span>
                     )}
                   </div>
+                  {customerPermissions.can_request_orders && <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3 max-md:p-1.5">
+                    <div className="flex gap-1.5 max-md:gap-1">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openProductDetails(product);
+                        }}
+                        className="inline-flex size-8 items-center justify-center rounded-xl border border-red-200 bg-white/90 text-red-700 shadow-lg transition hover:border-red-300 hover:bg-red-600 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 max-md:size-7 max-md:rounded-lg"
+                        aria-label="View product details"
+                        title="View product details"
+                      >
+                        <Package size={16} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleAddToCart(product);
+                        }}
+                        disabled={!customerPermissions.can_request_orders || addingCartProductId === String(productId)}
+                        className="inline-flex size-8 items-center justify-center rounded-xl border border-slate-200 bg-white/90 text-slate-700 shadow-lg transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50 max-md:size-7 max-md:rounded-lg"
+                        aria-label="Add to cart"
+                        title={customerPermissions.can_request_orders ? "Add to cart" : "Order requests are unavailable"}
+                      >
+                        {addingCartProductId === String(productId)
+                          ? <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />
+                          : <ShoppingCart size={14} aria-hidden="true" />}
+                      </button>
+                    </div>
+                  </div>}
                 </div>
 
                 <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 max-md:gap-2 max-md:p-3">
@@ -1098,12 +1422,14 @@ function LandingPage() {
                     <p className="mt-1 truncate text-[12px] font-medium text-slate-600 max-md:text-[10px]">{category}</p>
                   </div>
 
-                  <div className="flex min-w-0 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] max-md:w-fit max-md:gap-1 max-md:border-0 max-md:bg-transparent max-md:p-0">
-                    <span className="flex shrink-0 items-center gap-0.5 text-amber-400">{renderRatingStars(rating.averageRating || 0, 13)}</span>
-                    <span className="truncate font-medium text-slate-700">
-                      {rating.ratingsCount ? `${rating.averageRating.toFixed(1)} · ${rating.ratingsCount} reviews` : "No ratings yet"}
-                    </span>
-                  </div>
+                  {customerPermissions.show_ratings_homepage && (
+                    <div className="flex min-w-0 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] max-md:w-fit max-md:gap-1 max-md:border-0 max-md:bg-transparent max-md:p-0">
+                      <span className="flex shrink-0 items-center gap-0.5 text-amber-400">{renderRatingStars(rating.averageRating || 0, 13)}</span>
+                      <span className="truncate font-medium text-slate-700">
+                        {rating.ratingsCount ? `${rating.averageRating.toFixed(1)} · ${rating.ratingsCount} reviews` : "No ratings yet"}
+                      </span>
+                    </div>
+                  )}
 
                   <div className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 max-md:gap-1 max-md:rounded-lg max-md:px-2 max-md:py-1.5">
                     {dimensions && (
@@ -1118,7 +1444,7 @@ function LandingPage() {
                     </p>
                   </div>
 
-                  <div className="mt-auto flex items-end justify-between gap-2 border-t border-slate-200 pt-3 max-md:pt-1.5">
+                  <div className="mt-auto border-t border-slate-200 pt-3 max-md:pt-1.5">
                     <div className="min-w-0">
                       <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500 max-md:text-[8px]">Starting from</p>
                       <p className="mt-1 truncate text-[22px] font-black text-red-700 max-md:text-base">{getProductPrice(product)}</p>
@@ -1189,7 +1515,7 @@ function LandingPage() {
       className="mobile-fullscreen-dialog relative flex max-h-[90dvh] w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-white/20 bg-white shadow-2xl"
       onClick={(event) => event.stopPropagation()}
     >
-      <header className="flex shrink-0 items-center justify-between gap-4 border-b border-red-500/25 bg-gradient-to-r from-red-700 to-red-800 px-5 py-4 text-white sm:px-6">
+      {!isProductModalReadOnly ? <header className="flex shrink-0 items-center justify-between gap-4 border-b border-red-500/25 bg-gradient-to-r from-red-700 to-red-800 px-5 py-4 text-white sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/25">
             <Package size={19} aria-hidden="true" />
@@ -1209,7 +1535,14 @@ function LandingPage() {
         >
           <X size={20} aria-hidden="true" />
         </button>
-      </header>
+      </header> : <button
+        type="button"
+        onClick={() => setSelectedProduct(null)}
+        aria-label="Close product details"
+        className="absolute right-4 top-4 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-700 shadow-md transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+      >
+        <X size={18} aria-hidden="true" />
+      </button>}
 
       <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto p-4 sm:p-6 md:grid-cols-[1.1fr_0.9fr]">
         <div className="min-w-0 space-y-4">
@@ -1229,15 +1562,38 @@ function LandingPage() {
               className="aspect-[4/3] max-h-[340px] w-full object-cover"
             />
           </div>
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          {!isProductModalReadOnly && <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <h3 className="text-base font-bold text-slate-900">Product Details</h3>
             <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600">
               {selectedProduct.description || "No description available."}
             </p>
-          </div>
+          </div>}
         </div>
 
         <aside className="min-w-0 space-y-4">
+          {isProductModalReadOnly ? <>
+          <div className="flex flex-wrap items-center gap-2 pr-10">
+            <span className="rounded-full bg-red-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-red-700">
+              {selectedProduct.product_type || selectedProduct.type || "Glass & Aluminum"}
+            </span>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-600">
+              {selectedProduct.category || "General"}
+            </span>
+          </div>
+          <h3 className="text-2xl font-black leading-tight text-slate-900">
+            {selectedProduct.product_name || selectedProduct.name || "Product"}
+          </h3>
+          <p className="text-xl font-black text-slate-900">{getProductUnitRate(selectedProduct)}</p>
+          <div className="border-t border-slate-200 pt-4">
+            <p className="text-sm font-medium text-slate-600">{selectedProductDimensions}</p>
+            <p className="mt-4 whitespace-pre-line text-sm leading-6 text-slate-600">
+              {selectedProduct.description || "No description available."}
+            </p>
+          </div>
+          <div className="flex items-center justify-center gap-2 border-y border-slate-200 py-4 text-xs text-slate-500">
+            <span>Contact ACGC for product inquiries.</span>
+          </div>
+          </> : <>
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-red-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-red-700">
               {selectedProduct.product_type || selectedProduct.type || "Glass & Aluminum"}
@@ -1249,7 +1605,7 @@ function LandingPage() {
           <h3 className="text-2xl font-black leading-tight text-slate-900">
             {selectedProduct.product_name || selectedProduct.name || "Product"}
           </h3>
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          {customerPermissions.show_ratings_homepage && <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Customer Rating</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-0.5">{renderRatingStars(selectedProductRating.averageRating, 16)}</span>
@@ -1260,7 +1616,7 @@ function LandingPage() {
             <p className="mt-1 text-xs text-slate-500">
               {selectedProductRating.ratingsCount} rating{selectedProductRating.ratingsCount === 1 ? "" : "s"}
             </p>
-          </div>
+          </div>}
           <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Starting from</p>
             <p className="mt-1 text-2xl font-black text-red-700">{getProductPrice(selectedProduct)}</p>
@@ -1282,12 +1638,12 @@ function LandingPage() {
               <p className="mt-1 text-sm font-bold text-slate-800">{getProductUnitRate(selectedProduct)}</p>
             </div>
           </div>
-          <ProductPriceEstimator
+          {customerPermissions.can_estimate_pricing && <ProductPriceEstimator
             product={selectedProduct}
             form={productEstimatorForm}
             onFormChange={setProductEstimatorForm}
             formatCurrency={formatCurrency}
-          />
+          />}
           {false && <section className="overflow-hidden rounded-xl border border-slate-200 border-t-2 border-t-red-600 bg-white p-4" aria-labelledby="landing-product-estimator-title">
             <div className="flex items-center gap-2">
               <Ruler size={16} className="text-red-600" aria-hidden="true" />
@@ -1470,14 +1826,89 @@ function LandingPage() {
               {pendingActionError}
             </p>
           )}
+          {customerPermissions.can_request_orders && <>
+          <button
+            type="button"
+            onClick={() => handleAddToCart(selectedProduct, productEstimatorForm)}
+            disabled={!customerPermissions.can_request_orders || addingCartProductId === String(selectedProduct._id || selectedProduct.id || "")}
+            className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-red-700 px-5 py-3 text-sm font-bold text-red-700 transition hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {addingCartProductId === String(selectedProduct._id || selectedProduct.id || "")
+              ? <LoaderCircle size={17} className="animate-spin" aria-hidden="true" />
+              : <ShoppingCart size={17} aria-hidden="true" />}
+            {customerPermissions.can_request_orders ? "Add to Cart" : "Orders Disabled"}
+          </button>
           <button
             type="button"
             onClick={() => continueProductActionAfterLogin("direct")}
-            className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+            disabled={!customerPermissions.can_request_orders}
+            className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Place Order Request <ArrowRight size={16} aria-hidden="true" />
+            {customerPermissions.can_request_orders ? "Place Order Request" : "Orders Disabled"} {customerPermissions.can_request_orders && <ArrowRight size={16} aria-hidden="true" />}
           </button>
+          </>}
+          </>}
         </aside>
+      </div>
+    </section>
+  </div>
+)}
+
+{showLoginRequired && (
+  <div
+    className="fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+    onClick={() => {
+      setShowLoginRequired(false);
+      setPendingGuestCartAdd(null);
+    }}
+  >
+    <section
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cart-login-required-title"
+      className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
+          <CircleAlert size={20} aria-hidden="true" />
+        </span>
+        <div>
+          <h2 id="cart-login-required-title" className="text-lg font-bold text-slate-900">Login Required</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            You need to log in to your account before adding products to your cart.
+          </p>
+        </div>
+      </div>
+      <div className="mt-6 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setShowLoginRequired(false);
+            setPendingGuestCartAdd(null);
+          }}
+          className="min-h-10 rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setShowLoginRequired(false);
+            navigate("/login", {
+              state: {
+                from: {
+                  pathname: "/customer-dashboard",
+                  search: "?tab=cart",
+                },
+                pendingCartAdd: pendingGuestCartAdd,
+              },
+            });
+          }}
+          className="min-h-10 rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+        >
+          Log In
+        </button>
       </div>
     </section>
   </div>
@@ -1506,11 +1937,12 @@ function LandingPage() {
             className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 font-mono text-sm text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-red-500 motion-reduce:transition-none"
           />
         </label>
-        <button type="submit" disabled={trackingLoading} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-red-600 px-5 text-sm font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none">
+        <button type="submit" disabled={trackingLoading || !customerPermissions.can_track_products} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-red-600 px-5 text-sm font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none">
           {trackingLoading && <LoaderCircle size={16} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />}
-          {trackingLoading ? "Searching..." : "Track"}
+          {trackingLoading ? "Searching..." : customerPermissions.can_track_products ? "Track" : "Tracking Disabled"}
         </button>
       </form>
+      {!customerPermissions.can_track_products && <p className="mt-2 text-sm text-slate-500" role="status">Order tracking is currently unavailable.</p>}
     </div>
     {trackingError && <div className="mt-8 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800">{trackingError}</div>}
     {trackingResult && (

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Search,
   Plus,
@@ -536,6 +536,8 @@ function SiteInspection() {
   const { user } = useAuth();
   const { darkMode } = useAdminTheme();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedRecordId = searchParams.get("view");
   const highlightedNotificationRecordId = useNotificationHighlight(location);
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
@@ -551,6 +553,9 @@ function SiteInspection() {
   const [cancellingId, setCancellingId] = useState(null);
   const [restoringId, setRestoringId] = useState(null);
   const [viewInspection, setViewInspection] = useState(null);
+  const [requestedModalRecordId, setRequestedModalRecordId] = useState("");
+  const [requestedModalLocationKey, setRequestedModalLocationKey] = useState("");
+  const [requestedRecordError, setRequestedRecordError] = useState(null);
   const [editInspection, setEditInspection] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const [activeTab, setActiveTab] = useState("site");
@@ -1721,21 +1726,47 @@ function SiteInspection() {
     const unsubscribeRealtime = subscribeToRealtime("orders", () => {
       if (document.visibilityState === "visible") fetchSiteInspections(false);
     });
-    // If navigated with ?view=orderId, open that inspection
-    const params = new URLSearchParams(window.location.search || "");
-    const viewId = params.get("view");
-    if (viewId) {
-      (async () => {
-        try {
-          const res = await getAdminOrder(viewId, "site_inspection");
-          if (res && res.order) setViewInspection(res.order);
-        } catch (err) {
-          console.error("Failed to load order for view param", err);
-        }
-      })();
-    }
     return unsubscribeRealtime;
   }, []);
+
+  useEffect(() => {
+    if (!requestedRecordId) return undefined;
+
+    let active = true;
+    getAdminOrder(requestedRecordId, "site_inspection")
+      .then((response) => {
+        const latestOrder = response?.order || response;
+        const latestId = String(latestOrder?._id || latestOrder?.id || "");
+        if (
+          latestId.toLowerCase() !== requestedRecordId.toLowerCase() ||
+          !isSiteInspectionVisible(latestOrder) ||
+          latestOrder.transactionCreated === true
+        ) {
+          throw new Error("This record is no longer in Site Inspection. It may have been transferred or removed.");
+        }
+
+        if (!active) return;
+        setRequestedRecordError(null);
+        setRequestedModalRecordId(requestedRecordId);
+        setRequestedModalLocationKey(location.key);
+        setViewInspection(latestOrder);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setRequestedModalRecordId("");
+        setViewInspection(null);
+        setRequestedRecordError({
+          id: requestedRecordId,
+          message: error?.response?.status === 404
+            ? "This Site Inspection record no longer exists or has been removed."
+            : error?.message || "Unable to load this Site Inspection record.",
+        });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [requestedRecordId, location.key]);
 
   useEffect(() => {
     if (selectedCustomer) {
@@ -1811,7 +1842,21 @@ function SiteInspection() {
   // Action handlers for inspection table
   const handleView = (inspection) => {
     // Open view modal with inspection details
+    setRequestedModalRecordId("");
+    setRequestedModalLocationKey("");
     setViewInspection(inspection);
+  };
+
+  const closeInspectionDetails = () => {
+    setViewInspection(null);
+    setRequestedModalRecordId("");
+    setRequestedModalLocationKey("");
+    setRequestedRecordError(null);
+    if (searchParams.has("view")) {
+      const nextSearchParams = new URLSearchParams(searchParams);
+      nextSearchParams.delete("view");
+      setSearchParams(nextSearchParams, { replace: true });
+    }
   };
 
   const validateContractOrder = (order) => {
@@ -2050,7 +2095,11 @@ function SiteInspection() {
         return [generatedOrder, ...prev];
       });
 
-      setViewInspection((prev) => ((prev?._id || prev?.id) === orderId ? null : prev));
+      if (requestedModalRecordId === String(orderId)) {
+        closeInspectionDetails();
+      } else {
+        setViewInspection((prev) => ((prev?._id || prev?.id) === orderId ? null : prev));
+      }
       setEditInspection((prev) => (prev?.id === orderId ? null : prev));
       setContractInspection(generatedOrder);
       setContractData({ ...generatedContract, contractNeedsRegeneration: false });
@@ -2920,6 +2969,17 @@ function SiteInspection() {
             ]}
           />
 
+          {requestedRecordId && (requestedModalRecordId !== requestedRecordId || requestedModalLocationKey !== location.key) && requestedRecordError?.id !== requestedRecordId && (
+            <p role="status" className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+              Loading the latest Site Inspection record...
+            </p>
+          )}
+          {requestedRecordId && requestedRecordError?.id === requestedRecordId && (
+            <p role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800">
+              {requestedRecordError.message}
+            </p>
+          )}
+
 
 
           {/* CANCEL CONFIRMATION MODAL */}
@@ -2927,7 +2987,7 @@ function SiteInspection() {
             <div className="fixed inset-0 bg-black/50 flex justify-center items-center z-50">
               <div className="bg-white w-full max-w-md rounded-3xl p-6">
                 <h3 className="text-xl font-bold mb-4">Confirm Cancel Inspection</h3>
-                <p className="text-gray-600 mb-6">Are you sure you want to mark this inspection as cancelled? This action can be restored only by admins via the backend.</p>
+                <p className="text-gray-600 mb-6">Are you sure you want to mark this inspection as cancelled?</p>
 
                 <div className="flex justify-end gap-3">
                   <button onClick={closeCancelModal} className="px-4 py-2 bg-gray-200 rounded-xl">Close</button>
@@ -3959,7 +4019,11 @@ function SiteInspection() {
           )}
 
           {/* VIEW DETAILS MODAL */}
-          {viewInspection && (() => {
+          {viewInspection && (
+            requestedRecordId
+              ? requestedModalRecordId === requestedRecordId && requestedModalLocationKey === location.key
+              : !requestedModalRecordId
+          ) && (() => {
             const orderId = viewInspection._id || viewInspection.id;
             const customerName = viewInspection.customer
               ? `${viewInspection.customer.first_name || ""} ${viewInspection.customer.last_name || ""}`.trim() || viewInspection.customer.email || viewInspection.customer_name || "Customer"
@@ -4121,7 +4185,7 @@ function SiteInspection() {
 
                       <button
                         type="button"
-                        onClick={() => setViewInspection(null)}
+                        onClick={closeInspectionDetails}
                         aria-label="Close inspection details"
                         className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border text-lg font-semibold transition ${darkMode ? "border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"}`}
                       >

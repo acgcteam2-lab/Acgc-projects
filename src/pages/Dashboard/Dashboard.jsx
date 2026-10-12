@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
+  ArrowRight,
   ClipboardCheck,
   FolderOpen,
   ShieldCheck,
@@ -15,6 +16,7 @@ import { getFinalProjectCost } from "@/lib/orderPricing";
 import { recordActivity } from "@/lib/activityLog";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
+import { isUntransferredSiteInspection } from "./dashboardOrderUtils";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
 import TransactionDetailsModal from "../../components/TransactionDetailsModal";
 
@@ -192,12 +194,10 @@ function Dashboard() {
   };
 
   const navigate = useNavigate();
-  const handleOpenTransactionPage = (orderId) => {
-    navigate("/transactions", {
-      state: {
-        activeTable: "all",
-        notificationHighlight: { recordId: orderId },
-      },
+  const handleOpenInspectionDetails = (orderId) => {
+    if (!orderId) return;
+    navigate(`/site-inspection?view=${encodeURIComponent(orderId)}`, {
+      state: { notificationHighlight: { recordId: orderId, recordType: "contract" } },
     });
   };
 
@@ -472,9 +472,7 @@ function Dashboard() {
     safeActiveWarrantiesPage * dashboardPanelPageSize,
   );
   const activeWarrantiesCount = activeWarranties.length;
-  const pendingInspectionCount = orders.filter(
-    (order) => String(order.status || "").toLowerCase() === "site_inspection",
-  ).length;
+  const pendingInspectionCount = orders.filter(isUntransferredSiteInspection).length;
   const orderStatusGroups = [
     {
       label: "In progress",
@@ -526,7 +524,7 @@ function Dashboard() {
     weekday: "long",
   });
   const recentTransactionsPerPage = 5;
-  const recentTransactions = [...orders].sort((a, b) => {
+  const recentTransactions = orders.filter(isUntransferredSiteInspection).sort((a, b) => {
     const dateA = new Date(a.created_at || a.createdAt || a.updatedAt || 0).getTime();
     const dateB = new Date(b.created_at || b.createdAt || b.updatedAt || 0).getTime();
     return dateB - dateA;
@@ -694,11 +692,19 @@ function Dashboard() {
           </div>
 
           <section className="mt-6 rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">Recent Transactions</h2>
                 <p className="mt-1 text-sm text-gray-500">Recent activity in the Customer Website</p>
               </div>
+              <button
+                type="button"
+                onClick={() => navigate("/site-inspection")}
+                className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+              >
+                View All
+                <ArrowRight size={16} aria-hidden="true" />
+              </button>
             </div>
 
             <div className="mt-5 overflow-hidden rounded-2xl border border-gray-200">
@@ -748,11 +754,11 @@ function Dashboard() {
                             data-notification-record-id={orderId}
                             role="button"
                             tabIndex={0}
-                            onClick={() => handleOpenTransactionPage(orderId)}
+                            onClick={() => handleOpenInspectionDetails(orderId)}
                             onKeyDown={(event) => {
                               if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
-                                handleOpenTransactionPage(orderId);
+                                handleOpenInspectionDetails(orderId);
                               }
                             }}
                             data-notification-target="order"
@@ -815,11 +821,11 @@ function Dashboard() {
                         data-notification-record-id={orderId}
                         role="button"
                         tabIndex={0}
-                        onClick={() => handleOpenTransactionPage(orderId)}
+                        onClick={() => handleOpenInspectionDetails(orderId)}
                         onKeyDown={(event) => {
                           if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
-                            handleOpenTransactionPage(orderId);
+                            handleOpenInspectionDetails(orderId);
                           }
                         }}
                         data-notification-target="order"

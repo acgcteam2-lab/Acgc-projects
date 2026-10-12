@@ -19,6 +19,7 @@ export const updateAdminUserAccess = (userId, payload) =>
   });
 
 export const getSystemSettings = () => apiFetch("/auth/system-settings");
+export const getPublicCustomerPermissions = () => apiFetch("/auth/customer-permissions");
 
 export const updateSystemSettings = (payload) =>
   apiFetch("/auth/system-settings", {

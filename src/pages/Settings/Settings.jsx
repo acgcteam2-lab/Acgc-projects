@@ -43,6 +43,7 @@ import {
   updateSystemSettings,
 } from "@/api/users";
 import { subscribeToRealtime } from "@/lib/realtimeEvents";
+import { normalizeGlobalCustomerPermissions } from "@/lib/customerPermissions";
 
 const PERMISSIONS = [
   { key: "can_request_orders", label: "Can Request Orders", description: "Submit new glass/aluminum orders" },
@@ -57,7 +58,7 @@ const STAFF_MODULES = [
   { key: "dashboard", label: "Dashboard", actions: [{ key: "view", label: "View", enabled: true }] },
   { key: "product_management", label: "Product Management", actions: [{ key: "view", label: "View", enabled: true }, { key: "add", label: "Add" }, { key: "edit", label: "Edit" }, { key: "delete", label: "Delete" }] },
   { key: "site_inspection", label: "Site Inspection", enabled: false, actions: [{ key: "view", label: "View" }, { key: "view_details", label: "View Details" }, { key: "edit", label: "Edit" }, { key: "cancel", label: "Cancel" }, { key: "generate_contract", label: "Generate Contract" }, { key: "send_email", label: "Send Email" }, { key: "download_contract", label: "Download Contract" }, { key: "manual_approve", label: "Manual Approve" }] },
-  { key: "progress_monitoring", label: "Progress Monitoring", actions: [{ key: "view", label: "View", enabled: true }, { key: "view_details", label: "View Details", enabled: true }, { key: "edit", label: "Edit" }, { key: "delete_proof", label: "Delete Proof" }] },
+  { key: "progress_monitoring", label: "Progress Monitoring", actions: [{ key: "view", label: "View", enabled: true }, { key: "view_details", label: "View Details", enabled: true }, { key: "edit", label: "Edit" }, { key: "upload_progress_photo", label: "Upload Progress Photos" }, { key: "delete_proof", label: "Delete Proof" }] },
   { key: "transactions", label: "Transactions", actions: [{ key: "view", label: "View", enabled: true }, { key: "view_details", label: "View Details", enabled: true }, { key: "edit", label: "Edit" }, { key: "view_contract", label: "View Contract" }, { key: "download_contract", label: "Download Contract" }, { key: "send_email", label: "Send Email" }] },
   { key: "settings", label: "Settings", actions: [{ key: "view", label: "View", enabled: true }, { key: "manage_access", label: "Manage Access", enabled: true }, { key: "back_up", label: "Back Up", enabled: true }] },
   { key: "profile", label: "Profile", actions: [{ key: "view", label: "View", enabled: true }, { key: "edit", label: "Edit" }] },
@@ -133,7 +134,7 @@ function Settings() {
   const [expandedStaffModule, setExpandedStaffModule] = useState(null);
   const [customSubroleInput, setCustomSubroleInput] = useState("");
   const [showUpgradeConfirm, setShowUpgradeConfirm] = useState(false);
-  const [globalPermissions, setGlobalPermissions] = useState(defaultPermissions);
+  const [globalPermissions, setGlobalPermissions] = useState(normalizeGlobalCustomerPermissions);
   const [globalOpen, setGlobalOpen] = useState(false);
   const [savingGlobal, setSavingGlobal] = useState(false);
   const [maintenanceMode, setMaintenanceMode] = useState(false);
@@ -195,7 +196,7 @@ function Settings() {
         if (!active) return;
         setMaintenanceMode(response.maintenance_mode === true);
         if (response.global_permissions) {
-          setGlobalPermissions(normalizePermissions(response.global_permissions));
+          setGlobalPermissions(normalizeGlobalCustomerPermissions(response.global_permissions));
         }
         setBackupState({
           selectedSchedule: ["weekly", "monthly", "yearly"].includes(response.backup_schedule) ? response.backup_schedule : "weekly",
@@ -318,11 +319,9 @@ function Settings() {
   const getPermissions = (account) => normalizePermissions(account.access_permissions);
 
   const updateGlobalPermission = (key, checked) => {
-    setGlobalPermissions((current) => normalizePermissions({
+    setGlobalPermissions((current) => normalizeGlobalCustomerPermissions({
       ...current,
-      ...(key === "view_only_access" && checked
-        ? Object.fromEntries(PERMISSIONS.map(({ key: permissionKey }) => [permissionKey, permissionKey === "view_only_access"]))
-        : { [key]: checked }),
+      [key]: checked,
     }));
   };
 
@@ -749,8 +748,9 @@ function Settings() {
   const saveGlobalPermissions = async () => {
     setSavingGlobal(true);
     try {
-      const normalizedPermissions = normalizePermissions(globalPermissions);
-      await updateSystemSettings({ global_permissions: normalizedPermissions });
+      const normalizedPermissions = normalizeGlobalCustomerPermissions(globalPermissions);
+      const response = await updateSystemSettings({ global_permissions: normalizedPermissions });
+      setGlobalPermissions(normalizeGlobalCustomerPermissions(response.global_permissions || normalizedPermissions));
       recordActivity(user, "Saved the global customer permissions profile.", "Settings");
       toast.success("Global profile saved. Individual account permissions were not changed.");
     } catch (error) {
@@ -1107,7 +1107,7 @@ function Settings() {
             </div>
             {globalOpen && <>
               <div className={`flex items-center justify-between border-b px-5 py-4 ${darkMode ? "border-slate-800" : "border-slate-100"}`}><div><p className={`text-[10px] font-black uppercase tracking-[0.18em] ${darkMode ? "text-slate-500" : "text-slate-400"}`}>Global customer access profile</p><p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Choose the global profile; each account's matrix remains independent.</p></div><span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-wide ${darkMode ? "bg-slate-800 text-slate-300" : "bg-slate-100 text-slate-600"}`}>{Object.values(globalPermissions).filter(Boolean).length} enabled</span></div>
-              <div className="grid gap-3 p-4 md:grid-cols-2">{PERMISSIONS.map((permission, index) => <PermissionSwitch key={permission.key} permission={permission} index={index} checked={globalPermissions[permission.key]} disabled={globalPermissions.view_only_access && permission.key !== "view_only_access"} onChange={(checked) => updateGlobalPermission(permission.key, checked)} darkMode={darkMode} />)}</div>
+              <div className="grid gap-3 p-4 md:grid-cols-2">{PERMISSIONS.map((permission, index) => <PermissionSwitch key={permission.key} permission={permission} index={index} checked={permission.key === "view_only_access" ? globalPermissions.view_only_access : !globalPermissions.view_only_access && globalPermissions[permission.key]} disabled={globalPermissions.view_only_access && permission.key !== "view_only_access"} onChange={(checked) => updateGlobalPermission(permission.key, checked)} darkMode={darkMode} />)}</div>
               <div className={`mx-4 mb-4 flex items-center justify-between gap-4 rounded-2xl border px-4 py-4 ${maintenanceMode ? (darkMode ? "border-amber-700/70 bg-amber-950/40" : "border-amber-300 bg-amber-50") : (darkMode ? "border-slate-700 bg-slate-800/70" : "border-slate-200 bg-slate-50")}`}>
                 <div className="flex items-center gap-3"><span className={`h-2.5 w-2.5 rounded-full ${maintenanceMode ? "bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.8)]" : "bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.55)]"}`} /><div><p className={`text-xs font-black ${maintenanceMode ? (darkMode ? "text-amber-200" : "text-amber-900") : (darkMode ? "text-slate-200" : "text-slate-700")}`}>System Maintenance Mode</p><p className={`text-[10px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{maintenanceMode ? "Customer activity is temporarily restricted." : "Platform is operating normally."}</p></div></div>
                 <button type="button" role="switch" aria-checked={maintenanceMode} disabled={savingMaintenance} onClick={toggleMaintenanceMode} className={`relative h-6 w-11 shrink-0 rounded-full transition ${maintenanceMode ? "bg-amber-600" : "bg-slate-300"}`}><span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition ${maintenanceMode ? "left-[22px]" : "left-1"}`} /></button>
@@ -1224,7 +1224,7 @@ function Settings() {
           {renderBackupRecovery(backupMetrics)}
 
           {permissionAccount && permissionDraft && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) { setPermissionAccount(null); setPermissionDraft(null); } }}>
-            <section role="dialog" aria-modal="true" aria-labelledby="customer-matrix-title" className={`w-full max-w-[620px] overflow-hidden rounded-xl border shadow-2xl ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+            <section role="dialog" aria-modal="true" aria-labelledby="customer-matrix-title" className={`access-control-dialog w-full max-w-[620px] overflow-hidden rounded-xl border shadow-2xl ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
               <header className={`flex items-center justify-between border-b px-6 py-5 ${darkMode ? "border-slate-800" : "border-slate-100"}`}>
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sky-100 text-xs font-black text-sky-700">{`${(permissionAccount.first_name || "C").charAt(0)}${(permissionAccount.last_name || "T").charAt(0)}`.toUpperCase()}</span>
@@ -1237,7 +1237,7 @@ function Settings() {
                 <div className="grid gap-2 sm:grid-cols-2">
                   {PERMISSIONS.map((permission) => {
                     const checked = permissionDraft[permission.key] === true;
-                    return <div key={permission.key} className={`flex min-h-[88px] items-center justify-between gap-3 rounded-md border px-3.5 py-3 ${checked ? (darkMode ? "border-red-900/70 bg-red-950/30" : "border-red-200 bg-red-50") : (darkMode ? "border-slate-700 bg-slate-800/50" : "border-slate-200 bg-slate-50")}`}>
+                    return <div key={permission.key} className={`access-control-row flex min-h-[88px] items-center justify-between gap-3 rounded-md border px-3.5 py-3 ${checked ? (darkMode ? "border-red-900/70 bg-red-950/30" : "border-red-200 bg-red-50") : (darkMode ? "border-slate-700 bg-slate-800/50" : "border-slate-200 bg-slate-50")}`}>
                       <div className="min-w-0"><p className={`text-sm font-semibold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>{permission.label}</p><p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{permission.description}</p></div>
                       <button type="button" role="switch" aria-label={permission.label} aria-checked={checked} disabled={savingId === (permissionAccount._id || permissionAccount.id)} onClick={() => togglePermissionDraft(permission.key, !checked)} className={`relative h-6 w-11 shrink-0 rounded-full transition disabled:cursor-not-allowed ${checked ? "bg-red-900" : darkMode ? "bg-slate-600" : "bg-slate-300"}`}><span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition ${checked ? "left-[22px]" : "left-1"}`} /></button>
                     </div>;
@@ -1251,7 +1251,7 @@ function Settings() {
             </section>
           </div>}
           {staffAccount && staffDraft && <div className="mobile-fullscreen-overlay fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) { setStaffAccount(null); setStaffDraft(null); } }}>
-            <section role="dialog" aria-modal="true" aria-labelledby="staff-access-title" className={`mobile-fullscreen-dialog flex max-h-[92vh] w-full max-w-[620px] flex-col overflow-hidden rounded-xl border shadow-2xl ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+            <section role="dialog" aria-modal="true" aria-labelledby="staff-access-title" className={`access-control-dialog mobile-fullscreen-dialog flex max-h-[92vh] w-full max-w-[620px] flex-col overflow-hidden rounded-xl border shadow-2xl ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
               <header className={`flex items-center justify-between border-b px-5 py-4 ${darkMode ? "border-slate-800" : "border-slate-100"}`}>
                 <div><h2 id="staff-access-title" className={`text-base font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>Staff Access Control</h2><p className={`mt-1 text-xs font-mono ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{`${staffAccount.first_name || "Staff"} ${staffAccount.last_name || ""}`.trim()} · Permission Matrix</p></div>
                 <button type="button" onClick={() => { setStaffAccount(null); setStaffDraft(null); }} aria-label="Close staff access settings" className={`rounded-full p-2 ${darkMode ? "text-slate-400 hover:bg-slate-800" : "text-slate-500 hover:bg-slate-100"}`}><X size={16} /></button>
@@ -1275,14 +1275,14 @@ function Settings() {
                     {STAFF_MODULES.map((module) => {
                       const moduleAccess = staffDraft.modules[module.key];
                       const isExpanded = expandedStaffModule === module.key;
-                      return <div key={module.key} className={`rounded-md border ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                      return <div key={module.key} className={`access-control-row rounded-md border ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                         <div className="flex min-h-11 items-center gap-3 px-3">
                           <span className={`min-w-0 flex-1 text-xs font-semibold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>{module.label}</span>
                           <button type="button" onClick={() => setExpandedStaffModule(isExpanded ? null : module.key)} className={`whitespace-nowrap text-[10px] font-medium ${darkMode ? "text-slate-400 hover:text-slate-200" : "text-slate-500 hover:text-slate-800"}`} aria-expanded={isExpanded}>{isExpanded ? "▲ Hide Sub-actions" : "▼ Manage Sub-actions"}</button>
                           <button type="button" role="switch" aria-label={`${module.label} module`} aria-checked={moduleAccess.enabled} disabled={!isAdmin || isOwnStaffAccount} onClick={() => updateStaffModule(module.key, { enabled: !moduleAccess.enabled })} className={`relative h-5 w-9 shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-60 ${moduleAccess.enabled ? "bg-red-900" : darkMode ? "bg-slate-600" : "bg-slate-300"}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${moduleAccess.enabled ? "left-[18px]" : "left-0.5"}`} /></button>
                         </div>
                         {isExpanded && <div className={`grid grid-cols-1 gap-2 border-t p-3 sm:grid-cols-2 ${darkMode ? "border-slate-700 bg-slate-800/40" : "border-slate-100 bg-slate-50"}`}>
-                          {module.actions.map((action) => <div key={action.key} className={`flex min-h-8 items-center justify-between gap-3 rounded-sm px-2.5 ${darkMode ? "bg-slate-900/70" : "bg-white"} ${moduleAccess.enabled ? (darkMode ? "text-slate-300" : "text-slate-700") : "opacity-50"}`}><span className="text-xs">{action.label}</span><button type="button" role="switch" aria-label={`${module.label}: ${action.label}`} aria-checked={moduleAccess.actions[action.key]} disabled={!isAdmin || isOwnStaffAccount || !moduleAccess.enabled} onClick={() => toggleStaffAction(module.key, action.key)} className={`relative h-5 w-9 shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-60 ${moduleAccess.actions[action.key] ? "bg-red-900" : darkMode ? "bg-slate-600" : "bg-slate-300"}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${moduleAccess.actions[action.key] ? "left-[18px]" : "left-0.5"}`} /></button></div>)}
+                          {module.actions.map((action) => <div key={action.key} className={`access-control-action flex min-h-8 items-center justify-between gap-3 rounded-sm px-2.5 ${darkMode ? "bg-slate-900/70" : "bg-white"} ${moduleAccess.enabled ? (darkMode ? "text-slate-300" : "text-slate-700") : "opacity-50"}`}><span className="text-xs">{action.label}</span><button type="button" role="switch" aria-label={`${module.label}: ${action.label}`} aria-checked={moduleAccess.actions[action.key]} disabled={!isAdmin || isOwnStaffAccount || !moduleAccess.enabled} onClick={() => toggleStaffAction(module.key, action.key)} className={`relative h-5 w-9 shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-60 ${moduleAccess.actions[action.key] ? "bg-red-900" : darkMode ? "bg-slate-600" : "bg-slate-300"}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${moduleAccess.actions[action.key] ? "left-[18px]" : "left-0.5"}`} /></button></div>)}
                         </div>}
                       </div>;
                     })}

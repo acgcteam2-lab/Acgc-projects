@@ -513,6 +513,20 @@ router.get("/system-settings", authMiddleware, async (req, res) => {
   }
 });
 
+router.get("/customer-permissions", async (_req, res) => {
+  try {
+    const settings = await SystemSetting.findOne({ key: "global" }).select("global_permissions").lean();
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      success: true,
+      global_permissions: settings?.global_permissions || null,
+    });
+  } catch (error) {
+    console.error("Get public customer permissions error:", error);
+    res.status(500).json({ success: false, message: "Unable to load customer permissions." });
+  }
+});
+
 router.patch("/system-settings", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
   try {
     const update = {};
@@ -520,15 +534,7 @@ router.patch("/system-settings", authMiddleware, roleMiddleware(["admin", "super
       update.maintenance_mode = req.body.maintenance_mode;
     }
     if (req.body?.global_permissions && typeof req.body.global_permissions === "object") {
-      const permissions = { ...req.body.global_permissions };
-      if (permissions.view_only_access === true) {
-        permissions.can_request_orders = false;
-        permissions.can_estimate_pricing = false;
-        permissions.can_track_products = false;
-        permissions.can_upload_feedback = false;
-        permissions.show_ratings_homepage = false;
-      }
-      update.global_permissions = permissions;
+      update.global_permissions = { ...req.body.global_permissions };
     }
     if (typeof req.body?.backup_schedule === "string") {
       update.backup_schedule = req.body.backup_schedule;

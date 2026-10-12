@@ -114,9 +114,9 @@ export default function TimelineStage({
         <p className={`mt-0.5 break-words text-xs leading-5 ${statusTextClass}`}>{statusText}</p>
                 {stage?.photoRequirement && (
                   <div className={`mt-2 rounded-lg border p-2.5 text-xs ${darkMode ? "border-slate-700 bg-slate-900 text-slate-300" : "border-slate-200 bg-white text-slate-600"}`}>
-                    <p>{stage.photoRequirement === "required"
-                      ? "A progress photo is required before this stage can be marked as completed."
-                      : "Uploading a progress photo is optional."}</p>
+                    {stage.photoRequirement === "required" && (
+                      <p>A progress photo is required before this stage can be marked as completed.</p>
+                    )}
                     {onUploadProgressPhoto && status !== "done" && (
                       <label className={`mt-2 inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 font-medium ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
                         <Camera size={14} aria-hidden="true" />
@@ -229,9 +229,9 @@ export default function TimelineStage({
                     )}
                     {subStage?.photoRequirement && (
                       <div className={`mt-2 rounded-lg border p-2.5 text-[11px] ${darkMode ? "border-slate-700 bg-slate-900 text-slate-300" : "border-slate-200 bg-white text-slate-600"}`}>
-                        <p>{subStage.photoRequirement === "required"
-                          ? "A progress photo is required before this sub-stage can be marked as completed."
-                          : "Uploading a progress photo is optional."}</p>
+                        {subStage.photoRequirement === "required" && (
+                          <p>A progress photo is required before this sub-stage can be marked as completed.</p>
+                        )}
                         {onUploadProgressPhoto && subStatus !== "done" && (
                           <label className={`mt-2 inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 font-medium ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
                             <Camera size={13} aria-hidden="true" />

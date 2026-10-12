@@ -1,5 +1,5 @@
 import express from "express";
-import { authMiddleware, permissionMiddleware, roleMiddleware, staffModulePermission } from "../middleware/auth.js";
+import { authMiddleware, optionalAuthMiddleware, permissionMiddleware, roleMiddleware, staffModulePermission } from "../middleware/auth.js";
 import {
   createOrder,
   createOrderAsAdmin,
@@ -29,7 +29,7 @@ const router = express.Router();
 
 router.get("/", authMiddleware, listOrders);
 router.post("/", authMiddleware, roleMiddleware("customer"), permissionMiddleware("can_request_orders"), createOrder);
-router.get("/track/:tracking", trackOrder);
+router.get("/track/:tracking", optionalAuthMiddleware, permissionMiddleware("can_track_products"), trackOrder);
 router.put("/:orderId/contract", authMiddleware, roleMiddleware("customer"), respondToContract);
 router.put("/:orderId/cancel", authMiddleware, roleMiddleware("customer"), cancelCustomerOrder);
 router.put("/:orderId/payment-proof", authMiddleware, roleMiddleware("customer"), submitCustomerPaymentProof);
@@ -58,7 +58,7 @@ router.get(
 );
 router.delete("/admin/:orderId/review", authMiddleware, roleMiddleware("admin"), deleteOrderReview);
 router.put("/admin/:orderId/inspection", authMiddleware, roleMiddleware("admin"), updateOrderInspection);
-router.put("/admin/:orderId/progress", authMiddleware, roleMiddleware("admin"), updateOrderProgress);
+router.put("/admin/:orderId/progress", authMiddleware, roleMiddleware(["admin", "super_admin", "skilled_worker"]), staffModulePermission("progress_monitoring", "edit"), updateOrderProgress);
 router.post("/admin/:orderId/contract", authMiddleware, roleMiddleware("admin"), generateContract);
 router.post("/admin/:orderId/send-contract-email", authMiddleware, roleMiddleware("admin"), sendWalkInApprovalEmail);
 

@@ -230,11 +230,25 @@ export const buildBatchProductTimelineStages = (order, item, itemIndex = 0) => {
     };
   });
 
-  const productionSteps = batchProductStages.map((definition) => {
-    const sourceStage = stageMap.get(definition.key) ||
+  const progressDefinitions = savedStages.length > 0
+    ? savedStages.map((sourceStage, index) => ({
+        key: normalizeStageKey(sourceStage) || `custom_stage_${index + 1}`,
+        label: sourceStage.name || sourceStage.key || `Stage ${index + 1}`,
+        sourceStage,
+      }))
+    : batchProductStages.map((definition) => ({ ...definition, sourceStage: stageMap.get(definition.key) }));
+
+  const productionSteps = progressDefinitions.map((definition) => {
+    const sourceStage = definition.sourceStage || stageMap.get(definition.key) ||
       (definition.key === "fabrication" ? stageMap.get("processing") : null);
     const sourceStatus = normalizeStageStatus(sourceStage?.status || "");
-    const completed = Boolean(sourceStage?.completed) || ["done", "completed"].includes(sourceStatus) || (!sourceStage && status === "completed");
+    const sourceSubStages = Array.isArray(sourceStage?.subStages) ? sourceStage.subStages : [];
+    const subStagesCompleted = sourceSubStages.every((subStage) =>
+      subStage.completed === true || ["done", "completed"].includes(normalizeStageStatus(subStage.status))
+    );
+    const completed = Boolean(sourceStage) &&
+      (Boolean(sourceStage.completed) || ["done", "completed"].includes(sourceStatus)) &&
+      subStagesCompleted;
     const stepStatus = isCancelled
       ? "cancelled"
       : completed
@@ -269,8 +283,8 @@ export const buildBatchProductTimelineStages = (order, item, itemIndex = 0) => {
       label: sourceStage?.name || definition.label,
       status: stepStatus,
       statusText: stepStatus === "completed" ? "Completed" : stepStatus === "in-progress" ? "In Progress" : stepStatus === "delayed" ? "Delayed" : stepStatus === "cancelled" ? "Cancelled" : "Pending",
-      date: stepStatus === "completed" ? formatDateTimeToMMDDYYYY(sourceStage?.date) || "Completed" : stepStatus === "in-progress" ? "In progress" : "Pending",
-      assignedTo: definition.key === "installation" ? "Installation Team" : "Production Team",
+      date: stepStatus === "completed" ? formatDateTimeToMMDDYYYY(sourceStage?.date || sourceStage?.installationCompletedAt) || "Completed" : stepStatus === "in-progress" ? "In progress" : "Pending",
+      assignedTo: definition.key.includes("installation") ? "Installation Team" : "Production Team",
       notes: sourceStage?.delayReason || sourceStage?.delayNotes || `Current phase: ${definition.label}`,
       ...(sourceStage ? { photoRequirement: sourceStage.photoRequirement === "required" ? "required" : "optional" } : {}),
       delayReason: latestDelayEntry?.reason || sourceStage?.delayReason || "",
@@ -360,9 +374,12 @@ export const buildOrderTimelineStages = (order) => {
         : stageMap[definition.key] || {};
 
       const normalizedSourceStatus = normalizeStageStatus(sourceStage?.status || "");
+      const subStagesComplete = !Array.isArray(sourceStage.subStages) || sourceStage.subStages.every((subStage) =>
+        subStage.completed === true || ["done", "completed"].includes(normalizeStageStatus(subStage.status))
+      );
       const completed = isAgreementStage
         ? sourceStage.customerResponse === "accepted" || sourceStage.customerResponse === "reschedule_requested"
-        : !!sourceStage.completed || sourceStage.customerResponse === "accepted" || ["done", "completed"].includes(normalizedSourceStatus);
+        : (!!sourceStage.completed || ["done", "completed"].includes(normalizedSourceStatus)) && subStagesComplete;
       const delayed = !completed && normalizedSourceStatus === "delayed";
       const inProgress = !completed && ["in-progress", "in_progress", "active"].includes(normalizedSourceStatus);
       const status = completed ? "completed" : delayed ? "delayed" : inProgress ? "in-progress" : "pending";
@@ -383,14 +400,13 @@ export const buildOrderTimelineStages = (order) => {
           }))
         : [];
 
-      const visibleSubStages = completed ? subStages : [];
+      const visibleSubStages = subStages;
 
       if (isAgreementStage) {
         const hasProposal = sourceStage.proposedInstallationDate && sourceStage.proposedInstallationTime;
         if (!hasProposal) return null;
       }
 
-      const completedSubCount = visibleSubStages.filter((sub) => sub.status === "completed").length;
       const latestDelayEntry = Array.isArray(sourceStage.delayHistory) && sourceStage.delayHistory.length > 0
         ? sourceStage.delayHistory[sourceStage.delayHistory.length - 1]
         : null;
@@ -455,7 +471,7 @@ export const buildOrderTimelineStages = (order) => {
         statusText,
         date: isAgreementStage
           ? sourceStage.customerResponseAt ? formatDateTimeToMMDDYYYY(sourceStage.customerResponseAt) : null
-          : formatDateTimeToMMDDYYYY(sourceStage.date),
+          : formatDateTimeToMMDDYYYY(sourceStage.date || (definition.key === "installation" ? sourceStage.installationCompletedAt : null)),
         assignedTo: "Production Team",
         notes: isAgreementStage
           ? sourceStage.customerResponse === "reschedule_requested"
@@ -502,13 +518,17 @@ export const buildOrderTimelineStages = (order) => {
     .filter(Boolean);
 
   const installationStage = stageMap.installation || {};
-  const installationComplete = !!installationStage.completed || order.status === "completed";
+  const installationStatus = normalizeStageStatus(installationStage.status);
+  const installationSubStages = Array.isArray(installationStage.subStages) ? installationStage.subStages : [];
+  const installationComplete = Boolean(installationStage.completed) || ["done", "completed"].includes(installationStatus)
+    ? installationSubStages.every((subStage) => subStage.completed === true || ["done", "completed"].includes(normalizeStageStatus(subStage.status)))
+    : false;
   const completedStage = {
     key: "project_completed",
     label: "Completed",
     status: installationComplete ? "completed" : "pending",
     statusText: installationComplete ? "Completed" : "Pending",
-    date: installationComplete ? formatDateTimeToMMDDYYYY(installationStage.date || order.updatedAt) : null,
+    date: installationComplete ? formatDateTimeToMMDDYYYY(installationStage.date || installationStage.installationCompletedAt) : null,
     assignedTo: "Project Manager",
     notes: installationComplete ? "Project execution complete." : "Final project completion pending.",
   };
@@ -524,7 +544,7 @@ export const buildOrderTimelineStages = (order) => {
     ];
 
     const acceptedTimeline = progressStages.length ? progressStages : productionFallback;
-    return [...baseStages, ...acceptedTimeline];
+    return [...baseStages, ...acceptedTimeline, completedStage];
   }
 
   return [...baseStages, ...progressStages, completedStage];

@@ -6,8 +6,10 @@ import OrderProgressTimeline from "@/components/OrderProgressTimeline";
 import { getPaymentSummary } from "@/pages/Transactions/paymentProofUtils";
 import { getFinalProjectCost } from "@/lib/orderPricing";
 import { trackOrder } from "../../api/orders";
+import { useCustomerPermissions } from "@/hooks/useCustomerPermissions";
 
 function TrackOrder() {
+  const customerPermissions = useCustomerPermissions();
   const [trackingNumber, setTrackingNumber] = useState("");
   const [trackingResult, setTrackingResult] = useState(null);
   const [trackingError, setTrackingError] = useState("");
@@ -17,6 +19,11 @@ function TrackOrder() {
 
   const handleTrackOrder = async (event) => {
     event.preventDefault();
+    if (!customerPermissions.can_track_products) {
+      setTrackingError("Order tracking is disabled by the system administrator.");
+      setTrackingResult(null);
+      return;
+    }
     const tracking = trackingNumber.trim();
     if (!tracking) {
       setTrackingError("Please enter your tracking number.");
@@ -236,13 +243,16 @@ function TrackOrder() {
                 </label>
                 <button
                   type="submit"
-                  disabled={trackingLoading}
+                  disabled={trackingLoading || !customerPermissions.can_track_products}
                   className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-red-600 px-5 text-sm font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none"
                 >
                   {trackingLoading && <LoaderCircle size={16} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />}
-                  {trackingLoading ? "Searching..." : "Track"}
+                  {trackingLoading ? "Searching..." : customerPermissions.can_track_products ? "Track" : "Tracking Disabled"}
                 </button>
               </form>
+              {!customerPermissions.can_track_products && (
+                <p className="mt-2 text-sm text-muted-foreground" role="status">Order tracking is currently unavailable.</p>
+              )}
             </div>
 
             {trackingError && (

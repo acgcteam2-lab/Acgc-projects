@@ -81,6 +81,40 @@ describe("buildBatchProductTimelineStages", () => {
     expect(buildBatchProductTimelineStages(order, installationPending).at(-1).status).toBe("pending");
   });
 
+  it("preserves custom and installation scheduling stages in saved order", () => {
+    const order = { status: "contract_accepted", contract_status: "accepted" };
+    const item = {
+      progress_stages: [
+        { key: "cutting", name: "Cutting", status: "done", completed: true },
+        { key: "custom_stage", name: "Frame Assembly", status: "in_progress", completed: false },
+        { key: "installation_scheduling", name: "Installation Scheduling", status: "pending", completed: false },
+        { key: "installation", name: "Installation", status: "pending", completed: false },
+      ],
+    };
+
+    const steps = buildBatchProductTimelineStages(order, item);
+    expect(steps.slice(0, 4).map((step) => step.batchStageKey)).toEqual([
+      "cutting",
+      "custom_stage",
+      "installation_scheduling",
+      "installation",
+    ]);
+    expect(steps[1]).toMatchObject({ label: "Frame Assembly", status: "in-progress" });
+    expect(steps[3]).toMatchObject({ label: "Installation", status: "pending" });
+  });
+
+  it("does not complete a parent stage while a saved sub-stage is incomplete", () => {
+    const steps = buildBatchProductTimelineStages(
+      { status: "completed", contract_status: "accepted" },
+      { progress_stages: [
+        { key: "installation", name: "Installation", status: "done", completed: true, subStages: [{ name: "Final fit", status: "pending", completed: false }] },
+      ] }
+    );
+
+    expect(steps[0]).toMatchObject({ batchStageKey: "installation", status: "pending" });
+    expect(steps.at(-1).status).toBe("pending");
+  });
+
   it("uses the first item progress stages when building a single order timeline", () => {
     const order = {
       status: "contract_accepted",
@@ -108,6 +142,15 @@ describe("buildBatchProductTimelineStages", () => {
     ];
 
     expect(getProjectStatus(order, stages)).toBe("Assembly");
+  });
+
+  it("keeps Progress Monitor on a parent stage with an unfinished sub-stage", () => {
+    const stages = [
+      { key: "cutting", name: "Cutting", status: "done", completed: true },
+      { key: "installation", name: "Installation", status: "done", completed: true, subStages: [{ name: "Final fit", status: "pending", completed: false }] },
+    ];
+
+    expect(getProjectStatus({ status: "completed" }, stages)).toBe("Installation");
   });
 
   it("starts a pending project at Cutting and leaves later stages pending", () => {
@@ -165,11 +208,25 @@ describe("buildBatchProductTimelineStages", () => {
     expect(steps.find((step) => step.batchStageKey === "cutting").images).toEqual(photoUrls);
   });
 
-  it("only exposes sub-stages in the timeline after their parent is completed", () => {
+  it("shows saved sub-stage progress before the parent stage is completed", () => {
     const subStages = [{ name: "Cut glass", status: "completed" }];
 
-    expect(getVisibleCompletedStageSubStages({ status: "in-progress", subStages })).toEqual([]);
+    expect(getVisibleCompletedStageSubStages({ status: "in-progress", subStages })).toEqual(subStages);
     expect(getVisibleCompletedStageSubStages({ status: "completed", subStages })).toEqual(subStages);
+  });
+
+  it("does not mark installation or the project complete from order status alone", () => {
+    const order = {
+      status: "completed",
+      contract_status: "accepted",
+      progress_stages: [
+        ...makeStages(["cutting", "assembly", "fabrication"], "installation"),
+      ],
+    };
+    const stages = buildOrderTimelineStages(order);
+
+    expect(stages.find((stage) => stage.key === "installation")?.status).toBe("in-progress");
+    expect(stages.find((stage) => stage.key === "project_completed")?.status).toBe("pending");
   });
 
   it("shows exact order-item measurements instead of quantity", () => {
@@ -227,5 +284,20 @@ describe("buildBatchProductTimelineStages", () => {
     );
 
     expect(calculateStageProgressPercent(nextStage)).toBe(40);
+  });
+
+  it("shows 60 percent when three of five stages are done and Installation is next", () => {
+    const order = { status: "processing", contract_status: "accepted" };
+    const item = { progress_stages: makeStages(["cutting", "assembly", "fabrication"]) };
+    const stages = buildBatchProductTimelineStages(order, item);
+
+    expect(stages.map((stage) => stage.status)).toEqual([
+      "completed",
+      "completed",
+      "completed",
+      "pending",
+      "pending",
+    ]);
+    expect(calculateStageProgressPercent(stages)).toBe(60);
   });
 });

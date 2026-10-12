@@ -1,5 +1,5 @@
 import express from "express";
-import { authMiddleware, roleMiddleware } from "../middleware/auth.js";
+import { authMiddleware, roleMiddleware, staffModulePermission } from "../middleware/auth.js";
 import uploadController, {
 	paymentProofUploadMiddleware,
 	productImageUploadMiddleware,
@@ -36,6 +36,7 @@ router.post(
 	"/progress-media",
 	authMiddleware,
 	roleMiddleware(["admin", "super_admin", "skilled_worker"]),
+	staffModulePermission("progress_monitoring", "upload_progress_photo"),
 	progressMediaUploadMiddleware,
 	uploadController.uploadProgressMedia
 );

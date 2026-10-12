@@ -5,12 +5,18 @@ import path from "path";
 import { randomUUID } from "node:crypto";
 import mongoose from "mongoose";
 import Order from "../models/Order.js";
+import CustomerNotification from "../models/CustomerNotification.js";
 import Product from "../models/Product.js";
 import User from "../models/User.js";
 import Cart from "../models/Cart.js";
 import { sendMail } from "../config/mailer.js";
 import { formatOrderEmailDate, getCurrentCustomerContact, sendOrderNotification } from "../services/orderEmails.js";
 import { applyInstallationWarranty, isCompletedInstallationStage } from "../services/warranty.js";
+import {
+  applyInstallationNotificationTimestamps,
+  buildInstallationNotificationEvents,
+  isProgressStageCompleted,
+} from "../services/installationNotifications.js";
 import { buildProductPriceSnapshot, getMeasuredProductLineTotal } from "../../src/lib/productPricing.js";
 import { calculateRequiredDownpayment, getFinalProjectCost, isProjectPriceLocked } from "../../src/lib/orderPricing.js";
 import { getInstallationDateError } from "../../src/lib/installationSchedule.js";
@@ -43,6 +49,48 @@ const buildReviewNotificationMessage = (order, review, productName = order.items
 const privatePaymentDocumentsDirectory = path.resolve(process.cwd(), "private-payment-documents");
 
 const getPaymentDocumentDisplayName = (user) => [user?.first_name, user?.last_name].filter(Boolean).join(" ") || user?.email || "Administrator";
+
+const persistInstallationNotifications = async (order, stages, itemIndex = null, productName = "", { includeCompletion = true } = {}) => {
+  if (!order?.customer || order.status === "cancelled") return;
+
+  const events = buildInstallationNotificationEvents(stages, { itemIndex, productName })
+    .filter((event) => includeCompletion || event.type !== "installation_completed");
+  await Promise.all(events.map(async (event) => {
+    try {
+      await CustomerNotification.updateOne(
+        { order: order._id, eventKey: event.eventKey },
+        { $setOnInsert: {
+          customer: order.customer,
+          order: order._id,
+          eventKey: event.eventKey,
+          type: event.type,
+          title: event.title,
+          message: event.message,
+          tracking: order.tracking || "",
+          stageKey: event.stageKey,
+          stageName: event.stageName,
+          itemIndex: event.itemIndex,
+          productName: event.productName,
+          completedAt: event.completedAt || null,
+        } },
+        { upsert: true }
+      );
+    } catch (error) {
+      if (error?.code !== 11000) throw error;
+    }
+  }));
+};
+
+const orderWithCustomerNotifications = async (order) => {
+  const responseOrder = order.toObject?.() || { ...order };
+  if (order.customer) {
+    responseOrder.customer_notifications = await CustomerNotification.find({
+      customer: order.customer,
+      order: order._id,
+    }).sort({ createdAt: -1 }).lean();
+  }
+  return responseOrder;
+};
 
 export const addAdminPaymentSupportingDocument = async (req, res) => {
   let uploadedAsset = null;
@@ -162,6 +210,15 @@ const getDelayEventKey = (stage, entry, index) => [
   entry.reportedAt ? new Date(entry.reportedAt).getTime() : "",
   entry.reason || "",
 ].join("|");
+
+const isInstallationStage = (stage) => {
+  const key = `${stage?.key || ""} ${stage?.name || ""}`.toLowerCase();
+  return key.includes("installation") && !key.includes("schedul") && !key.includes("agreement");
+};
+
+const isStageInProgress = (stage) => ["in_progress", "in-progress", "active", "current"].includes(String(stage?.status || "").toLowerCase());
+
+const getStageIdentity = (stage, index) => String(stage?.key || stage?.name || index).toLowerCase();
 
 const normalizeAddress = (value) => {
   if (!value) return "";
@@ -489,6 +546,23 @@ export const listOrders = async (req, res) => {
       .populate("items.product_id", "image_url image images name product_name category product_type unit pricing_method unit_price base_price price_per_sqft price_per_blade blade_count estimated_price estimated_price_override width height measurement_unit standard_size")
       .lean();
 
+    if (req.user.role === "customer" && orders.length > 0) {
+      const notifications = await CustomerNotification.find({
+        customer: req.user.id,
+        order: { $in: orders.map((order) => order._id) },
+      }).sort({ createdAt: -1 }).lean();
+      const notificationsByOrder = new Map();
+      notifications.forEach((notification) => {
+        const orderId = String(notification.order);
+        const orderNotifications = notificationsByOrder.get(orderId) || [];
+        orderNotifications.push(notification);
+        notificationsByOrder.set(orderId, orderNotifications);
+      });
+      orders.forEach((order) => {
+        order.customer_notifications = notificationsByOrder.get(String(order._id)) || [];
+      });
+    }
+
     res.json({ success: true, orders });
   } catch (error) {
     console.error("List orders error:", error);
@@ -769,7 +843,6 @@ export const trackOrder = async (req, res) => {
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
-
     if (req.query.itemIndex !== undefined) {
       const itemIndex = Number(req.query.itemIndex);
       if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= order.items.length) {
@@ -1929,6 +2002,7 @@ export const respondToInstallationSchedule = async (req, res) => {
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
+    const previousProgressStages = (order.progress_stages || []).map((stage) => stage.toObject?.() || { ...stage });
 
     const isCustomer = order.customer && order.customer.toString() === req.user.id;
     const isAdmin = req.user.role === "admin";
@@ -1999,9 +2073,18 @@ export const respondToInstallationSchedule = async (req, res) => {
           : null;
         if (installationStage && !installationStage.completed && installationStage.status !== "in_progress") {
           installationStage.status = "in_progress";
+          order.progress_stages = applyInstallationNotificationTimestamps(
+            previousProgressStages,
+            order.progress_stages.map((stage) => stage.toObject?.() || { ...stage })
+          );
           await order.save();
+          await persistInstallationNotifications(order, order.progress_stages, null, "", { includeCompletion: false });
         }
-        return res.json({ success: true, order, message: "Customer preferred schedule already accepted." });
+        return res.json({
+          success: true,
+          order: await orderWithCustomerNotifications(order),
+          message: "Customer preferred schedule already accepted.",
+        });
       }
 
       if (scheduleStage.customerResponse !== "reschedule_requested") {
@@ -2057,9 +2140,14 @@ export const respondToInstallationSchedule = async (req, res) => {
       order.status = order.status === "contract_accepted" ? "contract_accepted" : order.status;
     }
 
+    order.progress_stages = applyInstallationNotificationTimestamps(
+      previousProgressStages,
+      order.progress_stages.map((stage) => stage.toObject?.() || { ...stage })
+    );
     await order.save();
+    await persistInstallationNotifications(order, order.progress_stages, null, "", { includeCompletion: false });
 
-    res.json({ success: true, order });
+    res.json({ success: true, order: await orderWithCustomerNotifications(order) });
   } catch (error) {
     console.error("Respond to installation schedule error:", error);
     res.status(500).json({ success: false, message: "Unable to update installation schedule response", error: error.message });
@@ -2281,8 +2369,8 @@ export const updateOrderInspection = async (req, res) => {
 
 export const updateOrderProgress = async (req, res) => {
   try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ success: false, message: "Admin access required" });
+    if (!["admin", "super_admin", "skilled_worker"].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: "Staff access required" });
     }
 
     const { orderId } = req.params;
@@ -2322,14 +2410,13 @@ export const updateOrderProgress = async (req, res) => {
       const key = String(s).toLowerCase();
       if (key.includes("fabrication") || key.includes("processing")) return "processing";
       if (key.includes("installation") || key.includes("site_inspection")) return "site_inspection";
-      if (key.includes("completed")) return "completed";
       if (key.includes("cutting")) return "processing";
       if (key.includes("pending")) return "admin_review";
       if (key.includes("delayed")) return "processing";
       return undefined;
     };
 
-    const mapped = isItemProgressUpdate ? undefined : mapFriendlyToInternal(status);
+    const mapped = isItemProgressUpdate || Array.isArray(stages) ? undefined : mapFriendlyToInternal(status);
     if (mapped) order.status = mapped;
 
     if (!isItemProgressUpdate && installation_date) {
@@ -2357,6 +2444,8 @@ export const updateOrderProgress = async (req, res) => {
         delayNotes: s.delayNotes || "",
         delayReportedAt: s.delayReportedAt ? new Date(s.delayReportedAt) : null,
         delayReportedBy: s.delayReportedBy || "",
+        installationStartedAt: s.installationStartedAt ? new Date(s.installationStartedAt) : null,
+        installationCompletedAt: s.installationCompletedAt ? new Date(s.installationCompletedAt) : null,
         proposedInstallationDate: s.proposedInstallationDate ? new Date(s.proposedInstallationDate) : null,
         proposedInstallationTime: s.proposedInstallationTime ? String(s.proposedInstallationTime).trim() : "",
         delayHistory: Array.isArray(s.delayHistory)
@@ -2396,7 +2485,7 @@ export const updateOrderProgress = async (req, res) => {
       }));
 
       const delayReporter = req.user?.email || "";
-      const targetStages = normalizedStages.map((stage) => {
+      let targetStages = normalizedStages.map((stage) => {
         const history = Array.isArray(stage.delayHistory)
           ? stage.delayHistory.map((entry) => ({
               ...entry,
@@ -2418,6 +2507,7 @@ export const updateOrderProgress = async (req, res) => {
           delayHistory: history,
         };
       });
+      targetStages = applyInstallationNotificationTimestamps(previousStages, targetStages);
 
       const requestedInstallationDate = !isItemProgressUpdate && estimated_installation_date
         ? new Date(estimated_installation_date)
@@ -2489,10 +2579,7 @@ export const updateOrderProgress = async (req, res) => {
 
         const allBatchItemsCompleted = order.items.length > 0 && order.items.every((item) => {
           const itemStages = Array.isArray(item.progress_stages) ? item.progress_stages : [];
-          const stagesCompleted = itemStages.length > 0 && itemStages.every((stage) =>
-            stage.completed === true || ["done", "completed"].includes(String(stage.status || "").toLowerCase())
-          );
-          return itemStages.length > 0 ? stagesCompleted : Number(item.progress) >= 100;
+          return itemStages.length > 0 && itemStages.every(isProgressStageCompleted);
         });
 
         if (allBatchItemsCompleted) {
@@ -2509,14 +2596,28 @@ export const updateOrderProgress = async (req, res) => {
                 : stageData.subStages,
             };
           });
+        } else {
+          const hasProductionProgress = order.items.some((item) =>
+            (item.progress_stages || []).some((stage) =>
+              stage.completed === true || !["", "pending"].includes(String(stage.status || "").toLowerCase())
+            )
+          );
+          if (hasProductionProgress && order.status !== "cancelled") order.status = "processing";
+          else if (order.status === "completed") order.status = order.contract_status === "accepted" ? "contract_accepted" : "admin_review";
         }
       } else {
         order.progress_stages = targetStages;
         const allProjectStagesDone =
           order.progress_stages.length > 0 &&
-          order.progress_stages.every((stage) => stage.completed === true);
+          order.progress_stages.every(isProgressStageCompleted);
         if (allProjectStagesDone) {
           order.status = "completed";
+        } else {
+          const hasProductionProgress = order.progress_stages.some((stage) =>
+            stage.completed === true || !["", "pending"].includes(String(stage.status || "").toLowerCase())
+          );
+          if (hasProductionProgress && order.status !== "cancelled") order.status = "processing";
+          else if (order.status === "completed") order.status = order.contract_status === "accepted" ? "contract_accepted" : "admin_review";
         }
       }
 
@@ -2571,6 +2672,16 @@ export const updateOrderProgress = async (req, res) => {
     }
 
     await order.save();
+
+    const notificationStages = isItemProgressUpdate
+      ? order.items[itemIndex]?.progress_stages || []
+      : order.progress_stages || [];
+    await persistInstallationNotifications(
+      order,
+      notificationStages,
+      isItemProgressUpdate ? itemIndex : null,
+      isItemProgressUpdate ? order.items[itemIndex]?.name || "" : ""
+    );
 
     const currentInstallationPlan = getInstallationPlan(order);
     const previousPlanDate = previousInstallationPlan.date ? new Date(previousInstallationPlan.date).getTime() : null;

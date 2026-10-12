@@ -58,21 +58,29 @@ function Login() {
       const requestedPath = location.state?.from?.pathname;
       const requestedSearch = location.state?.from?.search || "";
       const requestedHash = location.state?.from?.hash || "";
+      const pendingCartAdd = location.state?.pendingCartAdd;
       const isCustomer = response.user?.role === "customer";
       const isCustomerDestination = requestedPath === "/customer-dashboard"
         || requestedPath?.startsWith("/customer-dashboard/");
+      const isPendingCartAction = isCustomer
+        && Boolean(pendingCartAdd?.actionId && pendingCartAdd?.productId);
       const isSafeAdminDestination = requestedPath?.startsWith("/")
         && !requestedPath.startsWith("//")
         && !isCustomerDestination;
       const destination = isCustomer
         ? isCustomerDestination
           ? `${requestedPath}${requestedSearch}${requestedHash}`
-          : "/customer-dashboard"
+          : isPendingCartAction
+            ? "/customer-dashboard?tab=cart"
+            : "/customer-dashboard"
         : isSafeAdminDestination
           ? `${requestedPath}${requestedSearch}${requestedHash}`
           : "/dashboard";
       setRedirecting(true);
-      navigate(destination, { replace: true });
+      navigate(destination, {
+        replace: true,
+        state: isPendingCartAction ? { pendingCartAdd } : undefined,
+      });
     } catch (err) {
       setError(err.data?.message || err.message || "Login failed.");
     }
@@ -269,9 +277,6 @@ function Login() {
                     className="font-bold text-brand transition-opacity hover:opacity-80"
                   >
                     Sign Up
-                  </Link>
-                  <Link to="/admin-recovery" className="basis-full text-center text-xs font-semibold text-slate-500 underline underline-offset-4 hover:text-red-700">
-                    Administrator account recovery
                   </Link>
                 </div>
 

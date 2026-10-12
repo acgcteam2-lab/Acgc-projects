@@ -85,7 +85,7 @@ export const formatOrderItemMeasurements = (item) => {
     dimensions.unit || item?.measurementUnit || item?.measurement_unit ||
     productDimensions.unit || product?.measurementUnit || product?.measurement_unit || "in"
   ).toLowerCase();
-  const quantity = Math.max(1, Number(item?.quantity || item?.qty) || 1);
+  const quantity = Math.max(1, Number(item?.quantity || item?.qty || dimensions.quantity) || 1);
   const area = firstPositiveNumber(item?.area, dimensions.area) || (
     unit === "in"
       ? (width * height * quantity) / 144
@@ -107,7 +107,7 @@ export const formatOrderItemMeasurements = (item) => {
 };
 
 export const getVisibleCompletedStageSubStages = (step) =>
-  step?.status === "completed" && Array.isArray(step.subStages) ? step.subStages : [];
+  Array.isArray(step?.subStages) ? step.subStages : [];
 
 export const buildCustomerOrderTimelineSteps = (order, item = null, itemIndex = 0) => {
   const itemForProgress = item ?? (Array.isArray(order?.items) ? order.items[0] : null);

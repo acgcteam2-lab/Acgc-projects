@@ -92,6 +92,7 @@ import {
 } from "./orderStatusUtils";
 import { getCustomerPaymentProof, getPaymentSummary, isPaymentProofConfirmed, validateCustomerPaymentAmount } from "@/pages/Transactions/paymentProofUtils";
 import { subscribeToRealtime } from "@/lib/realtimeEvents";
+import { useCustomerPermissions } from "@/hooks/useCustomerPermissions";
 import { buildProductPriceSnapshot, getDefaultBladeCount, getDefaultExtraChargeSelections, getDefaultProductLineTotal, getProductLineBreakdown, getProductLineTotal } from "@/lib/productPricing";
 import { clearPendingProductAction, clearPendingProductWorkflowState, getPendingProductAction, getPendingProductWorkflowState, savePendingProductWorkflowState, updatePendingProductAction } from "@/lib/pendingProductAction";
 import { getOptimizedProductImageUrl, getProductImageSource, getProductImageSrcSet, handleProductImageError, handleProductImageLoad } from "@/lib/productImageUtils";
@@ -271,6 +272,7 @@ function CustomerDashboard() {
     return API_HOST ? `${API_HOST}/${url}` : url;
   };
   const { user, loading, updateProfile, refreshUser, logout } = useAuth();
+  const customerPermissions = useCustomerPermissions();
   const orderOwnerId = user?.id || user?._id;
   const navigate = useNavigate();
   const location = useLocation();
@@ -299,20 +301,11 @@ function CustomerDashboard() {
     };
   }, [loading, refreshUser, user?.id, user?.role]);
 
-  const accountPermissions = {
-    can_request_orders: true,
-    can_estimate_pricing: true,
-    view_only_access: false,
-    can_track_products: true,
-    can_upload_feedback: true,
-    show_ratings_homepage: true,
-    ...(user?.access_permissions || {}),
-  };
-  const canRequestOrders = !maintenanceMode && accountPermissions.can_request_orders && !accountPermissions.view_only_access;
-  const canEstimatePricing = !maintenanceMode && accountPermissions.can_estimate_pricing && !accountPermissions.view_only_access;
-  const canTrackProducts = !maintenanceMode && accountPermissions.can_track_products && !accountPermissions.view_only_access;
-  const canUploadFeedback = !maintenanceMode && accountPermissions.can_upload_feedback && !accountPermissions.view_only_access;
-  const canShowRatings = accountPermissions.show_ratings_homepage && !accountPermissions.view_only_access;
+  const canRequestOrders = !maintenanceMode && customerPermissions.can_request_orders;
+  const canEstimatePricing = !maintenanceMode && customerPermissions.can_estimate_pricing;
+  const canTrackProducts = !maintenanceMode && customerPermissions.can_track_products;
+  const canUploadFeedback = !maintenanceMode && customerPermissions.can_upload_feedback;
+  const canShowRatings = customerPermissions.show_ratings_homepage;
   const isProductModalReadOnly = !canRequestOrders && !canEstimatePricing;
 
   const [activeTab, setActiveTabState] = useState(() => {
@@ -349,6 +342,8 @@ function CustomerDashboard() {
   const [cartPricingProducts, setCartPricingProducts] = useState([]);
   const cartItemsRef = useRef([]);
   const cartSaveQueueRef = useRef(Promise.resolve());
+  const cartMutationVersionRef = useRef(0);
+  const pendingLandingCartResumeRef = useRef("");
   const [cartLoaded, setCartLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState(() => initialDashboardParams.get("productQ") || "");
   const [categoryFilter, setCategoryFilter] = useState(() => initialDashboardParams.get("productCategory") || "All");
@@ -500,6 +495,7 @@ function CustomerDashboard() {
   const commitCartItems = (updater) => {
     if (!cartLoaded) throw new Error("Your cart is still loading. Please try again.");
 
+    const mutationVersion = ++cartMutationVersionRef.current;
     const nextItems = typeof updater === "function" ? updater(cartItemsRef.current) : updater;
     setCartActionError("");
     cartItemsRef.current = nextItems;
@@ -512,7 +508,20 @@ function CustomerDashboard() {
 
     const saveRequest = cartSaveQueueRef.current
       .catch(() => {})
-      .then(() => saveCart(nextItems));
+      .then(async () => {
+        const response = await saveCart(nextItems);
+        if (mutationVersion === cartMutationVersionRef.current) {
+          const savedItems = Array.isArray(response.items) ? response.items : nextItems;
+          cartItemsRef.current = savedItems;
+          setCartItems(savedItems);
+          try {
+            localStorage.setItem("customerCart", JSON.stringify(savedItems));
+          } catch (error) {
+            console.warn("Unable to cache the saved cart locally.", error);
+          }
+        }
+        return response;
+      });
     cartSaveQueueRef.current = saveRequest;
     return saveRequest;
   };
@@ -770,7 +779,52 @@ function CustomerDashboard() {
       }
     }
 
-    return [...notifications, ...buildDelayNotifications(order)];
+    const installationNotifications = (order.customer_notifications || [])
+      .filter((notification) => {
+        if (notification.type !== "installation_up_next") return true;
+        if (status === "cancelled") return false;
+
+        const stages = Number.isInteger(notification.itemIndex)
+          ? order.items?.[notification.itemIndex]?.progress_stages || []
+          : order.progress_stages || [];
+        const installationIndex = stages.findIndex((stage) => (
+          [stage.key, stage.name].some((value) => String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_") === "installation")
+        ));
+        if (installationIndex < 0) return false;
+
+        const installationStage = stages[installationIndex];
+        const installationStatus = String(installationStage.status || "").toLowerCase();
+        const installationHasStarted = Boolean(installationStage.installationStartedAt) ||
+          ["in_progress", "in-progress", "active", "current", "done", "completed"].includes(String(installationStage.status || "").toLowerCase()) ||
+          installationStage.completed === true;
+        if (installationHasStarted) return true;
+        if (["delayed", "on_hold"].includes(installationStatus)) return false;
+
+        return stages.slice(0, installationIndex).every((stage) => {
+          const stageDone = stage.completed === true || ["done", "completed"].includes(String(stage.status || "").toLowerCase());
+          const subStages = Array.isArray(stage.subStages) ? stage.subStages : [];
+          return stageDone && subStages.every((subStage) =>
+            subStage.completed === true || ["done", "completed"].includes(String(subStage.status || "").toLowerCase())
+          );
+        });
+      })
+      .map((notification) => ({
+        ...order,
+        notificationType: notification.type,
+        notificationId: String(notification._id),
+        notificationDate: notification.createdAt,
+        title: notification.title,
+        message: notification.message,
+        stageKey: notification.stageKey,
+        stageName: notification.stageName,
+        itemIndex: notification.itemIndex,
+        completedAt: notification.completedAt,
+        installationProductName: notification.productName || (
+          Number.isInteger(notification.itemIndex) ? order.items?.[notification.itemIndex]?.name : order.items?.[0]?.name
+        ) || "your project",
+      }));
+
+    return [...notifications, ...installationNotifications, ...buildDelayNotifications(order)];
   });
   const unreadNotificationCount = customerNotificationItems.filter((notification) => !readNotificationIds.has(notification.notificationId)).length;
   const readNotificationCount = customerNotificationItems.length - unreadNotificationCount;
@@ -912,9 +966,10 @@ function CustomerDashboard() {
 
     let active = true;
     const loadCart = async () => {
+      const mutationVersion = cartMutationVersionRef.current;
       try {
         const response = await getCart();
-        if (!active) return;
+        if (!active || mutationVersion !== cartMutationVersionRef.current) return;
         const loadedItems =
           Array.isArray(response.items)
             ? response.items.map((item) => ({
@@ -932,7 +987,7 @@ function CustomerDashboard() {
           console.warn("Unable to cache the loaded cart locally.", storageError);
         }
       } catch (error) {
-        if (!active) return;
+        if (!active || mutationVersion !== cartMutationVersionRef.current) return;
         cartItemsRef.current = [];
         setCartItems([]);
         setCartActionError("Unable to load your saved cart. Reconnect and refresh to try again.");
@@ -2109,7 +2164,7 @@ function CustomerDashboard() {
     });
   }, [deliveryConfirmForm, deliveryConfirmMode, deliveryConfirmNotes, estimateForm, reviewOrderMode, showOrderReviewModal, user?.id, user?._id]);
 
-  const handleAddToCart = async (product, extraCharges = getDefaultExtraChargeSelections(product)) => {
+  const handleAddToCart = async (product, extraCharges = getDefaultExtraChargeSelections(product), configuration = {}) => {
     if (!canRequestOrders) {
       setCartActionError("Order requests are disabled for your account.");
       return false;
@@ -2119,9 +2174,28 @@ function CustomerDashboard() {
       return false;
     }
     const isBladeProduct = ["blade", "per_blade"].includes(String(product?.pricing_method || product?.unit || "").toLowerCase());
-    const bladeSelections = isBladeProduct ? getDefaultBladeSelections(product) : {};
+    const bladeSelections = isBladeProduct
+      ? { ...getDefaultBladeSelections(product), ...configuration }
+      : {};
+    const quantity = Math.max(1, Number(configuration.quantity) || 1);
+    const defaultDimensions = getProductDefaultDimensions(product, quantity);
+    const usesProductDimensions = configuration.useProductDefaults === true || (
+      configuration.customized !== true &&
+      Number(configuration.width) === Number(defaultDimensions.width) &&
+      Number(configuration.height) === Number(defaultDimensions.height)
+    );
+    const customized = Boolean(configuration.customized) || (
+      !usesProductDimensions && (
+        Number(configuration.width) !== Number(defaultDimensions.width) ||
+        Number(configuration.height) !== Number(defaultDimensions.height)
+      )
+    );
     const cartItem = buildCustomerOrderItem(product, {
-      quantity: 1,
+      quantity,
+      width: usesProductDimensions ? undefined : configuration.width,
+      height: usesProductDimensions ? undefined : configuration.height,
+      measurementUnit: configuration.measurementUnit || configuration.unit,
+      customized,
       ...bladeSelections,
       extra_charges: extraCharges,
     });
@@ -2132,20 +2206,22 @@ function CustomerDashboard() {
 
     setCartActionError("");
     try {
-      await commitCartItems((prev) => {
+      let expectedCartId = "";
+      const response = await commitCartItems((prev) => {
         const selectionKey = extraCharges.filter((charge) => charge.is_optional).map((charge) => charge.is_selected !== false).join(":");
         const existing = prev.find((p) => !p.is_estimate
           && (p._id === product._id || p.name === product.name)
           && (p.extra_charges || []).filter((charge) => charge.is_optional).map((charge) => charge.is_selected !== false).join(":") === selectionKey);
         if (existing) {
+          expectedCartId = String(existing.cartId || "");
           return prev.map((p) =>
             p.cartId === existing.cartId
               ? {
                 ...p,
-                quantity: (Number(p.quantity) || 0) + 1,
+                quantity: (Number(p.quantity) || 0) + cartItem.quantity,
                 dimensions: {
                   ...(p.dimensions || {}),
-                  quantity: (Number(p.quantity) || 0) + 1,
+                  quantity: (Number(p.quantity) || 0) + cartItem.quantity,
                 },
                 selected: true,
               }
@@ -2153,8 +2229,14 @@ function CustomerDashboard() {
           );
         }
 
-        return [...prev, { ...cartItem, cartId: generateCartId(), selected: true }];
+        expectedCartId = generateCartId();
+        return [...prev, { ...cartItem, cartId: expectedCartId, selected: true }];
       });
+
+      const savedItems = Array.isArray(response?.items) ? response.items : cartItemsRef.current;
+      if (!savedItems.some((item) => String(item.cartId || "") === expectedCartId)) {
+        throw new Error("The server did not retain this product in your cart. Please try again.");
+      }
 
       toast.success("Product added to cart.");
       return true;
@@ -2163,6 +2245,40 @@ function CustomerDashboard() {
       return false;
     }
   };
+
+  useEffect(() => {
+    const pendingCartAdd = location.state?.pendingCartAdd;
+    if (
+      !pendingCartAdd?.actionId ||
+      !pendingCartAdd?.productId ||
+      loading ||
+      user?.role !== "customer" ||
+      !cartLoaded ||
+      pendingLandingCartResumeRef.current === pendingCartAdd.actionId
+    ) return;
+
+    pendingLandingCartResumeRef.current = pendingCartAdd.actionId;
+    const clearPendingCartAdd = () => {
+      const nextState = { ...(location.state || {}) };
+      delete nextState.pendingCartAdd;
+      navigate(`${location.pathname}${location.search}${location.hash}`, {
+        replace: true,
+        state: Object.keys(nextState).length ? nextState : null,
+      });
+    };
+    const product = pendingCartAdd.product;
+    if (!product) {
+      toast.error("We couldn't restore that product to your cart. Please browse and add it again.");
+      clearPendingCartAdd();
+      return;
+    }
+
+    const options = pendingCartAdd.options || {};
+    const extraCharges = Array.isArray(options.extra_charges)
+      ? options.extra_charges
+      : getDefaultExtraChargeSelections(product);
+    handleAddToCart(product, extraCharges, options).finally(clearPendingCartAdd);
+  }, [cartLoaded, handleAddToCart, loading, location.hash, location.pathname, location.search, location.state, navigate, user?.role]);
 
   const handleAddEstimateToCart = async ({ product, width, height, quantity, notes, measurementUnit, blade_glass_type, sale_mode, frame_type, custom_frame_size, blade_count, extra_charges }) => {
     if (!canRequestOrders) {
@@ -4145,12 +4261,17 @@ function CustomerDashboard() {
     setOrderFilter(targetOrders === myOrders ? "order" : "all");
     setOrderPage(orderIndex >= 0 ? Math.floor(orderIndex / ORDER_PAGE_SIZE) + 1 : 1);
     const isDelayNotification = notification?.notificationType === "delay";
+    const isInstallationNotification = ["installation_up_next", "installation_completed"].includes(notification?.notificationType);
     setTimelineNotificationTarget(isDelayNotification ? {
       stageKey: notification.delayStageKey,
       stageName: notification.delayStageName,
       itemIndex: notification.delayItemIndex,
+    } : isInstallationNotification ? {
+      stageKey: notification.stageKey,
+      stageName: notification.stageName || "Installation",
+      itemIndex: notification.itemIndex,
     } : null);
-    setSelectedOrderForModal(isDelayNotification ? order : null);
+    setSelectedOrderForModal(isDelayNotification || isInstallationNotification ? order : null);
     setExpandedOrderId(orderIdentifier);
     setHighlightedOrderId(orderIdentifier);
     setActiveTab("orders");
@@ -4715,11 +4836,26 @@ function CustomerDashboard() {
                             const isPaymentNotification = ["payment", "payment_confirmed", "payment_amount_updated", "payment_rejected", "admin_payment_recorded", "downpayment_exception_approved", "downpayment_exception_pending"].includes(order.notificationType);
                             const isPaymentConfirmationNotification = ["payment_confirmed", "payment_amount_updated", "admin_payment_recorded", "downpayment_exception_approved"].includes(order.notificationType);
                             const isDelayNotification = order.notificationType === "delay";
+                            const isInstallationNotification = ["installation_up_next", "installation_completed"].includes(order.notificationType);
                             const isContractReady =
                               status === "contract_sent" ||
                               (status === "site_inspection" && contractStatus === "sent") ||
                               contractStatus === "sent";
                             const notificationDetails = () => {
+                              if (order.notificationType === "installation_up_next") {
+                                return {
+                                  title: order.title || "Installation Coming Up",
+                                  message: order.message || "Your ACGC order is up next for installation. Our team will begin the installation stage soon. Please stay tuned for updates.",
+                                  color: "text-blue-600",
+                                };
+                              }
+                              if (order.notificationType === "installation_completed") {
+                                return {
+                                  title: order.title || "Installation Completed",
+                                  message: order.message || "The installation for your ACGC order has been completed. Thank you for choosing ACGC Aluminum Services!",
+                                  color: "text-emerald-600",
+                                };
+                              }
                               if (order.notificationType === "transaction_approved") {
                                 return {
                                   title: "Transaction approved",
@@ -4814,7 +4950,7 @@ function CustomerDashboard() {
                               status === "contract_sent" ||
                               contractStatus === "sent" ||
                               (status === "site_inspection" && contractStatus === "sent");
-                            const isContractNotification = !isPaymentNotification && !isDelayNotification && (
+                            const isContractNotification = !isPaymentNotification && !isDelayNotification && !isInstallationNotification && (
                               order.notificationType === "contract" ||
                               hasContractBeenSent ||
                               ["contract_accepted"].includes(status) ||
@@ -5171,7 +5307,7 @@ function CustomerDashboard() {
             )}
           </div>
 
-          {canShowRatings && canUploadFeedback && (
+          {canShowRatings && (
             <section className={`mt-8 rounded-[30px] border px-6 py-8 shadow-[0_20px_48px_rgba(15,23,42,0.06)] backdrop-blur-2xl sm:px-10 ${darkMode ? "border-white/15 bg-white/[0.06] text-slate-100" : "border-white/60 bg-white/[0.32] text-slate-900"}`}>
               <h2 className={`text-center text-3xl font-black ${darkMode ? "text-white" : "text-slate-900"}`}>Customer Ratings</h2>
               <div className="mt-8 grid gap-8 md:grid-cols-[220px_1fr] md:items-center">
@@ -8725,17 +8861,24 @@ function CustomerDashboard() {
                       const isPaymentNotification = ["payment", "payment_confirmed", "payment_amount_updated", "payment_rejected", "admin_payment_recorded", "downpayment_exception_approved", "downpayment_exception_pending"].includes(order.notificationType);
                       const isPaymentConfirmationNotification = ["payment_confirmed", "payment_amount_updated", "admin_payment_recorded", "downpayment_exception_approved"].includes(order.notificationType);
                     const isDelayNotification = order.notificationType === "delay";
+                      const isInstallationNotification = ["installation_up_next", "installation_completed"].includes(order.notificationType);
                     const isContractReady =
                       status === "contract_sent" ||
                       (status === "site_inspection" && contractStatus === "sent") ||
                       contractStatus === "sent";
-                    const isContractNotification = !isPaymentNotification && !isDelayNotification && (
+                    const isContractNotification = !isPaymentNotification && !isDelayNotification && !isInstallationNotification && (
                       order.notificationType === "contract" ||
                       isContractReady ||
                       status === "contract_accepted" ||
                       contractStatus === "accepted"
                     );
                     const notificationMessage = () => {
+                      if (order.notificationType === "installation_up_next") {
+                        return order.message || "Your ACGC order is up next for installation. Our team will begin the installation stage soon. Please stay tuned for updates.";
+                      }
+                      if (order.notificationType === "installation_completed") {
+                        return order.message || "The installation for your ACGC order has been completed. Thank you for choosing ACGC Aluminum Services!";
+                      }
                       if (order.notificationType === "transaction_approved") {
                         return `Your accepted contract for ${order.tracking} was approved. Your project is now eligible for progress monitoring.`;
                       }
@@ -8778,12 +8921,16 @@ function CustomerDashboard() {
                       downpayment_exception_approved: "Downpayment Exception Approved",
                       downpayment_exception_pending: "Awaiting Admin Approval",
                       transaction_approved: "Transaction approved",
+                      installation_up_next: "Installation Coming Up",
+                      installation_completed: "Installation Completed",
                     }[order.notificationType];
 
                     const notificationIcon = () => {
                       if (order.notificationType === "payment_rejected") return "text-red-600";
                       if (order.notificationType === "payment_amount_updated") return "text-amber-600";
                       if (["downpayment_exception_approved", "downpayment_exception_pending"].includes(order.notificationType)) return "text-amber-600";
+                      if (order.notificationType === "installation_up_next") return "text-blue-600";
+                      if (order.notificationType === "installation_completed") return "text-emerald-600";
                       if (isPaymentNotification) return "text-emerald-600";
                       if (normalizeOrderStatusKey(order?.status) === "completed") return "text-emerald-600";
                       if (normalizeOrderStatusKey(order?.status) === "cancelled") return "text-red-600";
@@ -8809,7 +8956,7 @@ function CustomerDashboard() {
                             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <h3 className={`text-sm font-bold break-words sm:text-base ${darkMode ? "text-white" : "text-slate-950"}`}>{paymentNotificationTitle || product.name || "Project Update"}</h3>
+                                  <h3 className={`text-sm font-bold break-words sm:text-base ${darkMode ? "text-white" : "text-slate-950"}`}>{order.title || paymentNotificationTitle || (isInstallationNotification ? ({ installation_up_next: "Installation Coming Up", installation_completed: "Installation Completed" }[order.notificationType]) : null) || product.name || "Project Update"}</h3>
                                   {!isRead && <span className="rounded-full bg-red-100 px-2 py-0.5 text-[9px] font-bold uppercase text-red-700">New</span>}
                                 </div>
                                 <p className={`mt-1 text-xs leading-5 sm:text-sm ${isRead ? darkMode ? "text-slate-400" : "text-slate-500" : darkMode ? "text-slate-200" : "text-slate-700"}`}>{notificationMessage()}</p>

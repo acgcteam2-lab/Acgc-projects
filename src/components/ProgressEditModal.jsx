@@ -46,6 +46,8 @@ const normalizeStage = (source = {}, key, name, defaultStatus = "pending") => {
     canUndoCompletion: false,
     previousStatus: null,
     date: source.date ? new Date(source.date) : null,
+    installationStartedAt: source.installationStartedAt ? new Date(source.installationStartedAt) : null,
+    installationCompletedAt: source.installationCompletedAt ? new Date(source.installationCompletedAt) : null,
     images: Array.isArray(source.images) ? source.images : [],
     image_uploads: Array.isArray(source.image_uploads) ? source.image_uploads : [],
     newFiles: [],
@@ -66,7 +68,27 @@ const normalizeStage = (source = {}, key, name, defaultStatus = "pending") => {
           resolvedAt: entry.resolvedAt ? new Date(entry.resolvedAt) : null,
         }))
       : [],
-    subStages: [],
+    subStages: Array.isArray(source.subStages)
+      ? source.subStages.map((subStage) => {
+          const subStatus = subStage.status && VALID_STAGE_STATUSES.includes(subStage.status)
+            ? subStage.status
+            : subStage.completed ? "done" : "pending";
+          return {
+            ...subStage,
+            name: subStage.name || "",
+            description: subStage.description || "",
+            status: subStatus,
+            completed: Boolean(subStage.completed) || subStatus === "done",
+            date: subStage.date ? new Date(subStage.date) : null,
+            images: Array.isArray(subStage.images) ? subStage.images : [],
+            newFiles: [],
+            imagePreviews: Array.isArray(subStage.images) ? subStage.images : [],
+            saved: true,
+            canUndoCompletion: false,
+            previousStatus: null,
+          };
+        })
+      : [],
     proposedInstallationDate: source.proposedInstallationDate ? new Date(source.proposedInstallationDate) : null,
     proposedInstallationTime: source.proposedInstallationTime || "",
     contactMethods: Array.isArray(source.contactMethods) ? source.contactMethods : [],
@@ -124,7 +146,7 @@ const normalizeProjectStages = (stageRows = []) => {
 
 const initialStages = [];
 
-export default function ProgressEditModal({ project, onClose, onSave }) {
+export default function ProgressEditModal({ project, onClose, onSave, canUploadProgressPhoto = true }) {
   const [progress, setProgress] = useState(project.progress || 0);
   const [status, setStatus] = useState(project.status || "Pending");
   const [installationDate, setInstallationDate] = useState(() => {
@@ -457,6 +479,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
   };
 
   const handleSubStageModalFiles = (e) => {
+    if (!canUploadProgressPhoto) return;
     const selected = Array.from(e.target.files || []);
     if (selected.length === 0) return;
     const previews = selected.map((file) => URL.createObjectURL(file));
@@ -622,17 +645,12 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
     const stage = stages[stageIndex];
     
     // Validation: check if all sub-stages are done
-    const incompleteSubs = stage.subStages.filter(sub => !sub.completed);
+    const incompleteSubs = stage.subStages.filter(sub => !sub.completed && sub.status !== "done");
     if (incompleteSubs.length > 0) {
-      const pendingOrInProgress = incompleteSubs.filter(sub => 
-        sub.status === "pending" || sub.status === "in_progress"
+      setMarkDoneValidationError(
+        `Cannot mark ${stage.name} as done. Please complete all sub-stages first. Pending: ${incompleteSubs.map((subStage) => subStage.name).join(", ")}`
       );
-      if (pendingOrInProgress.length > 0) {
-        setMarkDoneValidationError(
-          `Cannot mark ${stage.name} as done. Please complete all sub-stages first. Pending: ${pendingOrInProgress.map(s => s.name).join(", ")}`
-        );
-        return;
-      }
+      return;
     }
     
     setStagePendingCompletion(stageIndex);
@@ -732,6 +750,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
   };
 
   const handleStageFiles = (stageIndex, e) => {
+    if (!canUploadProgressPhoto) return;
     const selected = Array.from(e.target.files || []);
     if (selected.length === 0) return;
     appendStageFiles(stageIndex, selected);
@@ -765,6 +784,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
   };
 
   const handleSubStageFiles = (stageIndex, subIndex, e) => {
+    if (!canUploadProgressPhoto) return;
     const selected = Array.from(e.target.files || []);
     if (selected.length === 0) return;
     appendSubStageFiles(stageIndex, subIndex, selected);
@@ -838,6 +858,13 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
       setErrorMessage("Only the current active stage can be marked as done.");
       return;
     }
+    const incompleteSubStages = (stage.subStages || []).filter((subStage) =>
+      !subStage.completed && !["done", "completed"].includes(String(subStage.status || "").toLowerCase())
+    );
+    if (incompleteSubStages.length > 0) {
+      setErrorMessage(`Cannot mark ${stage.name} as done. Complete all sub-stages first: ${incompleteSubStages.map((subStage) => subStage.name).join(", ")}`);
+      return;
+    }
     updateStage(stageIndex, {
       completed: true,
       status: "done",
@@ -886,6 +913,8 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
         status: shouldStartInstallation ? "in_progress" : stage.status,
         completed: stage.completed,
         date: stage.date ? stage.date.toISOString() : null,
+        installationStartedAt: stage.installationStartedAt ? stage.installationStartedAt.toISOString() : null,
+        installationCompletedAt: stage.installationCompletedAt ? stage.installationCompletedAt.toISOString() : null,
         images: stage.images,
         image_uploads: stage.image_uploads || [],
         delayReason: stage.delayReason || "",
@@ -921,12 +950,20 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
         customerPreferredInstallationDate: stage.customerPreferredInstallationDate ? stage.customerPreferredInstallationDate.toISOString() : null,
         customerPreferredInstallationTime: stage.customerPreferredInstallationTime || "",
         customerRescheduleNotes: stage.customerRescheduleNotes || "",
-        subStages: [],
+        subStages: (stage.subStages || []).map((subStage) => ({
+          name: subStage.name || "",
+          description: subStage.description || "",
+          status: subStage.status || (subStage.completed ? "done" : "pending"),
+          completed: Boolean(subStage.completed),
+          date: subStage.date ? subStage.date.toISOString() : null,
+          images: Array.isArray(subStage.images) ? subStage.images : [],
+        })),
       };
     });
   };
 
   const buildFileContexts = () => {
+    if (!canUploadProgressPhoto) return [];
     const contexts = [];
     stages.forEach((stage, stageIndex) => {
       (stage.newFiles || []).forEach((file) => {
@@ -1280,8 +1317,8 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                         <UploadCloud size={17} />
                         Parent Stage Proof
                       </div>
-                      <p className="mt-1.5 text-xs text-slate-500">Photos are optional; upload if available.</p>
-                      <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
+                      <p className="mt-1.5 text-xs text-slate-500">{canUploadProgressPhoto ? "Photos are optional; upload if available." : "Photo uploads are disabled for your account."}</p>
+                      {canUploadProgressPhoto && <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
                         <input
                           type="file"
                           accept="image/*"
@@ -1305,7 +1342,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                               ? stage.newFiles[0].name
                               : `${stage.newFiles.length} files`}
                         </span>
-                      </div>
+                      </div>}
                       <div className="mt-3 grid grid-cols-3 gap-2">
                         {stage.imagePreviews.map((src, i) => (
                           <div key={`${stage.key}-preview-${i}`} className="relative">
@@ -1534,7 +1571,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                                           ? `${getPhotoCount(sub)} photo(s) uploaded`
                                           : "Photos are required before this sub-stage can be marked as done."}
                                       </p>
-                                      {subEditable && (
+                                      {canUploadProgressPhoto && subEditable && (
                                         <div className="mt-3">
                                           <input
                                             type="file"
@@ -1644,7 +1681,7 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                       className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 transition hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <CheckCircle2 size={16} />
-                      Mark {stage.name} Done
+                      {stage.key === "installation" ? "Mark Installation as Done" : `Mark ${stage.name} Done`}
                     </button>
                   )}
                   {(stage.completed && !stage.saved) || (stage.completed && stage.saved && stage.canUndoCompletion) ? (
@@ -1739,19 +1776,21 @@ export default function ProgressEditModal({ project, onClose, onSave }) {
                   </select>
                 </label>
 
-                <label className="text-sm text-gray-600 block">
-                  Proof Photos (Optional)
-                  <div className="mt-2 border-2 border-dashed border-slate-200 rounded-lg p-4 text-center">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      onChange={handleSubStageModalFiles}
-                      className="w-full"
-                      aria-label="Upload proof images"
-                    />
-                  </div>
-                </label>
+                {canUploadProgressPhoto ? (
+                  <label className="text-sm text-gray-600 block">
+                    Proof Photos (Optional)
+                    <div className="mt-2 border-2 border-dashed border-slate-200 rounded-lg p-4 text-center">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={handleSubStageModalFiles}
+                        className="w-full"
+                        aria-label="Upload proof images"
+                      />
+                    </div>
+                  </label>
+                ) : <p className="text-xs text-slate-500">Photo uploads are disabled for your account.</p>}
 
                 {newSubStagePreviews.length > 0 && (
                   <div>

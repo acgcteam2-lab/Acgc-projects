@@ -2,11 +2,11 @@ import { getFinalProjectCost, getRequiredDownpayment } from "@/lib/orderPricing"
 
 export const validateCustomerPaymentAmount = (value, remainingAmount) => {
   const input = String(value ?? "").trim();
-  if (!/^\d+(?:\.\d{1,2})?$/.test(input)) {
+  if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(input)) {
     return { valid: false, amount: 0, message: "Enter a valid amount greater than zero, with up to two decimal places." };
   }
 
-  const amount = Number(input);
+  const amount = Number(input.replace(/,/g, ""));
   if (!Number.isFinite(amount) || amount <= 0) {
     return { valid: false, amount: 0, message: "Enter a valid amount greater than zero, with up to two decimal places." };
   }

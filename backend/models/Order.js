@@ -526,6 +526,8 @@ const OrderSchema = new mongoose.Schema(
             delayNotes: { type: String, trim: true, default: "" },
             delayReportedAt: { type: Date, default: null },
             delayReportedBy: { type: String, trim: true, default: "" },
+            installationStartedAt: { type: Date, default: null },
+            installationCompletedAt: { type: Date, default: null },
             proposedInstallationDate: { type: Date, default: null },
             proposedInstallationTime: { type: String, trim: true, default: "" },
             customerResponse: {

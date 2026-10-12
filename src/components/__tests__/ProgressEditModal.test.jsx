@@ -75,6 +75,149 @@ describe("ProgressEditModal", () => {
     });
   });
 
+  it("preserves saved sub-stages when saving progress", async () => {
+    const onSave = vi.fn().mockResolvedValue();
+    render(
+      <ProgressEditModal
+        project={{
+          id: "order-123",
+          client: "Acme Corp",
+          stages: [{
+            key: "cutting",
+            name: "Cutting",
+            status: "in_progress",
+            completed: false,
+            subStages: [{ name: "Glass Preparation", description: "Prep glass.", status: "pending", completed: false, images: [] }],
+          }],
+        }}
+        onSave={onSave}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0][0].stages.find((stage) => stage.key === "cutting").subStages).toMatchObject([
+      { name: "Glass Preparation", description: "Prep glass.", status: "pending", completed: false },
+    ]);
+  });
+
+  it("hides parent, sub-stage, and new-sub-stage photo pickers without upload permission", () => {
+    render(
+      <ProgressEditModal
+        project={{
+          id: "order-123",
+          client: "Acme Corp",
+          stages: [{
+            key: "cutting",
+            name: "Cutting",
+            status: "in_progress",
+            completed: false,
+            subStages: [{ name: "Glass Preparation", status: "pending", completed: false, images: [] }],
+          }],
+        }}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+        canUploadProgressPhoto={false}
+      />
+    );
+
+    expect(screen.queryByLabelText("Upload proof images for Cutting")).toBeNull();
+    expect(screen.queryByLabelText("Upload proof images for Glass Preparation")).toBeNull();
+    expect(screen.queryByLabelText("Upload proof images")).toBeNull();
+    expect(screen.getAllByText("Photo uploads are disabled for your account.").length).toBeGreaterThan(0);
+  });
+
+  it("keeps Installation in progress on Save Changes until explicitly marked done", async () => {
+    const onSave = vi.fn().mockResolvedValue();
+    render(
+      <ProgressEditModal
+        project={{
+          id: "order-123",
+          client: "Acme Corp",
+          stages: [
+            { key: "cutting", name: "Cutting", status: "done", completed: true },
+            { key: "assembly", name: "Assembly", status: "done", completed: true },
+            { key: "fabrication", name: "Fabrication", status: "done", completed: true },
+            { key: "installation", name: "Installation", status: "in_progress", completed: false },
+          ],
+        }}
+        onSave={onSave}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Mark Installation as Done" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const installation = onSave.mock.calls[0][0].stages.find((stage) => stage.key === "installation");
+    expect(installation).toMatchObject({ status: "in_progress", completed: false });
+  });
+
+  it("marks Installation done only after its explicit completion action", async () => {
+    const onSave = vi.fn().mockResolvedValue();
+    render(
+      <ProgressEditModal
+        project={{
+          id: "order-123",
+          client: "Acme Corp",
+          stages: [
+            { key: "cutting", name: "Cutting", status: "done", completed: true },
+            { key: "assembly", name: "Assembly", status: "done", completed: true },
+            { key: "fabrication", name: "Fabrication", status: "done", completed: true },
+            { key: "installation", name: "Installation", status: "in_progress", completed: false },
+          ],
+        }}
+        onSave={onSave}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark Installation as Done" }));
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const installation = onSave.mock.calls[0][0].stages.find((stage) => stage.key === "installation");
+    expect(installation).toMatchObject({ status: "done", completed: true });
+    expect(installation.date).toBeTruthy();
+  });
+
+  it("does not complete Installation while one of its sub-stages is unfinished", async () => {
+    const onSave = vi.fn().mockResolvedValue();
+    render(
+      <ProgressEditModal
+        project={{
+          id: "order-123",
+          client: "Acme Corp",
+          stages: [
+            { key: "cutting", name: "Cutting", status: "done", completed: true },
+            { key: "assembly", name: "Assembly", status: "done", completed: true },
+            { key: "fabrication", name: "Fabrication", status: "done", completed: true },
+            {
+              key: "installation",
+              name: "Installation",
+              status: "in_progress",
+              completed: false,
+              subStages: [{ name: "Final fitting", status: "pending", completed: false, images: [] }],
+            },
+          ],
+        }}
+        onSave={onSave}
+        onClose={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark Installation as Done" }));
+    expect(screen.getByText("Cannot mark Installation as done. Complete all sub-stages first: Final fitting")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const installation = onSave.mock.calls[0][0].stages.find((stage) => stage.key === "installation");
+    expect(installation).toMatchObject({ status: "in_progress", completed: false });
+  });
+
   it("repositions a standard stage after the selected parent stage", async () => {
     const project = { id: "order-123", client: "Acme Corp", stages: [] };
     const onSave = vi.fn().mockResolvedValue();

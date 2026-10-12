@@ -1,6 +1,7 @@
 import React from "react";
 import { ChevronDown, Package } from "lucide-react";
 import TimelineStage from "./TimelineStage";
+import { formatOrderItemMeasurements } from "./OrderProgressTimeline";
 import { getTimelineFocusStage, getTimelineStageCounts, getTimelineStageStatus } from "./orderTimelineUtils";
 
 const getItemName = (item, index) => item?.name || item?.product_name || `Product ${index + 1}`;
@@ -11,7 +12,7 @@ const getSizeLabel = (item, getItemDimension) => {
     return `${item.widthIn}" × ${item.heightIn}"${Number.isFinite(area) && area > 0 ? ` · ${area.toLocaleString(undefined, { maximumFractionDigits: 2 })} sq ft` : ""}`;
   }
 
-  const value = getItemDimension?.(item) || "";
+  const value = getItemDimension?.(item) || formatOrderItemMeasurements(item) || "";
   const formatted = value || "Measurements not provided";
   return formatted
     .replace(/^Size:\s*/i, "")

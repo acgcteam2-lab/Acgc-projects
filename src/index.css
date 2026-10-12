@@ -1623,3 +1623,49 @@ body:has(.mobile-fullscreen-overlay) .customer-mobile-navigation {
   background-color: rgb(180 83 9 / 0.35) !important;
   color: #fcd34d !important;
 }
+
+.admin-theme-dark .settings-premium .access-control-dialog {
+  border-color: #35516b !important;
+  background-color: #101d2b !important;
+  color: #e2edf7;
+}
+
+.admin-theme-dark .settings-premium .access-control-dialog header,
+.admin-theme-dark .settings-premium .access-control-dialog footer {
+  border-color: #2c435a !important;
+  background-color: #142438 !important;
+}
+
+.admin-theme-dark .settings-premium .access-control-dialog .access-control-row {
+  border-color: #35516b !important;
+  background-color: #15283c !important;
+}
+
+.admin-theme-dark .settings-premium .access-control-dialog .access-control-row[class*="bg-red-950"] {
+  border-color: #0f766e !important;
+  background-color: rgb(15 118 110 / 0.2) !important;
+}
+
+.admin-theme-dark .settings-premium .access-control-dialog .access-control-action {
+  background-color: #1b3046 !important;
+  color: #d8e6f2 !important;
+}
+
+.admin-theme-dark .settings-premium .access-control-dialog button[role="switch"] {
+  border: 1px solid #526b84 !important;
+  background-color: #334b63 !important;
+}
+
+.admin-theme-dark .settings-premium .access-control-dialog button[role="switch"][aria-checked="true"] {
+  border-color: #14b8a6 !important;
+  background-color: #0f766e !important;
+  box-shadow: 0 0 0 2px rgb(20 184 166 / 0.18);
+}
+
+.admin-theme-dark .settings-premium .access-control-dialog button[class*="bg-red-950"] {
+  background-color: #0f766e !important;
+}
+
+.admin-theme-dark .settings-premium .access-control-dialog button[class*="bg-red-950"]:hover {
+  background-color: #0d9488 !important;
+}

@@ -25,6 +25,23 @@ describe("OrderTimelineModal", () => {
     expect(screen.getByText("1 of 5 stages done")).toBeTruthy();
   });
 
+  it("shows measurements from the saved dimensions object when no preformatted size exists", () => {
+    const order = {
+      ...singleItemOrderMock,
+      items: [{
+        ...singleItemOrderMock.items[0],
+        widthIn: undefined,
+        heightIn: undefined,
+        sqFt: undefined,
+        dimensions: { width: 100, height: 120, unit: "cm", quantity: 2 },
+      }],
+    };
+
+    render(<OrderTimelineModal order={order} onClose={vi.fn()} />);
+
+    expect(screen.getByText("100cm × 120cm · 25.83 sq ft")).toBeTruthy();
+  });
+
   it("starts batch orders with the first item expanded and supports expand all", () => {
     render(<OrderTimelineModal order={threeItemBatchOrderMock} onClose={vi.fn()} />);
 
@@ -55,6 +72,26 @@ describe("OrderTimelineModal", () => {
 
     expect(screen.getByText("Glass Preparation")).toBeTruthy();
     expect(screen.getAllByText("Completed · Sep 24, 2026, 9:10 AM")).toHaveLength(2);
+  });
+
+  it("hides optional photo notices while keeping timeline upload controls", () => {
+    const order = {
+      ...singleItemOrderMock,
+      items: singleItemOrderMock.items.map((item) => ({
+        ...item,
+        stages: item.stages.map((stage) => ({ ...stage, photoRequirement: "optional" })),
+      })),
+    };
+    render(
+      <OrderTimelineModal
+        order={order}
+        onClose={vi.fn()}
+        onUploadProgressPhoto={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByText("Uploading a progress photo is optional.")).toBeNull();
+    expect(screen.getAllByText("Upload progress photo").length).toBeGreaterThan(0);
   });
 
   it("shows reported and expected dates on delayed stages", () => {
