@@ -23,6 +23,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { AdminThemeProvider, useAdminTheme } from "@/contexts/AdminThemeContext";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
 import Sidebar from "@/components/layout/Sidebar";
+import KeepAliveOutlet from "@/components/layout/KeepAliveOutlet";
 import AdminNavigationContext from "@/contexts/AdminNavigationContext";
 import { LoaderCircle, RefreshCw } from "lucide-react";
 import logo from "./assets/images/ACGCLOGO1.png";
@@ -261,6 +262,7 @@ function AppRoutes() {
           <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/admin-recovery" element={<AdminRecovery />} />
+          <Route element={<KeepAliveOutlet key={`${user?._id || user?.id || "anonymous"}:${user?.role || ""}:${JSON.stringify(user?.staff_access?.modules || {})}`} />}>
           <Route
             path="/dashboard"
             element={
@@ -329,6 +331,7 @@ function AppRoutes() {
               </ProtectedRoute>
             }
           />
+          </Route>
           <Route
             path="/customer-dashboard/*"
             element={
