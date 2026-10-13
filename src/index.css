@@ -1544,8 +1544,14 @@ body:has(.mobile-fullscreen-overlay) .customer-mobile-navigation {
 }
 
 @media (max-width: 1023px) {
-  .admin-mobile-navigation ~ div > main {
+  body:has(.admin-mobile-navigation) .admin-theme-shell {
+    height: 100dvh !important;
+    min-height: 100dvh;
+  }
+
+  body:has(.admin-mobile-navigation) .admin-theme-shell main {
     padding-bottom: calc(6rem + env(safe-area-inset-bottom)) !important;
+    scroll-padding-bottom: calc(6rem + env(safe-area-inset-bottom));
   }
 
   body:has(nav[aria-label="Customer navigation"]) .fixed.inset-0:not(.mobile-fullscreen-overlay) {

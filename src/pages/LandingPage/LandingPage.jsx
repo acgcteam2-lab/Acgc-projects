@@ -2188,8 +2188,8 @@ function LandingPage() {
 
 {/* FOOTER */}
 
-<footer className="relative left-1/2 mt-auto w-screen -translate-x-1/2 border-t border-border bg-muted/50 text-foreground dark:bg-card">
-  <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+<footer className="relative left-1/2 mt-auto w-screen -translate-x-1/2 border-t border-border bg-muted/50 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-6 text-foreground dark:bg-card">
+  <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
     <div className="grid gap-6 md:gap-8 lg:grid-cols-3">
       <div>
         <div className="flex items-center gap-3">
