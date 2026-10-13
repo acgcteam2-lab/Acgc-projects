@@ -8,7 +8,6 @@ import { gzip, gunzip } from "node:zlib";
 import mongoose from "mongoose";
 import { deletePrivateRawAsset, getPrivateRawDownloadUrl, uploadPrivateRawBuffer } from "../config/cloudinary.js";
 import SystemSetting from "../models/SystemSetting.js";
-import { createTransactionWorkbookBuffer } from "./transactionWorkbook.js";
 import {
   decryptBackupBuffer,
   decryptZipBackupBuffer,
@@ -319,8 +318,7 @@ export const createSystemBackup = async (type) => {
   const id = randomUUID();
   const now = new Date();
   const snapshot = await createSnapshotBuffer();
-  const transactionWorkbook = await createTransactionWorkbookBuffer(snapshot.orders, snapshot.users);
-  const backupBuffer = await encryptZipBackupBuffer(snapshot.buffer, transactionWorkbook);
+  const backupBuffer = await encryptZipBackupBuffer(snapshot.buffer);
   const backup = {
     id,
     name: `${type.toUpperCase().replace(/\s+/g, "_")}_BACKUP_${now.toISOString().slice(0, 10)}`,

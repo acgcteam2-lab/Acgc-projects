@@ -53,6 +53,7 @@ import {
 } from "lucide-react";
 import logo from "../../assets/images/ACGCLOGO1.png";
 import { useAuth } from "@/contexts/AuthContext";
+import { isPasswordPolicySatisfied, PASSWORD_POLICY_HINT, PASSWORD_POLICY_MESSAGE } from "@/lib/passwordStrength";
 import { getProduct, getProducts } from "@/api/products";
 import { API_BASE, apiFetch } from "@/api/client";
 import { resolveBackendImageUrl } from "@/lib/resolveBackendImageUrl";
@@ -86,11 +87,12 @@ import {
   getCustomerOrderNotificationMessage,
   getOrderStatusClasses,
   getOrderStatusLabel,
+  isOrderStatusCompleted,
   getSiteInspectionNotificationMessage,
   normalizeOrderStatus,
   normalizeOrderStatusKey,
 } from "./orderStatusUtils";
-import { getCustomerPaymentProof, getPaymentSummary, isPaymentProofConfirmed, validateCustomerPaymentAmount } from "@/pages/Transactions/paymentProofUtils";
+import { formatCustomerPaymentAmountInput, getCustomerPaymentProof, getPaymentSummary, getSavedPaymentTermsLabel, getUnresolvedPaymentProofRecords, isPaymentProofConfirmed, validateCustomerPaymentAmount } from "@/pages/Transactions/paymentProofUtils";
 import { subscribeToRealtime } from "@/lib/realtimeEvents";
 import { useCustomerPermissions } from "@/hooks/useCustomerPermissions";
 import { buildProductPriceSnapshot, getDefaultBladeCount, getDefaultExtraChargeSelections, getDefaultProductLineTotal, getProductLineBreakdown, getProductLineTotal } from "@/lib/productPricing";
@@ -422,12 +424,12 @@ function CustomerDashboard() {
     action: null,
     orderId: null,
   });
-  const [contractDeclineReason, setContractDeclineReason] = useState("");
   const [showOrderReviewModal, setShowOrderReviewModal] = useState(false);
   const [showBatchOrderModal, setShowBatchOrderModal] = useState(false);
   const [showBatchOrderConfirmModal, setShowBatchOrderConfirmModal] = useState(false);
   const [batchOrderAgreed, setBatchOrderAgreed] = useState(false);
   const [showBatchSuccessModal, setShowBatchSuccessModal] = useState(false);
+  const [batchSuccessItemCount, setBatchSuccessItemCount] = useState(0);
   const [paymentProofOpenOrderId, setPaymentProofOpenOrderId] = useState(null);
   const [paymentProofForm, setPaymentProofForm] = useState({ amount: "", fileName: "" });
   const [paymentProofError, setPaymentProofError] = useState("");
@@ -651,6 +653,7 @@ function CustomerDashboard() {
   }, []);
   const [profileTab, setProfileTab] = useState(() => initialDashboardParams.get("profileTab") === "security" ? "security" : "profile");
   const [profileEditing, setProfileEditing] = useState(false);
+  const [showDiscardProfileChanges, setShowDiscardProfileChanges] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordModalError, setPasswordModalError] = useState("");
   const [permissionNotice, setPermissionNotice] = useState(null);
@@ -692,9 +695,11 @@ function CustomerDashboard() {
     }
 
     if (Array.isArray(order.payment_records) && order.payment_records.length > 0) {
+      const unresolvedPaymentRecords = new Set(getUnresolvedPaymentProofRecords(order));
       order.payment_records.forEach((record) => {
         const recordId = record._id || `${new Date(record.submitted_at || record.createdAt || 0).getTime()}`;
         if (record.status === "pending") {
+          if (!unresolvedPaymentRecords.has(record)) return;
           if (record.downpayment_exception?.status !== "pending") {
             notifications.unshift({
               ...order,
@@ -2179,10 +2184,13 @@ function CustomerDashboard() {
       : {};
     const quantity = Math.max(1, Number(configuration.quantity) || 1);
     const defaultDimensions = getProductDefaultDimensions(product, quantity);
+    const hasDimensionOverrides = configuration.width != null || configuration.height != null;
     const usesProductDimensions = configuration.useProductDefaults === true || (
       configuration.customized !== true &&
-      Number(configuration.width) === Number(defaultDimensions.width) &&
-      Number(configuration.height) === Number(defaultDimensions.height)
+      (!hasDimensionOverrides || (
+        Number(configuration.width) === Number(defaultDimensions.width) &&
+        Number(configuration.height) === Number(defaultDimensions.height)
+      ))
     );
     const customized = Boolean(configuration.customized) || (
       !usesProductDimensions && (
@@ -2200,7 +2208,12 @@ function CustomerDashboard() {
       extra_charges: extraCharges,
     });
     if (!hasValidOrderItemPricingDimensions(cartItem)) {
-      setCartActionError("Please provide valid product dimensions before submitting your order.");
+      const message = "Please provide valid product dimensions before adding this product to your cart.";
+      setCartActionError(message);
+      toast.error(message);
+      if (String(selectedProduct?._id || selectedProduct?.id || "") !== String(product?._id || product?.id || "")) {
+        handleViewProduct(product);
+      }
       return false;
     }
 
@@ -2208,10 +2221,23 @@ function CustomerDashboard() {
     try {
       let expectedCartId = "";
       const response = await commitCartItems((prev) => {
-        const selectionKey = extraCharges.filter((charge) => charge.is_optional).map((charge) => charge.is_selected !== false).join(":");
-        const existing = prev.find((p) => !p.is_estimate
-          && (p._id === product._id || p.name === product.name)
-          && (p.extra_charges || []).filter((charge) => charge.is_optional).map((charge) => charge.is_selected !== false).join(":") === selectionKey);
+        const getSelectionKey = (item) => JSON.stringify({
+          productId: String(item.product_id?._id || item.product_id || item._id || item.id || ""),
+          variant: item.variant || item.color || "",
+          width: Number(item.dimensions?.width ?? item.width) || 0,
+          height: Number(item.dimensions?.height ?? item.height) || 0,
+          unit: item.dimensions?.unit || item.measurement_unit || item.measurementUnit || "in",
+          bladeGlassType: item.blade_glass_type || "",
+          saleMode: item.sale_mode || "",
+          frameType: item.frame_type || "",
+          customFrameSize: Boolean(item.custom_frame_size),
+          bladeCount: Number(item.blade_count) || 0,
+          extraCharges: (item.extra_charges || [])
+            .filter((charge) => charge.is_optional)
+            .map((charge) => [charge.name || charge.label || "", charge.is_selected !== false]),
+        });
+        const selectionKey = getSelectionKey(cartItem);
+        const existing = prev.find((item) => !item.is_estimate && getSelectionKey(item) === selectionKey);
         if (existing) {
           expectedCartId = String(existing.cartId || "");
           return prev.map((p) =>
@@ -2750,7 +2776,7 @@ function CustomerDashboard() {
     }
   };
 
-  const handleDeclineContract = async (orderId, declineReason) => {
+  const handleDeclineContract = async (orderId) => {
     if (!orderId || contractActionLoading) return;
 
     setContractActionError("");
@@ -2758,13 +2784,13 @@ function CustomerDashboard() {
     setContractActionOrderId(orderId);
     setContractActionLoading(true);
     try {
-      const response = await declineContract(orderId, declineReason);
+      const response = await declineContract(orderId);
       updateLocalOrder(response.order);
       if (selectedOrderForModal?._id === orderId) {
         setSelectedOrderForModal(response.order);
       }
-      setContractActionMessage("Contract declined. ACGC has received your reason.");
-      toast.success("Contract declined successfully.");
+      setContractActionMessage("Contract declined. Your order has been cancelled and the transaction will not proceed.");
+      toast.success("Contract declined and order cancelled.");
       setContractActionOrderId(response.order._id);
       setContractConfirmModal({ open: false, action: null, orderId: null });
       setShowContractModal(false);
@@ -2780,7 +2806,6 @@ function CustomerDashboard() {
 
   const openContractConfirmModal = (action, orderId) => {
     setContractActionError("");
-    setContractDeclineReason("");
     setContractConfirmModal({
       open: true,
       action,
@@ -2790,7 +2815,6 @@ function CustomerDashboard() {
 
   const closeContractConfirmModal = () => {
     setContractConfirmModal({ open: false, action: null, orderId: null });
-    setContractDeclineReason("");
   };
 
   const handleConfirmContractAction = async () => {
@@ -2798,19 +2822,12 @@ function CustomerDashboard() {
 
     const orderId = contractConfirmModal.orderId;
     const action = contractConfirmModal.action;
-    const declineReason = contractDeclineReason.trim();
-
-    if (action === "decline" && !declineReason) {
-      setContractActionError("Please provide a reason for declining the contract.");
-      return;
-    }
-
     closeContractConfirmModal();
 
     if (action === "accept") {
       await handleAcceptContract(orderId);
     } else if (action === "decline") {
-      await handleDeclineContract(orderId, declineReason);
+      await handleDeclineContract(orderId);
     }
   };
 
@@ -2860,7 +2877,14 @@ function CustomerDashboard() {
   const handleViewProduct = (product) => {
     setSelectedProduct(product);
     setSelectedProductImageIndex(0);
-    setProductEstimatorForm({ unit: product?.custom_frame_size_unit || "in", width: "0", height: "0", ...getDefaultBladeSelections(product) });
+    setCartActionError("");
+    setProductEstimatorForm({
+      unit: product?.custom_frame_size_unit || "in",
+      width: "0",
+      height: "0",
+      extra_charges: getDefaultExtraChargeSelections(product),
+      ...getDefaultBladeSelections(product),
+    });
     setShowAboutProduct(false);
   };
 
@@ -3061,6 +3085,8 @@ function CustomerDashboard() {
 
   const handleProfileChange = (e) => {
     const { name, value } = e.target;
+    setProfileError("");
+    setProfileMessage("");
     setProfileForm((prev) => ({ ...prev, [name]: name === "phone" ? normalizePhoneInput(value) : value }));
   };
 
@@ -3082,6 +3108,35 @@ function CustomerDashboard() {
       Boolean(profileForm.new_password) ||
       Boolean(profileForm.confirm_password)
     );
+  };
+
+  const resetCustomerProfileDraft = () => {
+    setProfileForm({
+      first_name: user?.first_name || "",
+      last_name: user?.last_name || "",
+      phone: user?.phone || "",
+      email: user?.email || "",
+      street_address: user?.street_address || "",
+      city: user?.city || "",
+      province: user?.province || "",
+      zip_code: user?.zip_code || "",
+      current_password: "",
+      new_password: "",
+      confirm_password: "",
+    });
+    setProfileError("");
+    setProfileMessage("");
+    setProfileTab("profile");
+    setShowDiscardProfileChanges(false);
+    setProfileEditing(false);
+  };
+
+  const closeProfileEditor = () => {
+    if (profileHasChanges()) {
+      setShowDiscardProfileChanges(true);
+      return;
+    }
+    resetCustomerProfileDraft();
   };
 
   const performProfileSave = async () => {
@@ -3106,8 +3161,8 @@ function CustomerDashboard() {
         return false;
       }
 
-      if (profileForm.new_password.length < 8) {
-        setProfileError("New password must be at least 8 characters long.");
+      if (!isPasswordPolicySatisfied(profileForm.new_password)) {
+        setProfileError(PASSWORD_POLICY_MESSAGE);
         return false;
       }
 
@@ -3608,6 +3663,9 @@ function CustomerDashboard() {
       setCheckoutMessageFading(false);
       setCheckoutMessage(getOrderSubmissionMessage(response, "Order placed"));
       addCreatedOrderToMyOrders(response.order);
+      setBatchSuccessItemCount(
+        Array.isArray(response.order?.items) ? response.order.items.length : orderItems.length
+      );
       setShowBatchSuccessModal(true);
       setShowBatchOrderModal(false);
       setShowBatchOrderConfirmModal(false);
@@ -4201,7 +4259,7 @@ function CustomerDashboard() {
     const status = normalizeOrderStatus(order?.status);
     return ["contract sent", "contract accepted"].includes(status);
   }).length;
-  const completedProjectsCount = orders.filter((order) => normalizeOrderStatus(order?.status) === "completed").length;
+  const completedProjectsCount = orders.filter(isOrderStatusCompleted).length;
   const cancelledProjectsCount = orders.filter((order) => normalizeOrderStatus(order?.status) === "cancelled").length;
 
   const getOrderIdentifier = (order, fallback = "") => {
@@ -4222,7 +4280,7 @@ function CustomerDashboard() {
     if (orderFilter === "order") return !["installation", "completed", "cancelled"].includes(status);
     if (orderFilter === "review") return isOrderCompletedAndReviewable(order) && !hasOrderReview(order);
     if (orderFilter === "reviewed") return hasAnyOrderReview(order);
-    if (orderFilter === "completed") return status === "completed" && (hasOrderReview(order) || !isOrderCompletedAndReviewable(order));
+    if (orderFilter === "completed") return isOrderStatusCompleted(order);
     if (orderFilter === "cancel") return status === "cancelled";
     return true;
   });
@@ -4361,7 +4419,19 @@ function CustomerDashboard() {
     { value: "completed", label: "Completed" },
     { value: "reviewed", label: "Reviewed Product" },
     { value: "cancel", label: "Cancelled" },
-  ];
+  ].map((option) => ({
+    ...option,
+    count: orders.filter((order) => {
+      const status = normalizeOrderStatus(order?.status);
+      if (option.value === "all") return true;
+      if (option.value === "order") return !["installation", "completed", "cancelled"].includes(status);
+      if (option.value === "review") return isOrderCompletedAndReviewable(order) && !hasOrderReview(order);
+      if (option.value === "reviewed") return hasAnyOrderReview(order);
+      if (option.value === "completed") return isOrderStatusCompleted(order);
+      if (option.value === "cancel") return status === "cancelled";
+      return false;
+    }).length,
+  }));
 
   const estimateWidth = Number(estimateForm.width) || 0;
   const estimateHeight = Number(estimateForm.height) || 0;
@@ -4615,8 +4685,8 @@ function CustomerDashboard() {
         : "N/A"
     )
     : "N/A";
-  const profileDisplayName = `${profileForm.first_name || user?.first_name || ""} ${profileForm.last_name || user?.last_name || ""}`.trim() || "Customer";
-  const profileEmail = profileForm.email || user?.email || "";
+  const profileDisplayName = `${user?.first_name || ""} ${user?.last_name || ""}`.trim() || "Customer";
+  const profileEmail = user?.email || "";
 
   if (loading) {
     return (
@@ -5998,6 +6068,12 @@ function CustomerDashboard() {
                           </p>
                         </section>}
 
+                        {cartActionError && (
+                          <p role="alert" className={`rounded-lg border px-3 py-2 text-sm ${darkMode ? "border-red-800 bg-red-950/50 text-red-200" : "border-red-200 bg-red-50 text-red-700"}`}>
+                            {cartActionError}
+                          </p>
+                        )}
+
                         {/* Action Buttons */}
                         {canRequestOrders && <>
                         <button
@@ -6022,17 +6098,18 @@ function CustomerDashboard() {
 
                         <button
                           type="button"
-                          onClick={() => {
+                          onClick={async () => {
                             if (productEstimatorBladeCountError) {
                               toast.error(productEstimatorBladeCountError);
                               return;
                             }
+                            let addedToCart = false;
                             if (hasProductEstimatorEstimate) {
                               if (!canEstimatePricing) {
                                 showPermissionNotice("Pricing estimates are disabled for your account.");
                                 return;
                               }
-                              handleAddEstimateToCart({
+                              addedToCart = await handleAddEstimateToCart({
                                 product: selectedProduct,
                                 width: productEstimatorForm.width,
                                 height: productEstimatorForm.height,
@@ -6051,9 +6128,18 @@ function CustomerDashboard() {
                                 showPermissionNotice("Order requests are disabled for your account.");
                                 return;
                               }
-                              handleAddToCart(selectedProduct, productEstimatorForm.extra_charges);
+                              const hasCustomDimensions = Number(productEstimatorForm.width) > 0 || Number(productEstimatorForm.height) > 0;
+                              addedToCart = await handleAddToCart(
+                                selectedProduct,
+                                productEstimatorForm.extra_charges || getDefaultExtraChargeSelections(selectedProduct),
+                                {
+                                  ...productEstimatorForm,
+                                  useProductDefaults: !hasCustomDimensions,
+                                  customized: hasCustomDimensions,
+                                }
+                              );
                             }
-                            closeProductModal();
+                            if (addedToCart) closeProductModal();
                           }}
                           className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#101114] py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#050608]"
                         >
@@ -7175,10 +7261,12 @@ function CustomerDashboard() {
                     <CheckCircle className={`h-8 w-8 ${darkMode ? "text-green-400" : "text-green-700"}`} />
                   </div>
 
-                  <h3 className={`mt-5 text-center text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Batch Requests Submitted!</h3>
+                  <h3 className={`mt-5 text-center text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>
+                    {batchSuccessItemCount === 1 ? "Order Request Submitted!" : "Batch Order Requests Submitted!"}
+                  </h3>
 
                   <p className={`mt-4 text-center text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                    Thank you! Your architectural order requests have been received. Our estimating team will contact you shortly to schedule your site inspection and finalize quotation blueprints.
+                    Thank you! Your architectural order requests have been received. Our team will contact you shortly to schedule your site inspection and finalize quotation.
                   </p>
 
                   <p className={`mt-5 flex items-center justify-center gap-2 text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
@@ -7371,7 +7459,7 @@ function CustomerDashboard() {
                   <h3 className={`mt-5 text-center text-2xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>Order Request Submitted!</h3>
 
                   <p className={`mt-4 text-center text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                    Thank you! Your order request has been received. Our estimating team will contact you shortly to confirm the details and finalize the quotation.
+                    Thank you! Your architectural order requests have been received. Our team will contact you shortly to schedule your site inspection and finalize quotation.
                   </p>
 
                   <p className={`mt-5 flex items-center justify-center gap-2 text-sm font-medium ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
@@ -7427,30 +7515,28 @@ function CustomerDashboard() {
                   className={`w-full rounded-xl border px-3 py-2.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-red-100 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100 focus:border-red-500" : "border-slate-200 bg-white text-slate-700 focus:border-red-500"}`}
                 >
                   {orderFilterOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
+                    <option key={option.value} value={option.value}>{option.label} ({option.count})</option>
                   ))}
                 </select>
               </div>
-              <div className={`hidden max-w-full overflow-x-auto rounded-xl border p-1 lg:block ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-slate-100"}`}>
-                <div className="flex w-max items-center gap-1" role="group" aria-label="Filter orders">
+              <div className="hidden max-w-full overflow-x-auto lg:block">
+                <div className="flex w-max items-center gap-1.5" role="tablist" aria-label="Filter orders">
                 {orderFilterOptions.map((tab) => (
                   <button
                     key={tab.value}
                     type="button"
+                    role="tab"
+                    aria-selected={orderFilter === tab.value}
                     onClick={() => {
                       setOrderFilter(tab.value);
                       setOrderPage(1);
                     }}
-                    aria-pressed={orderFilter === tab.value}
-                    className={`rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
-                      orderFilter === tab.value 
-                        ? "bg-red-700 text-white shadow-sm"
-                        : darkMode
-                          ? "text-slate-300 hover:bg-slate-700 hover:text-white"
-                          : "text-slate-600 hover:bg-white hover:text-slate-900"
-                    }`}
+                    className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 ${orderFilter === tab.value ? (darkMode ? "border-red-700 bg-red-950/60 text-red-100 shadow-sm shadow-black/10" : "border-red-200 bg-red-50 text-red-950 shadow-sm") : (darkMode ? "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white" : "border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 hover:text-slate-900")}`}
                   >
                     {tab.label}
+                    <span className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] tabular-nums ${orderFilter === tab.value ? (darkMode ? "bg-red-800 text-red-50" : "bg-red-200 text-red-900") : (darkMode ? "bg-slate-700 text-slate-300" : "bg-slate-200 text-slate-700")}`}>
+                      {tab.count}
+                    </span>
                   </button>
                 ))}
                 </div>
@@ -7481,6 +7567,7 @@ function CustomerDashboard() {
                   const orderId = getOrderIdentifier(order, `order-${index}`);
                   const product = order.items?.[0] || {};
                   const orderItems = Array.isArray(order.items) ? order.items : [];
+                  const unresolvedPaymentRecords = new Set(getUnresolvedPaymentProofRecords(order));
                   const isOrderExpanded = expandedOrderId === orderId;
                   const orderTotal = getOrderTotalValue(order);
                   const paymentSummary = getPaymentSummary(order);
@@ -7490,9 +7577,10 @@ function CustomerDashboard() {
                   const isFullyPaid = Math.round(balanceAmount * 100) <= 0;
                   const downpaymentBalance = Math.max(requiredPaymentAmount - downpaymentAmount, 0);
                   const isDownpaymentCovered = Math.round(downpaymentBalance * 100) <= 0;
+                  const isFullPaymentTerms = String(order.payment_terms || "").trim().toLowerCase() === "full_payment";
                   const paymentBalanceMessage = isDownpaymentCovered
-                    ? `Downpayment covered. Remaining balance: ${formatCurrency(balanceAmount)}.`
-                    : `Downpayment still due: ${formatCurrency(downpaymentBalance)}.`;
+                    ? `${isFullPaymentTerms ? "Full payment complete" : "Downpayment covered"}. Remaining balance: ${formatCurrency(balanceAmount)}.`
+                    : `${isFullPaymentTerms ? "Full payment still due" : "Downpayment still due"}: ${formatCurrency(downpaymentBalance)}.`;
                   const paymentStatusClasses = {
                     paid: darkMode ? "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300" : "border border-emerald-200 bg-emerald-50 text-emerald-700",
                     pending: darkMode ? "border border-amber-500/40 bg-amber-500/10 text-amber-200" : "border border-amber-200 bg-amber-50 text-amber-800",
@@ -7595,7 +7683,7 @@ function CustomerDashboard() {
                           </div>
                           <div className="col-span-2 flex justify-end sm:col-span-1">
                             <div className="flex items-center gap-2">
-                              {canUploadFeedback && orderFilter === "review" && isProjectFinished && isOrderCompletedAndReviewable(order) && !isBatchOrder && !hasOrderReview(order) && (
+                              {canUploadFeedback && ["review", "completed"].includes(orderFilter) && isProjectFinished && isOrderCompletedAndReviewable(order) && !isBatchOrder && !hasOrderReview(order) && (
                                 <button
                                   type="button"
                                   onClick={() => openCustomerReviewModal(order)}
@@ -7605,7 +7693,7 @@ function CustomerDashboard() {
                                   <span className="whitespace-nowrap">Leave Feedback</span>
                                 </button>
                               )}
-                              {canUploadFeedback && orderFilter === "review" && isProjectFinished && isOrderCompletedAndReviewable(order) && isBatchOrder && !hasOrderReview(order) && (
+                              {canUploadFeedback && ["review", "completed"].includes(orderFilter) && isProjectFinished && isOrderCompletedAndReviewable(order) && isBatchOrder && !hasOrderReview(order) && (
                                 <button
                                   type="button"
                                   onClick={() => openBatchOrderReviewModal(order)}
@@ -7675,7 +7763,6 @@ function CustomerDashboard() {
                           {order.contract_status === "declined" && (
                             <div className={`mt-4 rounded-xl border p-4 ${darkMode ? "border-red-800 bg-red-950/40" : "border-red-200 bg-red-50"}`}>
                               <p className={`text-sm font-bold ${darkMode ? "text-red-300" : "text-red-700"}`}>Contract Declined</p>
-                              <p className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-700"}`}>{order.contractDeclineReason || "No reason provided."}</p>
                             </div>
                           )}
 
@@ -7709,7 +7796,7 @@ function CustomerDashboard() {
                                       {formatCurrency(getItemPriceValue(item))}
                                     </p>
                                     {canUploadFeedback && isProjectFinished && isOrderCompletedAndReviewable(order) && (
-                                      orderFilter === "reviewed"
+                                      ["reviewed", "completed"].includes(orderFilter)
                                         ? getOrderItemReview(order, itemIndex)?.submittedAt && (
                                           <div className="mt-1 flex justify-end gap-1.5 sm:gap-3">
                                             <button
@@ -7773,9 +7860,9 @@ function CustomerDashboard() {
                               <span className={`text-[10px] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Confirmed order total</span>
                             </div>
                             <div className={`flex flex-col gap-1 rounded-lg px-2 py-1 ${darkMode ? "bg-red-950/30" : "bg-red-50"}`}>
-                              <span className={`text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-red-300" : "text-red-700"}`}>Required downpayment ({paymentSummary.requiredPercentage.toFixed(0)}%)</span>
+                              <span className={`text-[10px] font-bold uppercase tracking-wide ${darkMode ? "text-red-300" : "text-red-700"}`}>{order.payment_terms === "full_payment" ? "Required full payment" : "Required downpayment"}</span>
                               <span className={`text-lg font-black ${darkMode ? "text-red-300" : "text-red-700"}`}>{formatCurrency(requiredPaymentAmount)}</span>
-                              <span className={`text-[10px] ${darkMode ? "text-slate-400" : "text-slate-600"}`}>From this order's saved payment terms</span>
+                              <span className={`text-[10px] ${darkMode ? "text-slate-400" : "text-slate-600"}`}>Site Inspection terms: {getSavedPaymentTermsLabel(order.payment_terms)}</span>
                             </div>
                             <div className="flex flex-col gap-1">
                               <span className={`text-[10px] font-semibold uppercase tracking-wide ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Amount already paid</span>
@@ -7798,6 +7885,11 @@ function CustomerDashboard() {
                             </div>
                           </div>
 
+                          <div role="note" className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs leading-5 ${darkMode ? "border-amber-700/60 bg-amber-950/30 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                            <Info size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
+                            <p>If the payment amount or payment information shown here looks incorrect, please contact us at 📞 <a className="font-bold underline underline-offset-2" href="tel:+63-917-123-4567">+63-912-456-7890</a>.</p>
+                          </div>
+
                           {Array.isArray(order.payment_records) && order.payment_records.length > 0 && (
                             <section className={`mt-4 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-800/70" : "border-slate-200 bg-white"}`}>
                               <h5 className={`text-xs font-black uppercase tracking-wide ${darkMode ? "text-slate-200" : "text-slate-700"}`}>Payment history</h5>
@@ -7805,7 +7897,7 @@ function CustomerDashboard() {
                                 className={`mt-2 max-h-56 space-y-2 overflow-y-scroll overscroll-contain pr-2 sm:max-h-64 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-thumb]:rounded-full ${darkMode ? "[&::-webkit-scrollbar-track]:bg-slate-800 [&::-webkit-scrollbar-thumb]:bg-slate-500" : "[&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-400"}`}
                                 style={{ scrollbarWidth: "thin", scrollbarColor: darkMode ? "#64748b #1e293b" : "#94a3b8 #f1f5f9" }}
                               >
-                                {[...order.payment_records].sort((first, second) => new Date(second.submitted_at || 0) - new Date(first.submitted_at || 0)).map((record) => {
+                                {[...order.payment_records].filter((record) => record.status !== "pending" || unresolvedPaymentRecords.has(record)).sort((first, second) => new Date(second.verified_at || second.recorded_at || second.rejected_at || second.submitted_at || 0) - new Date(first.verified_at || first.recorded_at || first.rejected_at || first.submitted_at || 0)).map((record) => {
                                   const changed = record.submitted_amount != null && record.verified_amount != null
                                     && Math.round(Number(record.submitted_amount) * 100) !== Math.round(Number(record.verified_amount) * 100);
                                   return (
@@ -7905,15 +7997,15 @@ function CustomerDashboard() {
                                     </label>
                                     <p className={`mb-1.5 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
                                       {isDownpaymentCovered
-                                        ? `Downpayment covered. Remaining balance: ${formatRequiredPaymentAmount(balanceAmount)}. Enter any amount up to ${formatRequiredPaymentAmount(balanceAmount)}.`
-                                        : `Downpayment still due: ${formatRequiredPaymentAmount(downpaymentBalance)}. Enter any amount up to ${formatRequiredPaymentAmount(balanceAmount)}.`}
+                                        ? `${isFullPaymentTerms ? "Full payment complete" : "Downpayment covered"}. Remaining balance: ${formatRequiredPaymentAmount(balanceAmount)}. Enter any amount up to ${formatRequiredPaymentAmount(balanceAmount)}.`
+                                        : `${isFullPaymentTerms ? "Full payment still due" : "Downpayment still due"}: ${formatRequiredPaymentAmount(downpaymentBalance)}. Enter any amount up to ${formatRequiredPaymentAmount(balanceAmount)}.`}
                                     </p>
                                     <input
                                       id={`payment-amount-${orderId}`}
                                       type="text"
                                       inputMode="decimal"
                                       value={paymentProofForm.amount}
-                                      onChange={(event) => setPaymentProofForm((prev) => ({ ...prev, amount: event.target.value }))}
+                                      onChange={(event) => setPaymentProofForm((prev) => ({ ...prev, amount: formatCustomerPaymentAmountInput(event.target.value) }))}
                                       placeholder="₱0.00"
                                       className={`w-full rounded-lg border px-3 py-2.5 text-sm font-semibold outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 ${darkMode ? "border-slate-600 bg-slate-800 text-white placeholder:text-slate-400" : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400"}`}
                                     />
@@ -9199,7 +9291,7 @@ function CustomerDashboard() {
             <div className={`relative rounded-2xl shadow p-4 sm:p-5 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
               <button
                 type="button"
-                onClick={() => setProfileEditing(false)}
+                onClick={closeProfileEditor}
                 className={`absolute right-4 top-4 rounded-lg border px-3 py-2 text-xs font-semibold xl:hidden ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
               >
                 Back to profile
@@ -9213,7 +9305,6 @@ function CustomerDashboard() {
                 />
 
                 <h2 className={`mt-4 text-xl font-bold ${darkMode ? "text-white" : "text-slate-900"}`}>{`${profileForm.first_name || user?.first_name || ""} ${profileForm.last_name || user?.last_name || ""}`.trim() || "Customer"}</h2>
-                <p className={darkMode ? "text-sm text-slate-300 capitalize" : "text-sm text-gray-500 capitalize"}>{user?.role || "customer"}</p>
 
                 <div className="mt-5 w-full space-y-3">
                   <div className={`rounded-xl p-3.5 flex items-center gap-3 ${darkMode ? "bg-slate-900" : "bg-gray-50"}`}>
@@ -9232,13 +9323,6 @@ function CustomerDashboard() {
                     </div>
                   </div>
 
-                  <div className={`rounded-xl p-3.5 flex items-center gap-3 ${darkMode ? "bg-slate-900" : "bg-gray-50"}`}>
-                    <ShieldCheck className="text-red-600" size={18} />
-                    <div>
-                      <p className={darkMode ? "text-xs text-slate-400" : "text-xs text-gray-500"}>Role</p>
-                      <p className={`text-sm font-medium capitalize ${darkMode ? "text-white" : "text-slate-900"}`}>{user?.role || "customer"}</p>
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
@@ -9252,7 +9336,7 @@ function CustomerDashboard() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setProfileEditing(false)}
+                  onClick={closeProfileEditor}
                   className={`ml-auto hidden rounded-lg border px-3 py-2 text-xs font-semibold xl:inline-flex ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
                 >
                   Back to profile
@@ -9268,6 +9352,12 @@ function CustomerDashboard() {
               {profileMessage && (
                 <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-700">
                   {profileMessage}
+                </div>
+              )}
+
+              {profileHasChanges() && (
+                <div role="status" className={`mb-4 rounded-xl border px-4 py-3 text-sm ${darkMode ? "border-amber-700 bg-amber-950/40 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                  Unsaved changes. Your profile will not update until you save.
                 </div>
               )}
 
@@ -9412,17 +9502,22 @@ function CustomerDashboard() {
                           autoComplete="current-password"
                         />
                       </div>
-                      <ProfileTextField
-                        label="New Password"
-                        icon={LockKeyhole}
-                        darkMode={darkMode}
-                        type="password"
-                        name="new_password"
-                        value={profileForm.new_password}
-                        onChange={handleProfileChange}
-                        placeholder="Enter new password"
-                        autoComplete="new-password"
-                      />
+                      <div>
+                        <ProfileTextField
+                          label="New Password"
+                          icon={LockKeyhole}
+                          darkMode={darkMode}
+                          type="password"
+                          name="new_password"
+                          value={profileForm.new_password}
+                          onChange={handleProfileChange}
+                          minLength={8}
+                          maxLength={128}
+                          placeholder="Enter new password"
+                          autoComplete="new-password"
+                        />
+                        <p className="mt-1 text-xs text-slate-500">{PASSWORD_POLICY_HINT}</p>
+                      </div>
                       <ProfileTextField
                         label="Confirm Password"
                         icon={LockKeyhole}
@@ -9431,6 +9526,8 @@ function CustomerDashboard() {
                         name="confirm_password"
                         value={profileForm.confirm_password}
                         onChange={handleProfileChange}
+                        minLength={8}
+                        maxLength={128}
                         placeholder="Confirm new password"
                         autoComplete="new-password"
                       />
@@ -9440,6 +9537,16 @@ function CustomerDashboard() {
               </div>
 
               <div className={`-mx-4 -mb-4 mt-3 flex shrink-0 justify-end border-t px-4 py-2.5 sm:-mx-5 sm:-mb-5 sm:px-5 xl:static ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+                {profileHasChanges() && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDiscardProfileChanges(true)}
+                    disabled={profileSaving}
+                    className={`mr-auto rounded-xl border px-4 py-2.5 text-sm font-semibold transition disabled:opacity-60 ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}`}
+                  >
+                    Discard changes
+                  </button>
+                )}
                 <button
                   onClick={handleProfileSave}
                   disabled={profileSaving}
@@ -9449,6 +9556,23 @@ function CustomerDashboard() {
                   {profileSaving ? "Saving..." : "Save Changes"}
                 </button>
               </div>
+
+              {showDiscardProfileChanges && (
+                <div className="fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/55 p-4" role="presentation">
+                  <section role="alertdialog" aria-modal="true" aria-labelledby="discard-customer-profile-title" className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}>
+                    <h3 id="discard-customer-profile-title" className="text-lg font-bold">Discard unsaved changes?</h3>
+                    <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Your saved profile is unchanged. The edits in this form will be cleared.</p>
+                    <div className="mt-5 flex justify-end gap-2">
+                      <button type="button" onClick={() => setShowDiscardProfileChanges(false)} className={`rounded-lg border px-4 py-2 text-sm font-semibold ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
+                        Keep editing
+                      </button>
+                      <button type="button" onClick={resetCustomerProfileDraft} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800">
+                        Discard changes
+                      </button>
+                    </div>
+                  </section>
+                </div>
+              )}
 
               {emailChangeOpen && (
                 <div className="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto bg-slate-950/65 p-3 backdrop-blur-sm sm:p-6">
@@ -9656,32 +9780,26 @@ function CustomerDashboard() {
                 <h2 className={`text-2xl font-black tracking-[-0.03em] ${darkMode ? "text-white" : "text-slate-950"}`}>My Contracts & Warranties</h2>
                 <p className={darkMode ? "text-slate-400" : "text-slate-500"}>Review your contracts and warranty coverage.</p>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className={`flex flex-wrap gap-1.5 rounded-2xl border p-1.5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-slate-100"}`} role="tablist" aria-label="Filter contracts">
                 <button
                   type="button"
+                  role="tab"
+                  aria-selected={contractHistoryTab === "accepted" && !warrantyHistoryTab}
                   onClick={() => { setContractHistoryTab("accepted"); setWarrantyHistoryTab(null); setContractPage(1); }}
-                  className={`px-4 py-2 rounded-2xl font-black text-sm transition ${
-                    contractHistoryTab === "accepted" && !warrantyHistoryTab
-                      ? "bg-red-600 text-white shadow-sm"
-                      : darkMode
-                        ? "bg-slate-800 text-slate-200 border border-slate-600 hover:bg-slate-700"
-                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
-                  }`}
+                  className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 ${contractHistoryTab === "accepted" && !warrantyHistoryTab ? (darkMode ? "border-red-700 bg-red-950/60 text-red-100 shadow-sm shadow-black/10" : "border-red-200 bg-red-50 text-red-950 shadow-sm") : (darkMode ? "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white" : "border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 hover:text-slate-900")}`}
                 >
-                  Contracts ({customerContracts.length})
+                  Contracts
+                  <span className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] tabular-nums ${contractHistoryTab === "accepted" && !warrantyHistoryTab ? (darkMode ? "bg-red-800 text-red-50" : "bg-red-200 text-red-900") : (darkMode ? "bg-slate-700 text-slate-300" : "bg-slate-200 text-slate-700")}`}>{customerContracts.length}</span>
                 </button>
                 <button
                   type="button"
+                  role="tab"
+                  aria-selected={contractHistoryTab === "rejected" && !warrantyHistoryTab}
                   onClick={() => { setContractHistoryTab("rejected"); setWarrantyHistoryTab(null); setContractPage(1); }}
-                  className={`px-4 py-2 rounded-2xl font-black text-sm transition ${
-                    contractHistoryTab === "rejected" && !warrantyHistoryTab
-                      ? "bg-red-600 text-white shadow-sm"
-                      : darkMode
-                        ? "bg-slate-800 text-slate-200 border border-slate-600 hover:bg-slate-700"
-                        : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
-                  }`}
+                  className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 ${contractHistoryTab === "rejected" && !warrantyHistoryTab ? (darkMode ? "border-red-700 bg-red-950/60 text-red-100 shadow-sm shadow-black/10" : "border-red-200 bg-red-50 text-red-950 shadow-sm") : (darkMode ? "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white" : "border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 hover:text-slate-900")}`}
                 >
-                  Declined Contracts ({rejectedContracts.length})
+                  Declined Contracts
+                  <span className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] tabular-nums ${contractHistoryTab === "rejected" && !warrantyHistoryTab ? (darkMode ? "bg-red-800 text-red-50" : "bg-red-200 text-red-900") : (darkMode ? "bg-slate-700 text-slate-300" : "bg-slate-200 text-slate-700")}`}>{rejectedContracts.length}</span>
                 </button>
               </div>
             </div>
@@ -10009,17 +10127,8 @@ function CustomerDashboard() {
               <p className="text-sm text-slate-600 mb-6">
                 {contractConfirmModal.action === "accept"
                   ? "By accepting, you confirm that you reviewed and electronically signed this contract. The completed inspection will move to Transactions for admin approval."
-                  : "Please tell ACGC why you are declining this contract. Your order will remain in the Site Inspection workflow."}
+                  : "Your order will remain in the Site Inspection workflow."}
               </p>
-              {contractConfirmModal.action === "decline" && (
-                <textarea
-                  value={contractDeclineReason}
-                  onChange={(event) => setContractDeclineReason(event.target.value)}
-                  placeholder="Reason for declining (required)"
-                  rows={3}
-                  className="mb-3 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-red-500"
-                />
-              )}
               {contractActionError && <p className="mb-3 text-sm font-semibold text-red-600">{contractActionError}</p>}
               <div className="flex justify-end gap-3">
                 <button
@@ -10030,7 +10139,7 @@ function CustomerDashboard() {
                 </button>
                 <button
                   onClick={handleConfirmContractAction}
-                    disabled={contractActionLoading || (contractConfirmModal.action === "decline" && !contractDeclineReason.trim())}
+                    disabled={contractActionLoading}
                   className={`px-4 py-2 rounded-lg text-white transition disabled:opacity-50 disabled:cursor-not-allowed ${
                     contractConfirmModal.action === "accept"
                       ? "bg-emerald-600 hover:bg-emerald-700"

@@ -32,6 +32,8 @@ import {
   getDownpaymentExceptionSummary,
   initializePaymentLedger,
   isPaymentDiscrepancy,
+  validateDownpaymentExceptionAcceptance,
+  validateDownpaymentExceptionApproval,
   validatePaymentAmount,
 } from "../services/paymentLedger.js";
 
@@ -1008,6 +1010,7 @@ export const updateOrderStatus = async (req, res) => {
       amount_paid,
       downpayment_amount,
       required_downpayment_amount,
+      payment_terms,
       payment_proof_amount,
       payment_proof_confirmed_at,
       payment_record_action,
@@ -1036,6 +1039,24 @@ export const updateOrderStatus = async (req, res) => {
     const order = await Order.findById(orderId);
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    if (amount_paid !== undefined || payment_amount !== undefined) {
+      return res.status(400).json({ success: false, message: "Payments must be recorded through a verified payment record action." });
+    }
+
+    const changesDownpaymentTerms = downpayment_amount !== undefined
+      || required_downpayment_amount !== undefined
+      || payment_terms !== undefined;
+    if (payment_record_action && changesDownpaymentTerms) {
+      return res.status(400).json({ success: false, message: "Payment records cannot change the downpayment terms agreed upon in the contract." });
+    }
+    const hasAgreedContractTerms = order.acceptedByCustomer === true
+      || String(order.contract_status || "").toLowerCase() === "accepted"
+      || String(order.contract_status || "").toLowerCase() === "sent"
+      || Boolean(order.contractGenerated || order.contractSentAt);
+    if (hasAgreedContractTerms && changesDownpaymentTerms) {
+      return res.status(409).json({ success: false, message: "Downpayment terms cannot be changed after the contract has been sent or accepted." });
     }
 
     const previousPaymentStatus = order.payment_status;
@@ -1190,8 +1211,8 @@ export const updateOrderStatus = async (req, res) => {
         if (!record || record.status !== expectedRecordStatus) {
           return res.status(409).json({ success: false, message: "This payment is no longer awaiting verification." });
         }
-        if (action === "accept_downpayment_exception" && record.downpayment_exception?.status !== "pending") {
-          return res.status(409).json({ success: false, message: "Request the downpayment exception before approving it." });
+        if (action === "accept_downpayment_exception" && record.downpayment_exception?.status === "approved") {
+          return res.status(409).json({ success: false, message: "This payment already has an approved downpayment exception." });
         }
         const reason = String(payment_record_action.reason || "").trim();
         if (action === "reject") {
@@ -1207,23 +1228,37 @@ export const updateOrderStatus = async (req, res) => {
           paymentActionResult = { action, recordId: record._id, submittedAmount: record.submitted_amount, reason };
           order.payment_proof_confirmed_at = null;
         } else {
-          if (action === "accept_downpayment_exception" && !reason) {
-            return res.status(400).json({ success: false, message: "Provide a reason for approving the downpayment exception." });
-          }
           const oldVerifiedAmount = Number(record.verified_amount) || 0;
           const submittedAmount = action === "adjust" ? oldVerifiedAmount : Number(record.submitted_amount) || 0;
           const allowedRemainingAmount = getOrderPaymentAmounts(order).remainingAmount + (action === "adjust" ? oldVerifiedAmount : 0);
           const validation = validatePaymentAmount(
-            action === "accept_downpayment_exception" ? record.submitted_amount : payment_record_action.verified_amount,
+            action === "accept_downpayment_exception"
+              ? payment_record_action.verified_amount ?? record.submitted_amount
+              : payment_record_action.verified_amount,
             allowedRemainingAmount,
           );
           if (!validation.valid) return res.status(400).json({ success: false, message: validation.message });
           const verifiedAmount = validation.amount;
-          const exceptionSummary = action === "accept_downpayment_exception"
-            ? getDownpaymentExceptionSummary(order, verifiedAmount)
-            : null;
-          if (action === "accept_downpayment_exception" && !exceptionSummary.eligible) {
-            return res.status(409).json({ success: false, message: "A downpayment exception is only available while verified payments remain below the required downpayment." });
+          const explicitlyAcceptedException = action === "accept_downpayment_exception"
+            || payment_record_action.accept_downpayment_exception === true;
+          const sellerApprovalParty = String(payment_record_action.seller_approval_party || "").trim();
+          const exceptionApproval = validateDownpaymentExceptionApproval({
+            explicitlyAccepted: explicitlyAcceptedException,
+            sellerApprovalConfirmed: payment_record_action.seller_approval_confirmed === true,
+            sellerApprovalParty,
+            reason,
+          });
+          if (!exceptionApproval.valid) {
+            return res.status(400).json({ success: false, message: exceptionApproval.message });
+          }
+          const exceptionValidation = validateDownpaymentExceptionAcceptance(
+            order,
+            verifiedAmount,
+            action === "adjust" ? oldVerifiedAmount : 0,
+            explicitlyAcceptedException,
+          );
+          if (!exceptionValidation.valid) {
+            return res.status(409).json({ success: false, message: exceptionValidation.message });
           }
           const amountChanged = isPaymentDiscrepancy(submittedAmount, verifiedAmount);
           if (action === "adjust" && !amountChanged) {
@@ -1250,14 +1285,20 @@ export const updateOrderStatus = async (req, res) => {
             record.downpayment_exception.status = "cancelled";
             record.downpayment_exception.reason = "Payment accepted through the normal partial-payment workflow.";
           }
-          if (action === "accept_downpayment_exception") {
+          if (explicitlyAcceptedException) {
+            const previousException = record.downpayment_exception || {};
             record.downpayment_exception = {
               status: "approved",
               accepted_amount: verifiedAmount,
-              required_amount: exceptionSummary.requiredAmount,
-              shortfall: exceptionSummary.shortfall,
-              total_paid_at_approval: exceptionSummary.totalPaidAtApproval,
+              required_amount: exceptionValidation.summary.requiredAmount,
+              shortfall: exceptionValidation.summary.shortfall,
+              total_paid_at_approval: exceptionValidation.summary.totalPaidAtApproval,
               reason,
+              seller_approval_party: sellerApprovalParty,
+              seller_approval_confirmed_at: record.verified_at,
+              seller_approval_confirmed_by: req.user.id,
+              requested_at: previousException.requested_at || null,
+              requested_by: previousException.requested_by || null,
               approved_at: record.verified_at,
               approved_by: req.user.id,
             };
@@ -1268,7 +1309,7 @@ export const updateOrderStatus = async (req, res) => {
           order.transaction_number = record.transaction_number || order.transaction_number || "";
           order.amount_paid = getOrderPaymentAmounts(order).paidAmount;
           paymentActionResult = {
-            action: action === "adjust" ? "adjust" : "verify",
+            action: explicitlyAcceptedException ? "exception_approve" : action === "adjust" ? "adjust" : "verify",
             recordId: record._id,
             submittedAmount: action === "adjust" ? Number(record.submitted_amount) || oldVerifiedAmount : submittedAmount,
             previousAmount: submittedAmount,
@@ -1277,11 +1318,8 @@ export const updateOrderStatus = async (req, res) => {
             amountChanged,
             wasAdjustment: action === "adjust",
             reason,
+            exception: explicitlyAcceptedException ? exceptionValidation.summary : null,
           };
-          if (action === "accept_downpayment_exception") {
-            paymentActionResult.action = "exception_approve";
-            paymentActionResult.exception = exceptionSummary;
-          }
         }
         order.payment_proof_file_name = record.proof_file_name || order.payment_proof_file_name;
         order.payment_proof_file_url = record.proof_file_url || order.payment_proof_file_url;
@@ -1327,7 +1365,39 @@ export const updateOrderStatus = async (req, res) => {
           getOrderPaymentAmounts(order).remainingAmount,
         );
         if (!validation.valid) return res.status(400).json({ success: false, message: validation.message });
+        const exceptionValidation = validateDownpaymentExceptionAcceptance(
+          order,
+          validation.amount,
+          0,
+          payment_record_action.accept_downpayment_exception === true,
+        );
+        if (!exceptionValidation.valid) {
+          return res.status(409).json({ success: false, message: exceptionValidation.message });
+        }
+        const sellerApprovalParty = String(payment_record_action.seller_approval_party || "").trim();
+        const exceptionApproval = validateDownpaymentExceptionApproval({
+          explicitlyAccepted: payment_record_action.accept_downpayment_exception === true,
+          sellerApprovalConfirmed: payment_record_action.seller_approval_confirmed === true,
+          sellerApprovalParty,
+          reason,
+        });
+        if (!exceptionApproval.valid) {
+          return res.status(400).json({ success: false, message: exceptionApproval.message });
+        }
         const verifiedAt = new Date();
+        const downpaymentException = exceptionValidation.summary.eligible ? {
+          status: "approved",
+          accepted_amount: validation.amount,
+          required_amount: exceptionValidation.summary.requiredAmount,
+          shortfall: exceptionValidation.summary.shortfall,
+          total_paid_at_approval: exceptionValidation.summary.totalPaidAtApproval,
+          reason,
+          seller_approval_party: sellerApprovalParty,
+          seller_approval_confirmed_at: verifiedAt,
+          seller_approval_confirmed_by: req.user.id,
+          approved_at: verifiedAt,
+          approved_by: req.user.id,
+        } : null;
         const manualRecord = order.payment_records.create({
           request_id: requestId,
           record_source: "admin_recorded",
@@ -1345,12 +1415,19 @@ export const updateOrderStatus = async (req, res) => {
           verified_at: verifiedAt,
           verified_by: req.user.id,
           admin_reason: reason,
+          downpayment_exception: downpaymentException,
         });
         order.payment_records.push(manualRecord);
         order.payment_method = manualRecord.payment_method;
         order.transaction_number = manualRecord.transaction_number;
         order.amount_paid = getOrderPaymentAmounts(order).paidAmount;
-        paymentActionResult = { action, recordId: manualRecord._id, verifiedAmount: validation.amount, reason };
+        paymentActionResult = {
+          action,
+          recordId: manualRecord._id,
+          verifiedAmount: validation.amount,
+          reason,
+          exception: exceptionValidation.summary.eligible ? exceptionValidation.summary : null,
+        };
       } else {
         return res.status(400).json({ success: false, message: "Invalid payment action." });
       }
@@ -1480,6 +1557,15 @@ export const updateOrderStatus = async (req, res) => {
         paymentRecordId: String(paymentActionResult.recordId),
         reason: paymentActionResult.reason,
       });
+      if (paymentActionResult.exception) {
+        void sendOrderNotification("downpayment_exception_approved", order, {
+          customerEmail: order.customer_email || order.customer?.email,
+          paymentRecordId: String(paymentActionResult.recordId),
+          acceptedAmount: paymentActionResult.exception.acceptedAmount,
+          shortfall: paymentActionResult.exception.shortfall,
+          reason: paymentActionResult.reason,
+        });
+      }
     } else if (paymentActionResult?.action === "exception_approve") {
       void sendOrderNotification("downpayment_exception_approved", order, {
         customerEmail: order.customer_email || order.customer?.email,
@@ -1778,7 +1864,7 @@ export const getProductReviews = async (req, res) => {
 export const respondToContract = async (req, res) => {
   try {
     const { orderId } = req.params;
-    const { action, declineReason = "" } = req.body;
+    const { action } = req.body;
 
     if (!action || !["accept", "decline"].includes(action)) {
       return res.status(400).json({ success: false, message: "Contract action must be accept or decline." });
@@ -1806,10 +1892,6 @@ export const respondToContract = async (req, res) => {
 
     if (!isAwaitingCustomerResponse) {
       return res.status(400).json({ success: false, message: "Contract cannot be responded to at this stage." });
-    }
-
-    if (action === "decline" && !String(declineReason).trim()) {
-      return res.status(400).json({ success: false, message: "Please provide a reason for declining the contract." });
     }
 
     if (order.order_type === "walk_in_customer") {
@@ -1867,9 +1949,9 @@ export const respondToContract = async (req, res) => {
     }
 
     order.contract_status = "declined";
-    order.status = "site_inspection";
+    order.status = "cancelled";
     order.contractStatus = "Declined";
-    order.contractDeclineReason = String(declineReason).trim();
+    order.contractDeclineReason = "";
     order.contractDeclinedAt = new Date();
 
     await order.save();

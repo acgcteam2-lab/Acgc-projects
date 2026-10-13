@@ -49,7 +49,15 @@ const createTransporter = async () => {
 
   const smtpConfig = getSmtpConfig();
   if (smtpConfig) {
-    transporter = nodemailer.createTransport(smtpConfig);
+    transporter = nodemailer.createTransport({
+      ...smtpConfig,
+      pool: true,
+      maxConnections: 5,
+      maxMessages: 100,
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 60000,
+    });
   } else {
     const testAccount = await nodemailer.createTestAccount();
     transporter = nodemailer.createTransport({

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { preservePendingProductRedirect } from "@/lib/pendingProductAction";
-import { getPasswordStrength } from "@/lib/passwordStrength";
+import { getPasswordStrength, isPasswordPolicySatisfied, PASSWORD_POLICY_HINT, PASSWORD_POLICY_MESSAGE } from "@/lib/passwordStrength";
 import { getPhilippinePhoneError, isValidPhilippinePhone, normalizePhoneInput } from "@/lib/phoneValidation";
 import logo from "../../assets/images/ACGCLOGO1.png";
 import {
@@ -170,6 +170,11 @@ function Signup() {
       return;
     }
 
+    if (!isPasswordPolicySatisfied(formData.password)) {
+      setError(PASSWORD_POLICY_MESSAGE);
+      return;
+    }
+
     try {
       setSubmitting(true);
       const response = await register({
@@ -246,6 +251,8 @@ function Signup() {
                     label="Password *"
                     type={showPassword ? "text" : "password"}
                     name="password"
+                    minLength={8}
+                    maxLength={128}
                     value={formData.password}
                     onChange={handleChange}
                     placeholder="Enter your password"
@@ -278,7 +285,7 @@ function Signup() {
                     </div>
                   ) : null}
                   <p className="mt-2 text-xs leading-4 text-slate-500">
-                    Use 12+ characters with uppercase, lowercase, a number, and a symbol for a stronger password.
+                    {PASSWORD_POLICY_HINT}
                   </p>
                 </div>
                 <div>
@@ -287,6 +294,8 @@ function Signup() {
                     label="Confirm Password *"
                     type={showConfirmPassword ? "text" : "password"}
                     name="confirmPassword"
+                    minLength={8}
+                    maxLength={128}
                     value={formData.confirmPassword}
                     onChange={handleChange}
                     placeholder="Confirm your password"

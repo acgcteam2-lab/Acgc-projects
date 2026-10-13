@@ -106,8 +106,29 @@ const UserSchema = new mongoose.Schema(
     password_reset_code: {
       type: String,
       default: null,
+      select: false,
     },
     password_reset_expires: {
+      type: Date,
+      default: null,
+    },
+    password_reset_sent_at: {
+      type: Date,
+      default: null,
+    },
+    password_reset_attempts: {
+      type: Number,
+      default: 0,
+    },
+    password_reset_request_window_started_at: {
+      type: Date,
+      default: null,
+    },
+    password_reset_request_count: {
+      type: Number,
+      default: 0,
+    },
+    password_reset_request_lock_until: {
       type: Date,
       default: null,
     },
@@ -159,6 +180,11 @@ UserSchema.methods.toJSON = function () {
     delete user.pending_email_verification_sent_at;
     delete user.password_reset_code;
     delete user.password_reset_expires;
+    delete user.password_reset_sent_at;
+    delete user.password_reset_attempts;
+    delete user.password_reset_request_window_started_at;
+    delete user.password_reset_request_count;
+    delete user.password_reset_request_lock_until;
   return user;
 };
 

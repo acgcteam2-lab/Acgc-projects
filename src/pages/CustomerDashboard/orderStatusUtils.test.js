@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getOrderStatusClasses, getOrderStatusLabel, getSiteInspectionNotificationMessage, normalizeOrderStatus } from "./orderStatusUtils";
+import { getOrderStatusClasses, getOrderStatusLabel, getSiteInspectionNotificationMessage, isOrderStatusCompleted, normalizeOrderStatus } from "./orderStatusUtils";
 
 describe("customer order status utils", () => {
   it("normalizes mixed-case order statuses before filtering and rendering", () => {
@@ -15,6 +15,12 @@ describe("customer order status utils", () => {
     expect(getOrderStatusLabel("Site Inspection")).toBe("Site Inspection");
     expect(getOrderStatusClasses("Installation")).toContain("text-red-700");
     expect(getOrderStatusClasses("cancelled")).toContain("text-red-800");
+  });
+
+  it("classifies completed orders by status independently of review submission", () => {
+    expect(isOrderStatusCompleted({ status: "Completed" })).toBe(true);
+    expect(isOrderStatusCompleted({ status: "completed", review: { submittedAt: "2026-10-14" } })).toBe(true);
+    expect(isOrderStatusCompleted({ status: "installation", review: { submittedAt: "2026-10-14" } })).toBe(false);
   });
 
   it("shows the correct inspection wording for pending, scheduled, and completed states", () => {

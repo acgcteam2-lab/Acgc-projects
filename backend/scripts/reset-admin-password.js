@@ -1,12 +1,13 @@
 /**
  * Reset admin password script
- * Usage: node scripts/reset-admin-password.js --email admin@example.com --password newpassword123
+ * Usage: node scripts/reset-admin-password.js --email admin@example.com --password StrongPass8!
  */
 import dotenv from "dotenv";
 import { connectMongo } from "../config/db.js";
 import Admin from "../models/Admin.js";
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
+import { isPasswordPolicySatisfied } from "../services/passwordPolicy.js";
 
 const envPath = new URL("../.env", import.meta.url).pathname;
 dotenv.config({ path: envPath });
@@ -23,13 +24,13 @@ const mongoArg = getArg("--mongo") || getArg("-m");
 
 if (!email || !newPassword) {
   console.error(
-    "Usage: node scripts/reset-admin-password.js --email admin@example.com --password newpassword123 [--mongo <MONGO_URI>]"
+    "Usage: node scripts/reset-admin-password.js --email admin@example.com --password StrongPass8! [--mongo <MONGO_URI>]"
   );
   process.exit(1);
 }
 
-if (newPassword.length < 8) {
-  console.error("Password must be at least 8 characters long");
+if (!isPasswordPolicySatisfied(newPassword)) {
+  console.error("Use 8-128 characters with uppercase, lowercase, a number, and a symbol.");
   process.exit(1);
 }
 

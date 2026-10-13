@@ -18,7 +18,7 @@ Recovery is separate from normal login. It is available only when neither the `A
 
 ## Restore
 
-Open `/admin-recovery`, provide the recovery username, server secret, and current six-digit authenticator code. After verification, enter the replacement administrator profile and a 12+ character password containing uppercase, lowercase, numeric, and symbol characters, then confirm the action. The backend hashes the password through the existing account model, records a recovery audit entry, invalidates the temporary five-minute session, and requires a normal login.
+Open `/admin-recovery`, provide the recovery username, server secret, and current six-digit authenticator code. After verification, enter the replacement administrator profile and a password of 8-128 characters containing uppercase, lowercase, numeric, and symbol characters, then confirm the action. The backend hashes the password through the existing account model, records a recovery audit entry, invalidates the temporary five-minute session, and requires a normal login.
 
 Invalid attempts are rate-limited per source IP (five failures per 15-minute window, followed by a 30-minute lock). TOTP codes can be used once. A valid existing administrator disables recovery. MongoDB connection failures return an unavailable response and never trigger account creation.
 

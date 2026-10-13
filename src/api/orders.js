@@ -1,4 +1,4 @@
-import { apiFetch } from "./client";
+import { apiFetch, API_BASE } from "./client";
 
 export const getOrders = () => apiFetch("/orders", { cache: "no-store" });
 
@@ -16,6 +16,28 @@ export const getAdminOrders = (params = {}) => {
   });
   inFlightAdminOrderRequests.set(path, request);
   return request;
+};
+
+export const downloadTransactionReport = async (filters = {}) => {
+  const query = new URLSearchParams(
+    Object.entries(filters).filter(([, value]) => value !== undefined && value !== null && value !== "")
+  ).toString();
+  const token = localStorage.getItem("token");
+  const response = await fetch(`${API_BASE}/orders/admin/reports${query ? `?${query}` : ""}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const error = new Error(errorData.message || "Unable to generate transaction report.");
+    error.data = errorData;
+    throw error;
+  }
+
+  const disposition = response.headers.get("content-disposition") || "";
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || "ACGC_Transactions.xlsx";
+  return { blob: await response.blob(), filename };
 };
 
 export const getAdminOrder = (orderId, module) => {
@@ -60,7 +82,7 @@ export const respondToContract = (orderId, payload) =>
   });
 
 export const acceptContract = (orderId) => respondToContract(orderId, { action: "accept" });
-export const declineContract = (orderId, declineReason) => respondToContract(orderId, { action: "decline", declineReason });
+export const declineContract = (orderId) => respondToContract(orderId, { action: "decline" });
 export const respondToInstallationSchedule = (orderId, payload) =>
   apiFetch(`/orders/${orderId}/installation-schedule`, {
     method: "PUT",

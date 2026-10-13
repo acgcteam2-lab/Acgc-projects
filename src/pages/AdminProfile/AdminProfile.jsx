@@ -3,6 +3,10 @@ import {
   User,
   Mail,
   Phone,
+  MapPin,
+  Building2,
+  Hash,
+  LockKeyhole,
   Save,
   ShieldCheck,
   Activity,
@@ -13,6 +17,7 @@ import {
   LogOut,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { isPasswordPolicySatisfied, PASSWORD_POLICY_HINT, PASSWORD_POLICY_MESSAGE } from "@/lib/passwordStrength";
 import { getPhilippinePhoneError, isValidPhilippinePhone, normalizePhoneInput } from "@/lib/phoneValidation";
 import { getActivityStorageKey, readActivityLog } from "@/lib/activityLog";
 import { getAdminOrder } from "@/api/orders";
@@ -25,6 +30,25 @@ import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
 import { subscribeToRealtime } from "@/lib/realtimeEvents";
+
+function AdminProfileTextField({ label, icon: Icon, darkMode, inputClassName = "", ...inputProps }) {
+  const themeClass = darkMode
+    ? "border-slate-700 bg-slate-900 text-white placeholder:text-slate-400 disabled:text-slate-400"
+    : "border-gray-300 bg-white text-slate-900 placeholder:text-gray-400 disabled:border-slate-200 disabled:bg-gray-100 disabled:text-gray-500";
+
+  return (
+    <label className={`block text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+      <span className="mb-1 flex min-h-4 items-center">{label}</span>
+      <span className="relative block">
+        <Icon size={18} strokeWidth={1.8} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+        <input
+          {...inputProps}
+          className={`w-full rounded-xl border py-2.5 pl-11 pr-4 outline-none transition focus:border-red-500 focus:ring-4 focus:ring-red-500/10 disabled:cursor-not-allowed ${themeClass} ${inputClassName}`}
+        />
+      </span>
+    </label>
+  );
+}
 
 const createProfileDraft = (user) => ({
   first_name: user.first_name || "",
@@ -73,6 +97,7 @@ function AdminProfile() {
   const [activitySearch, setActivitySearch] = useState("");
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordModalError, setPasswordModalError] = useState("");
+  const [showDiscardConfirmation, setShowDiscardConfirmation] = useState(false);
 
   useEffect(() => {
     localStorage.setItem("sidebarOpen", JSON.stringify(isSidebarOpen));
@@ -275,11 +300,13 @@ function AdminProfile() {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
+    setError("");
+    setSuccess("");
     setProfile((prev) => ({ ...prev, [name]: name === "phone" ? normalizePhoneInput(value) : value }));
   };
 
   const profileHasChanges = () => {
-    if (!user) return false;
+    if (!user || !profile) return false;
     return (
       profile.first_name !== (user.first_name || "") ||
       profile.last_name !== (user.last_name || "") ||
@@ -291,6 +318,15 @@ function AdminProfile() {
       Boolean(profile.new_password) ||
       Boolean(profile.confirm_password)
     );
+  };
+
+  const discardProfileChanges = () => {
+    if (user) setProfile(createProfileDraft(user));
+    setError("");
+    setSuccess("");
+    setPasswordModalError("");
+    setShowPasswordModal(false);
+    setShowDiscardConfirmation(false);
   };
 
   const performSave = async () => {
@@ -315,8 +351,8 @@ function AdminProfile() {
         return false;
       }
 
-      if (profile.new_password.length < 8) {
-        setError("New password must be at least 8 characters long.");
+      if (!isPasswordPolicySatisfied(profile.new_password)) {
+        setError(PASSWORD_POLICY_MESSAGE);
         return false;
       }
 
@@ -405,14 +441,14 @@ function AdminProfile() {
             <div className="min-w-0 rounded-3xl bg-white p-5 shadow sm:p-8">
               <div className="flex flex-col items-center">
                 <ProfileAvatar
-                  name={`${profile.first_name} ${profile.last_name}`}
+                  name={`${user?.first_name || ""} ${user?.last_name || ""}`}
                   avatarOnly
                   size="lg"
                   className="border-4 border-red-100"
                 />
 
                 <h2 className="mt-5 break-words text-center text-xl font-bold sm:text-2xl">
-                  {profile.first_name} {profile.last_name}
+                  {user?.first_name} {user?.last_name}
                 </h2>
                 <p className="text-gray-500 capitalize">{profile.role}</p>
 
@@ -421,7 +457,7 @@ function AdminProfile() {
                     <Mail className="text-red-600" />
                     <div>
                       <p className="text-sm text-gray-500">Email</p>
-                      <p className="break-all font-medium">{profile.email}</p>
+                      <p className="break-all font-medium">{user?.email}</p>
                     </div>
                   </div>
 
@@ -429,7 +465,7 @@ function AdminProfile() {
                     <Phone className="text-red-600" />
                     <div>
                       <p className="text-sm text-gray-500">Phone</p>
-                      <p className="font-medium">{profile.phone || "Not set"}</p>
+                      <p className="font-medium">{user?.phone || "Not set"}</p>
                     </div>
                   </div>
 
@@ -456,6 +492,15 @@ function AdminProfile() {
               {success && (
                 <div className="mb-4 rounded-2xl border border-green-200 bg-green-50 p-4 text-green-700">
                   {success}
+                </div>
+              )}
+
+              {profileHasChanges() && (
+                <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <span>Unsaved changes. Your saved profile is unchanged until you save.</span>
+                  <button type="button" onClick={() => setShowDiscardConfirmation(true)} disabled={saving} className="font-bold underline underline-offset-2 disabled:opacity-60">
+                    Discard changes
+                  </button>
                 </div>
               )}
 
@@ -500,161 +545,29 @@ function AdminProfile() {
 
                 <div className="mt-6">
                   {activeTab === "profile" ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">First Name</label>
-                        <div className="relative mt-2">
-                          <User size={18} className="absolute left-4 top-4 text-gray-400" />
-                          <input
-                            type="text"
-                            name="first_name"
-                            value={profile.first_name}
-                            onChange={handleChange}
-                            className="w-full pl-12 pr-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
-                          />
-                        </div>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <AdminProfileTextField label="First Name" icon={User} darkMode={darkMode} type="text" name="first_name" value={profile.first_name} onChange={handleChange} placeholder="First Name" />
+                      <AdminProfileTextField label="Last Name" icon={User} darkMode={darkMode} type="text" name="last_name" value={profile.last_name} onChange={handleChange} placeholder="Last Name" />
+                      <AdminProfileTextField label="Email Address" icon={Mail} darkMode={darkMode} type="email" name="email" value={profile.email} disabled />
+                      <AdminProfileTextField label="Username" icon={User} darkMode={darkMode} type="text" name="username" value={profile.username} disabled />
+                      <AdminProfileTextField label="Phone Number" icon={Phone} darkMode={darkMode} type="tel" inputMode="tel" maxLength={13} name="phone" value={profile.phone} onChange={handleChange} placeholder="+639171234567 or 09171234567" />
+                      <div className="md:col-span-2">
+                        <AdminProfileTextField label="Street Address" icon={MapPin} darkMode={darkMode} type="text" name="street_address" value={profile.street_address} onChange={handleChange} placeholder="Street address" />
                       </div>
-
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">Last Name</label>
-                        <div className="relative mt-2">
-                          <User size={18} className="absolute left-4 top-4 text-gray-400" />
-                          <input
-                            type="text"
-                            name="last_name"
-                            value={profile.last_name}
-                            onChange={handleChange}
-                            className="w-full pl-12 pr-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">Email Address</label>
-                        <div className="relative mt-2">
-                          <Mail size={18} className="absolute left-4 top-4 text-gray-400" />
-                          <input
-                            type="email"
-                            name="email"
-                            value={profile.email}
-                            disabled
-                            className="w-full pl-12 pr-4 py-3 border rounded-2xl bg-gray-100 text-gray-500"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">Username</label>
-                        <div className="relative mt-2">
-                          <User size={18} className="absolute left-4 top-4 text-gray-400" />
-                          <input
-                            type="text"
-                            name="username"
-                            value={profile.username}
-                            disabled
-                            className="w-full pl-12 pr-4 py-3 border rounded-2xl bg-gray-100 text-gray-500"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">Phone Number</label>
-                        <div className="relative mt-2">
-                          <Phone size={18} className="absolute left-4 top-4 text-gray-400" />
-                          <input
-                            type="tel"
-                            inputMode="tel"
-                            maxLength={13}
-                            name="phone"
-                            value={profile.phone}
-                            onChange={handleChange}
-                            placeholder="+639171234567 or 09171234567"
-                            className="w-full pl-12 pr-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">Street Address</label>
-                        <input
-                          type="text"
-                          name="street_address"
-                          value={profile.street_address}
-                          onChange={handleChange}
-                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">City</label>
-                        <input
-                          type="text"
-                          name="city"
-                          value={profile.city}
-                          onChange={handleChange}
-                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">Province</label>
-                        <input
-                          type="text"
-                          name="province"
-                          value={profile.province}
-                          onChange={handleChange}
-                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">Zip Code</label>
-                        <input
-                          type="text"
-                          name="zip_code"
-                          value={profile.zip_code}
-                          onChange={handleChange}
-                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
-                        />
-                      </div>
+                      <AdminProfileTextField label="City" icon={Building2} darkMode={darkMode} type="text" name="city" value={profile.city} onChange={handleChange} placeholder="City" />
+                      <AdminProfileTextField label="Province" icon={MapPin} darkMode={darkMode} type="text" name="province" value={profile.province} onChange={handleChange} placeholder="Province" />
+                      <AdminProfileTextField label="Zip Code" icon={Hash} darkMode={darkMode} type="text" inputMode="numeric" name="zip_code" value={profile.zip_code} onChange={handleChange} placeholder="Zip Code" />
                     </div>
                   ) : activeTab === "security" ? (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                      <div className="md:col-span-3">
-                        <label className="text-sm font-medium text-gray-600">Current Password</label>
-                        <input
-                          type="password"
-                          name="current_password"
-                          value={profile.current_password}
-                          onChange={handleChange}
-                          placeholder="Enter current password"
-                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
-                        />
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div className="md:col-span-2">
+                        <AdminProfileTextField label="Current Password" icon={LockKeyhole} darkMode={darkMode} type="password" name="current_password" value={profile.current_password} onChange={handleChange} placeholder="Enter current password" autoComplete="current-password" />
                       </div>
-
                       <div>
-                        <label className="text-sm font-medium text-gray-600">New Password</label>
-                        <input
-                          type="password"
-                          name="new_password"
-                          value={profile.new_password}
-                          onChange={handleChange}
-                          placeholder="Enter new password"
-                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
-                        />
+                        <AdminProfileTextField label="New Password" icon={LockKeyhole} darkMode={darkMode} type="password" name="new_password" minLength={8} maxLength={128} value={profile.new_password} onChange={handleChange} placeholder="Enter new password" autoComplete="new-password" />
+                        <p className="mt-1 text-xs text-slate-500">{PASSWORD_POLICY_HINT}</p>
                       </div>
-
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">Confirm Password</label>
-                        <input
-                          type="password"
-                          name="confirm_password"
-                          value={profile.confirm_password}
-                          onChange={handleChange}
-                          placeholder="Confirm new password"
-                          className="w-full mt-2 px-4 py-3 border rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500"
-                        />
-                      </div>
+                      <AdminProfileTextField label="Confirm Password" icon={LockKeyhole} darkMode={darkMode} type="password" name="confirm_password" minLength={8} maxLength={128} value={profile.confirm_password} onChange={handleChange} placeholder="Confirm new password" autoComplete="new-password" />
                     </div>
                   ) : (
                     <div className="space-y-4">
@@ -899,6 +812,23 @@ function AdminProfile() {
                       </button>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {showDiscardConfirmation && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6" role="presentation">
+                  <section role="alertdialog" aria-modal="true" aria-labelledby="discard-admin-profile-title" className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 text-slate-900 shadow-2xl">
+                    <h3 id="discard-admin-profile-title" className="text-lg font-bold">Discard unsaved changes?</h3>
+                    <p className="mt-2 text-sm text-slate-600">Your saved profile is unchanged. The edits in this form will be cleared.</p>
+                    <div className="mt-5 flex justify-end gap-2">
+                      <button type="button" onClick={() => setShowDiscardConfirmation(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                        Keep editing
+                      </button>
+                      <button type="button" onClick={discardProfileChanges} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800">
+                        Discard changes
+                      </button>
+                    </div>
+                  </section>
                 </div>
               )}
             </div>

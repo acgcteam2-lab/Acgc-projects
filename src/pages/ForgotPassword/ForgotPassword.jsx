@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -12,15 +12,20 @@ import {
   LockKeyhole,
   Mail,
 } from "lucide-react";
-import { requestPasswordReset, resetPassword, verifyPasswordResetCode } from "@/api/auth";
+import { requestPasswordReset, resendPasswordResetCode, resetPassword, verifyPasswordResetCode } from "@/api/auth";
 import OtpCodeInput from "@/components/OtpCodeInput";
-import { getPasswordStrength } from "@/lib/passwordStrength";
+import { getPasswordStrength, isPasswordPolicySatisfied, PASSWORD_POLICY_HINT, PASSWORD_POLICY_MESSAGE } from "@/lib/passwordStrength";
 import logo from "../../assets/images/ACGCLOGO1.png";
 
 function ForgotPassword() {
   const [step, setStep] = useState(1);
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
+  const [expiresAt, setExpiresAt] = useState(null);
+  const [resendAvailableAt, setResendAvailableAt] = useState(null);
+  const [rateLimitUntil, setRateLimitUntil] = useState(null);
+  const [serverTimeOffset, setServerTimeOffset] = useState(0);
+  const [clockNow, setClockNow] = useState(0);
   const [resetToken, setResetToken] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -30,6 +35,29 @@ function ForgotPassword() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const passwordStrength = getPasswordStrength(password);
+  const serverNow = clockNow + serverTimeOffset;
+  const secondsUntilExpiry = expiresAt ? Math.max(0, Math.ceil((expiresAt - serverNow) / 1000)) : null;
+  const secondsUntilResend = Math.max(
+    0,
+    Math.ceil((Math.max(resendAvailableAt || 0, rateLimitUntil || 0) - serverNow) / 1000),
+  );
+  const codeExpired = step === 2 && secondsUntilExpiry === 0;
+
+  useEffect(() => {
+    if (step !== 2) return undefined;
+    const timer = window.setInterval(() => setClockNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [step]);
+
+  const syncResetTiming = (response) => {
+    const clientNow = Date.now();
+    const serverNowValue = new Date(response.serverNow).getTime();
+    setServerTimeOffset(Number.isFinite(serverNowValue) ? serverNowValue - clientNow : 0);
+    setExpiresAt(response.expiresAt ? new Date(response.expiresAt).getTime() : null);
+    setResendAvailableAt(response.resendAvailableAt ? new Date(response.resendAvailableAt).getTime() : null);
+    setRateLimitUntil(null);
+    setClockNow(clientNow);
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -39,7 +67,9 @@ function ForgotPassword() {
 
     try {
       if (step === 1) {
-        await requestPasswordReset(email);
+        const response = await requestPasswordReset(email);
+        syncResetTiming(response);
+        setCode("");
         setStep(2);
         setSuccess("A verification code has been sent to your email.");
       } else if (step === 2) {
@@ -47,8 +77,8 @@ function ForgotPassword() {
         setResetToken(response.resetToken);
         setStep(3);
       } else if (step === 3) {
-        if (password.length < 8) {
-          throw new Error("Password must be at least 8 characters.");
+        if (!isPasswordPolicySatisfied(password)) {
+          throw new Error(PASSWORD_POLICY_MESSAGE);
         }
         if (password !== confirmPassword) {
           throw new Error("Passwords do not match.");
@@ -63,6 +93,28 @@ function ForgotPassword() {
       setLoading(false);
     }
   };
+
+  const handleResendCode = async () => {
+    setError("");
+    setSuccess("");
+    setLoading(true);
+    try {
+      const response = await resendPasswordResetCode(email);
+      syncResetTiming(response);
+      setCode("");
+      setSuccess(response.message || "A new verification code has been sent.");
+    } catch (requestError) {
+      const retrySeconds = Number(requestError.data?.retry_after_seconds);
+      if (retrySeconds > 0) {
+        setRateLimitUntil(Date.now() + serverTimeOffset + retrySeconds * 1000);
+      }
+      setError(requestError.data?.message || requestError.message || "Unable to send a new verification code.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatCountdown = (seconds) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
   return (
     <main className="auth-light-canvas flex min-h-screen items-center justify-center px-4 py-5 sm:px-6">
@@ -127,6 +179,27 @@ function ForgotPassword() {
                   <div>
                     <label htmlFor="password-reset-code" className="mb-2 block text-sm font-semibold text-slate-700">Verification code</label>
                     <OtpCodeInput id="password-reset-code" value={code} onChange={setCode} autoFocus />
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 text-xs">
+                      <p className={codeExpired ? "font-semibold text-red-700" : "text-slate-500"} role="status" aria-live="polite">
+                        {codeExpired
+                          ? "Your verification code has expired. Please request a new code."
+                          : secondsUntilExpiry !== null
+                            ? `Code expires in ${formatCountdown(secondsUntilExpiry)}`
+                            : null}
+                      </p>
+                      {secondsUntilResend > 0 ? (
+                        <span className="text-slate-500">Resend code in {secondsUntilResend} seconds</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleResendCode}
+                          disabled={loading}
+                          className="font-bold text-brand underline decoration-transparent underline-offset-2 transition hover:decoration-current disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Resend Code
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ) : null}
                 {step === 3 ? (
@@ -137,6 +210,8 @@ function ForgotPassword() {
                       type={showPassword ? "text" : "password"}
                       value={password}
                       onChange={setPassword}
+                      minLength={8}
+                      maxLength={128}
                       placeholder="Enter new password"
                       showPasswordToggle
                       passwordVisible={showPassword}
@@ -148,6 +223,8 @@ function ForgotPassword() {
                       type={showConfirmPassword ? "text" : "password"}
                       value={confirmPassword}
                       onChange={setConfirmPassword}
+                      minLength={8}
+                      maxLength={128}
                       placeholder="Confirm new password"
                       showPasswordToggle
                       passwordVisible={showConfirmPassword}
@@ -183,7 +260,7 @@ function ForgotPassword() {
                       </div>
                     ) : null}
                     <p className="text-xs leading-4 text-slate-500">
-                      Use 12+ characters with uppercase, lowercase, a number, and a symbol for a stronger password.
+                      {PASSWORD_POLICY_HINT}
                     </p>
                   </div>
                 ) : null}

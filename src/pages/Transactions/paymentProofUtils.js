@@ -1,5 +1,29 @@
 import { getFinalProjectCost, getRequiredDownpayment } from "@/lib/orderPricing";
 
+export const getSavedPaymentTermsLabel = (paymentTerms) => {
+  const terms = String(paymentTerms || "").trim().toLowerCase();
+  const labels = {
+    "50%_down_payment": "50% downpayment, 50% upon completion",
+    full_payment: "Full payment",
+    installment_3_months: "Installment (3 months)",
+    installment_6_months: "Installment (6 months)",
+    custom_arrangement: "Custom arrangement",
+  };
+
+  return labels[terms] || (terms ? terms.replace(/[_-]+/g, " ") : "Payment terms not specified");
+};
+
+export const formatCustomerPaymentAmountInput = (value) => {
+  const sanitized = String(value ?? "").replace(/,/g, "").replace(/[^\d.]/g, "");
+  const decimalIndex = sanitized.indexOf(".");
+  const hasDecimal = decimalIndex !== -1;
+  const integerPart = (hasDecimal ? sanitized.slice(0, decimalIndex) : sanitized).replace(/\./g, "");
+  const decimalPart = hasDecimal ? sanitized.slice(decimalIndex + 1).replace(/\./g, "") : "";
+  const formattedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+  return `${formattedInteger}${hasDecimal ? `.${decimalPart}` : ""}`;
+};
+
 export const validateCustomerPaymentAmount = (value, remainingAmount) => {
   const input = String(value ?? "").trim();
   if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(input)) {
@@ -17,6 +41,39 @@ export const validateCustomerPaymentAmount = (value, remainingAmount) => {
   return { valid: true, amount, message: "" };
 };
 
+const amountInCents = (value) => Math.round((Number(value) || 0) * 100);
+
+const hasMatchingVerifiedPayment = (pendingRecord, records) => {
+  const amount = amountInCents(pendingRecord.submitted_amount);
+  const proofUrl = String(pendingRecord.proof_file_url || "").trim();
+  const transactionNumber = String(pendingRecord.transaction_number || "").trim().toLowerCase();
+  const proofNames = [pendingRecord.proof_file_name, ...(pendingRecord.supporting_documents || []).map((document) => document.original_name)]
+    .map((name) => String(name || "").trim().toLowerCase())
+    .filter(Boolean);
+  if (!amount || (!proofUrl && !transactionNumber && proofNames.length === 0)) return false;
+
+  return records.some((record) => (
+    record !== pendingRecord &&
+    record.status === "verified" &&
+    amountInCents(record.verified_amount) === amount &&
+    (() => {
+      const verifiedProofNames = [record.proof_file_name, ...(record.supporting_documents || []).map((document) => document.original_name)]
+        .map((name) => String(name || "").trim().toLowerCase())
+        .filter(Boolean);
+      return (proofUrl && String(record.proof_file_url || "").trim() === proofUrl) ||
+        (transactionNumber && String(record.transaction_number || "").trim().toLowerCase() === transactionNumber) ||
+        proofNames.some((name) => verifiedProofNames.includes(name));
+    })()
+  ));
+};
+
+export const getUnresolvedPaymentProofRecords = (order) => {
+  const records = Array.isArray(order?.payment_records) ? order.payment_records : [];
+  return records.filter((record) => (
+    record.status === "pending" && !hasMatchingVerifiedPayment(record, records)
+  ));
+};
+
 export const getCustomerPaymentProof = (order) => {
   if (!order) {
     return {
@@ -29,9 +86,22 @@ export const getCustomerPaymentProof = (order) => {
   }
 
   const paymentRecords = Array.isArray(order.payment_records) ? order.payment_records : [];
-  const latestRecord = [...paymentRecords].sort((first, second) => (
-    new Date(second.submitted_at || second.createdAt || 0).getTime() - new Date(first.submitted_at || first.createdAt || 0).getTime()
-  ))[0];
+  const unresolvedRecordIds = new Set(getUnresolvedPaymentProofRecords(order).map((record) => String(record._id || record.id || "")));
+  const latestRecord = paymentRecords
+    .filter((record) => record.status !== "pending" || unresolvedRecordIds.has(String(record._id || record.id || "")))
+    .sort((first, second) => {
+      const firstActivity = first.status === "verified"
+        ? first.verified_at || first.recorded_at || first.submitted_at || first.createdAt
+        : first.status === "rejected"
+          ? first.rejected_at || first.submitted_at || first.createdAt
+          : first.submitted_at || first.createdAt;
+      const secondActivity = second.status === "verified"
+        ? second.verified_at || second.recorded_at || second.submitted_at || second.createdAt
+        : second.status === "rejected"
+          ? second.rejected_at || second.submitted_at || second.createdAt
+          : second.submitted_at || second.createdAt;
+      return new Date(secondActivity || 0).getTime() - new Date(firstActivity || 0).getTime();
+    })[0];
   const hasLedgerSubmission = latestRecord?.submitted_amount !== undefined && latestRecord?.submitted_amount !== null;
   const proofAmount = Number(hasLedgerSubmission
     ? latestRecord.submitted_amount

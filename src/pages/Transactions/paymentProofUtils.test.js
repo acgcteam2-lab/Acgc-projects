@@ -1,5 +1,28 @@
 import { describe, it, expect } from "vitest";
-import { getCustomerPaymentProof, getPaymentSummary, isPaymentProofConfirmed, validateCustomerPaymentAmount } from "@/pages/Transactions/paymentProofUtils";
+import { formatCustomerPaymentAmountInput, getCustomerPaymentProof, getPaymentSummary, getSavedPaymentTermsLabel, getUnresolvedPaymentProofRecords, isPaymentProofConfirmed, validateCustomerPaymentAmount } from "@/pages/Transactions/paymentProofUtils";
+
+describe("getSavedPaymentTermsLabel", () => {
+  it.each([
+    ["50%_down_payment", "50% downpayment, 50% upon completion"],
+    ["full_payment", "Full payment"],
+    ["installment_3_months", "Installment (3 months)"],
+    ["installment_6_months", "Installment (6 months)"],
+    ["custom_arrangement", "Custom arrangement"],
+  ])("labels the saved Site Inspection term %s", (terms, label) => {
+    expect(getSavedPaymentTermsLabel(terms)).toBe(label);
+  });
+});
+
+describe("formatCustomerPaymentAmountInput", () => {
+  it("adds thousands separators as the amount is entered", () => {
+    expect(formatCustomerPaymentAmountInput("1000000")).toBe("1,000,000");
+    expect(formatCustomerPaymentAmountInput("1234567.89")).toBe("1,234,567.89");
+  });
+
+  it("preserves a partially entered decimal amount", () => {
+    expect(formatCustomerPaymentAmountInput("1000.")).toBe("1,000.");
+  });
+});
 
 describe("getCustomerPaymentProof", () => {
   it("detects submitted proof and prefers customer proof fields", () => {
@@ -45,6 +68,72 @@ describe("getCustomerPaymentProof", () => {
       amount_paid: 1250,
       payment_proof_amount: 0,
     }).submitted).toBe(false);
+  });
+
+  it("clears an older pending proof when the same proof and amount are verified", () => {
+    const proofUrl = "https://res.cloudinary.com/acgc/payment-proofs/receipt.png";
+    const order = {
+      payment_records: [
+        {
+          _id: "pending-proof",
+          status: "pending",
+          submitted_amount: 5000,
+          proof_file_url: proofUrl,
+          submitted_at: "2026-10-13T10:00:00.000Z",
+        },
+        {
+          _id: "verified-payment",
+          record_source: "admin_recorded",
+          status: "verified",
+          submitted_amount: null,
+          verified_amount: 5000,
+          proof_file_url: proofUrl,
+          submitted_at: "2026-10-01T00:00:00.000Z",
+          recorded_at: "2026-10-14T10:00:00.000Z",
+          verified_at: "2026-10-14T10:00:00.000Z",
+        },
+      ],
+    };
+
+    expect(getUnresolvedPaymentProofRecords(order)).toEqual([]);
+    expect(getCustomerPaymentProof(order)).toMatchObject({
+      status: "none",
+      recordId: "verified-payment",
+      submitted: false,
+    });
+  });
+
+  it("matches a customer proof to an admin-recorded payment with the same attached filename", () => {
+    const order = {
+      payment_records: [
+        {
+          _id: "pending-proof",
+          status: "pending",
+          submitted_amount: 5000,
+          proof_file_name: "receipt-october.pdf",
+        },
+        {
+          _id: "verified-payment",
+          record_source: "admin_recorded",
+          status: "verified",
+          verified_amount: 5000,
+          supporting_documents: [{ original_name: "receipt-october.pdf" }],
+        },
+      ],
+    };
+
+    expect(getUnresolvedPaymentProofRecords(order)).toEqual([]);
+  });
+
+  it("keeps an equal-amount pending proof unresolved when its reference differs", () => {
+    const order = {
+      payment_records: [
+        { _id: "pending-proof", status: "pending", submitted_amount: 5000, transaction_number: "TX-1" },
+        { _id: "verified-payment", record_source: "admin_recorded", status: "verified", verified_amount: 5000, transaction_number: "TX-2" },
+      ],
+    };
+
+    expect(getUnresolvedPaymentProofRecords(order)).toEqual([order.payment_records[0]]);
   });
 });
 

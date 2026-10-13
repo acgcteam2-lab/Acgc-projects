@@ -1367,13 +1367,7 @@ function Products() {
 
   const [products, setProducts] = useState([]);
 
-  // --- Dynamic product configuration mappings ---
-  const PRODUCT_NAMES = {
-    Glass: ["Sliding Window", "Glass Door", "Jalousie Window"],
-    Aluminum: ["Aluminum Door", "Aluminum Window"],
-    "Mixed System": ["Sink Cabinet", "Hanging Cabinet"],
-  };
-
+  // Legacy pricing-method fallback for older product records.
   const PRICING_METHOD = {
     "Sliding Window": "sqft",
     "Aluminum Window": "sqft",
@@ -1383,8 +1377,6 @@ function Products() {
     "Aluminum Door": "",
     "Jalousie Window": "blade",
   };
-
-  const DEFAULT_CATEGORY = "Windows";
 
   const getCatalogPayload = (value) => value?.items || value?.data || value || [];
 
@@ -1498,16 +1490,11 @@ function Products() {
   };
 
   const normalizeProductForState = (product, fallback = {}) => {
-    const category = getCatalogText(product.category, fallback.category || DEFAULT_CATEGORY);
+    const category = getCatalogText(product.category, fallback.category || "");
     const productType = getCatalogText(product.product_type || product.type, fallback.product_type || fallback.type || "");
     const productName = getCatalogText(product.product_name || product.name, fallback.product_name || fallback.name || "");
     const variant = getCatalogText(product.variant, fallback.variant || "");
-    const type = productType ||
-      (category.toLowerCase() === "glass"
-        ? "Glass"
-        : category.toLowerCase() === "aluminum"
-        ? "Aluminum"
-        : "Mixed System");
+    const type = productType;
 
     return {
       ...product,
@@ -1527,7 +1514,6 @@ function Products() {
 
   const [productTypesList, setProductTypesList] = useState([]);
   const [productTypeCatalogItems, setProductTypeCatalogItems] = useState([]);
-  const [productNamesList, setProductNamesList] = useState(PRODUCT_NAMES);
   const [categoryOptionsList, setCategoryOptionsList] = useState([]);
   const [categoryCatalogItems, setCategoryCatalogItems] = useState([]);
   const [variantsList, setVariantsList] = useState({});
@@ -1536,9 +1522,8 @@ function Products() {
 
   const reloadCatalogLists = async () => {
     const requestVersion = ++catalogLoadVersionRef.current;
-    const [types, names, categories, vars] = await Promise.allSettled([
+    const [types, categories, vars] = await Promise.allSettled([
       catalogApi.getTypes(),
-      catalogApi.getNames(),
       catalogApi.getCategories(),
       catalogApi.getVariants(),
     ]);
@@ -1550,12 +1535,6 @@ function Products() {
       setProductTypesList(items.map((item) => item.name));
     } else {
       console.error("Failed to load product types", types.reason);
-    }
-
-    if (names.status === "fulfilled") {
-      setProductNamesList(mergeGroupedOptionValues(PRODUCT_NAMES, normalizeGroupedOptionValues(names.value, "product_type")));
-    } else {
-      console.error("Failed to load product names", names.reason);
     }
 
     if (categories.status === "fulfilled") {
@@ -1853,13 +1832,7 @@ function Products() {
         ? true
         : String(product.category || "").trim().toLowerCase() === categoryFilter.trim().toLowerCase();
 
-    const productType =
-      product.type ||
-      (String(product.category || "").toLowerCase() === "glass"
-        ? "Glass"
-        : String(product.category || "").toLowerCase() === "aluminum"
-        ? "Aluminum"
-        : "Mixed System");
+    const productType = String(product.product_type || product.type || "").trim();
 
     const matchType =
       typeFilter === "All"
@@ -2256,7 +2229,7 @@ function Products() {
         product_type: selectedProductType,
         product_name: newProduct.product_name || productName,
         pricing_method: pricingMethod,
-        category: selectedCategory || DEFAULT_CATEGORY,
+        category: selectedCategory,
         variant: pricingMethod === "blade" ? "" : variant,
         base_price: numberIfEntered(newProduct.base_price),
         price_per_sqft: numberIfEntered(newProduct.price_per_sqft),
@@ -2380,16 +2353,14 @@ function Products() {
   };
 
   const getProductType = (product) => {
-    const category = product.category || DEFAULT_CATEGORY;
-    return product.type ||
-      (String(category).toLowerCase() === "glass"
-        ? "Glass"
-        : String(category).toLowerCase() === "aluminum"
-        ? "Aluminum"
-        : "Mixed System");
+    return String(product.product_type || product.type || "").trim();
   };
 
   const productTypeOptions = withSelectedOption(productTypesList, newProduct.product_type);
+  const productTypeFilterOptions = mergeOptionValues(
+    productTypesList,
+    products.map((product) => String(product.product_type || product.type || "").trim()).filter(Boolean),
+  );
   const categoryOptions = withSelectedOption(categoryOptionsList, newProduct.category);
   const productCategoryFilterOptions = mergeOptionValues(
     categoryOptionsList,
@@ -2456,9 +2427,7 @@ function Products() {
                   darkMode={darkMode}
                   options={[
                     ["All", "All types"],
-                    ["Default Type", "Default Type"],
-                    ["Glass", "Glass"],
-                    ["Aluminum", "Aluminum"],
+                    ...productTypeFilterOptions.map((option) => [option, option]),
                   ]}
                 />
 

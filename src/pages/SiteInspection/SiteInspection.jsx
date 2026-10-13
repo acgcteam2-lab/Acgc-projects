@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   Ban,
   RotateCcw,
+  CalendarDays,
   ClipboardList,
   X,
 } from "lucide-react";
@@ -93,6 +94,103 @@ const CONTRACT_STAGE_STATUSES = new Set([
 
 const normalizeWorkflowValue = (value) =>
   (value || "").toString().trim().toLowerCase();
+
+export const formatInspectionDateForDisplay = (value) => {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[2]}-${match[3]}-${match[1]}` : "";
+};
+
+export const parseInspectionDateFromDisplay = (value) => {
+  const match = String(value || "").trim().match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (!match) return "";
+
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    year < 1000 ||
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) return "";
+
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+};
+
+function MonthDayYearDateInput({ label, value, min, onChange, className }) {
+  const datePickerRef = useRef(null);
+  const isEditingRef = useRef(false);
+  const [displayValue, setDisplayValue] = useState(() => formatInspectionDateForDisplay(value));
+
+  useEffect(() => {
+    if (!isEditingRef.current) setDisplayValue(formatInspectionDateForDisplay(value));
+  }, [value]);
+
+  const handleBlur = () => {
+    isEditingRef.current = false;
+    const parsedDate = parseInspectionDateFromDisplay(displayValue);
+    if (!displayValue) {
+      onChange("");
+      setDisplayValue("");
+      return;
+    }
+    if (parsedDate && (!min || parsedDate >= min)) {
+      onChange(parsedDate);
+      setDisplayValue(formatInspectionDateForDisplay(parsedDate));
+      return;
+    }
+    setDisplayValue(formatInspectionDateForDisplay(value));
+  };
+
+  return (
+    <div className="relative">
+      <input
+        type="text"
+        inputMode="numeric"
+        placeholder="MM-DD-YYYY"
+        value={displayValue}
+        onChange={(event) => {
+          const nextValue = event.target.value;
+          isEditingRef.current = true;
+          setDisplayValue(nextValue);
+          const parsedDate = parseInspectionDateFromDisplay(nextValue);
+          if (!nextValue || (parsedDate && (!min || parsedDate >= min))) onChange(parsedDate);
+        }}
+        onBlur={handleBlur}
+        aria-label={label}
+        className={`${className} pr-11`}
+      />
+      <button
+        type="button"
+        onClick={() => {
+          const picker = datePickerRef.current;
+          if (!picker) return;
+          if (typeof picker.showPicker === "function") picker.showPicker();
+          else picker.click();
+        }}
+        aria-label={`Choose ${label.toLowerCase()}`}
+        className="absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+      >
+        <CalendarDays size={17} aria-hidden="true" />
+      </button>
+      <input
+        ref={datePickerRef}
+        type="date"
+        value={value || ""}
+        min={min}
+        onChange={(event) => {
+          isEditingRef.current = false;
+          onChange(event.target.value);
+          setDisplayValue(formatInspectionDateForDisplay(event.target.value));
+        }}
+        tabIndex={-1}
+        aria-hidden="true"
+        className="pointer-events-none absolute right-3 top-1/2 h-px w-px -translate-y-1/2 opacity-0"
+      />
+    </div>
+  );
+}
 
 export const normalizeWarrantyPeriodValue = (value, fallback = 90) => {
   if (value === "Custom" || value === "No Warranty") return value;
@@ -395,6 +493,7 @@ export const resolveInspectionProductPrice = (product = null, fallbackItem = {})
   };
   const pricingDetails = {
     ...bladeSelectionDefaults,
+    measurement_unit: product?.measurement_unit || fallbackItem?.measurement_unit || fallbackItem?.measurementUnit || "in",
     customization: Boolean(product?.customization ?? fallbackItem?.customization),
     customization_fee: customizationFee,
     estimated_price_override: Number(product?.estimated_price_override ?? fallbackItem?.estimated_price_override ?? 0) || 0,
@@ -1572,7 +1671,7 @@ function SiteInspection() {
           estimated_price_override: productSnapshot.estimated_price_override,
           extra_charges: productSnapshot.extra_charges,
           size_limits: productSnapshot.size_limits,
-          measurement_unit: item.measurement_unit || item.measurementUnit || selectedProduct?.measurement_unit || "in",
+          measurement_unit: productSnapshot.measurement_unit || item.measurement_unit || item.measurementUnit || "in",
           width: requiresInspectionItemDimensions(productSnapshot) ? productSnapshot.width || item.width || 1 : 0,
           height: requiresInspectionItemDimensions(productSnapshot) ? productSnapshot.height || item.height || 1 : 0,
           unit: selectedProduct?.unit || item.unit || "sqft",
@@ -1651,7 +1750,7 @@ function SiteInspection() {
           estimated_price_override: productSnapshot.estimated_price_override,
           extra_charges: productSnapshot.extra_charges,
           size_limits: productSnapshot.size_limits,
-          measurement_unit: item.measurement_unit || item.measurementUnit || item.dimensions?.unit || selectedProduct?.measurement_unit || "in",
+          measurement_unit: productSnapshot.measurement_unit || item.measurement_unit || item.measurementUnit || item.dimensions?.unit || "in",
           width: requiresInspectionItemDimensions(productSnapshot) ? productSnapshot.width || item.width || 1 : 0,
           height: requiresInspectionItemDimensions(productSnapshot) ? productSnapshot.height || item.height || 1 : 0,
           unit: selectedProduct?.unit || item.unit || "sqft",
@@ -3169,13 +3268,27 @@ function SiteInspection() {
               </h2>
             </div>
 
-            <div className={`flex items-center gap-3 border-b p-4 ${darkMode ? "border-slate-700 bg-[#0d2033]" : "border-slate-200 bg-white"}`}>
-              <button className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === 'site' ? 'bg-red-600 text-white shadow-sm' : darkMode ? 'bg-slate-700 text-slate-200 hover:bg-slate-600' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`} onClick={() => setActiveTab('site')}>
-                Site Inspections
-              </button>
-              <button className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === 'cancelled' ? 'bg-red-600 text-white shadow-sm' : darkMode ? 'bg-slate-700 text-slate-200 hover:bg-slate-600' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`} onClick={() => setActiveTab('cancelled')}>
-                Cancelled
-              </button>
+            <div className={`border-b p-4 ${darkMode ? "border-slate-700 bg-[#0d2033]" : "border-slate-200 bg-white"}`}>
+              <div role="tablist" aria-label="Filter site inspection records" className="flex flex-wrap gap-1.5">
+                {[
+                  { key: "site", label: "Site Inspections", count: inspections.length },
+                  { key: "cancelled", label: "Cancelled", count: cancelledInspections.length },
+                ].map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === tab.key}
+                    onClick={() => setActiveTab(tab.key)}
+                    className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 ${activeTab === tab.key ? (darkMode ? "border-red-700 bg-red-950/60 text-red-100 shadow-sm shadow-black/10" : "border-red-200 bg-red-50 text-red-950 shadow-sm") : (darkMode ? "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white" : "border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 hover:text-slate-900")}`}
+                  >
+                    {tab.label}
+                    <span className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] tabular-nums ${activeTab === tab.key ? (darkMode ? "bg-red-800 text-red-50" : "bg-red-200 text-red-900") : (darkMode ? "bg-slate-700 text-slate-300" : "bg-slate-200 text-slate-700")}`}>
+                      {tab.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="hidden md:block">
@@ -3440,30 +3553,29 @@ function SiteInspection() {
                     <div className="mt-5 grid gap-5 md:grid-cols-3">
                       <div>
                         <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Inspection Date <span className="text-red-400">*</span></label>
-                        <input
-                          type="date"
-                          className={fieldClass}
+                        <MonthDayYearDateInput
+                          label="Inspection date"
                           value={newInspection.inspection_date}
                           min={today}
-                          onChange={(e) => {
-                            const value = e.target.value;
+                          onChange={(value) => {
                             handleInspectionFieldChange("inspection_date", value);
                             if (getInstallationDateError(value, newInspection.estimated_installation_date)) {
                               handleInspectionFieldChange("estimated_installation_date", "");
                             }
                           }}
+                          className={fieldClass}
                         />
                         {errors.inspection_date && <p className="mt-2 text-xs text-red-400">{errors.inspection_date}</p>}
                       </div>
 
                       <div>
                         <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Est. Installation Date</label>
-                        <input
-                          type="date"
-                          className={fieldClass}
+                        <MonthDayYearDateInput
+                          label="Estimated installation date"
                           value={newInspection.estimated_installation_date || ""}
                           min={getMinimumInstallationDate(newInspection.inspection_date)}
-                          onChange={(e) => handleInspectionFieldChange("estimated_installation_date", e.target.value)}
+                          onChange={(value) => handleInspectionFieldChange("estimated_installation_date", value)}
+                          className={fieldClass}
                         />
                         {errors.estimated_installation_date && <p className="mt-2 text-xs text-red-400">{errors.estimated_installation_date}</p>}
                       </div>
@@ -3578,7 +3690,7 @@ function SiteInspection() {
                                 : darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500"
                             }`}
                           >
-                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-green-400 bg-green-600 text-[10px] text-white">✓</span>
+                            <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] text-white ${newInspection.has_account_on_website ? "border-green-400 bg-green-600" : "border-slate-400 bg-slate-500"}`}>✓</span>
                             Yes
                           </button>
                           <button
@@ -3587,11 +3699,11 @@ function SiteInspection() {
                             onClick={() => handleInspectionFieldChange("has_account_on_website", false)}
                             className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
                               !newInspection.has_account_on_website
-                                ? darkMode ? "bg-slate-700 text-slate-100" : "bg-slate-200 text-slate-800"
+                                ? darkMode ? "bg-red-500/15 text-red-300" : "bg-red-50 text-red-700"
                                 : darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500"
                             }`}
                           >
-                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-500 bg-slate-600 text-[10px] text-slate-100">×</span>
+                            <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] text-white ${!newInspection.has_account_on_website ? "border-red-500 bg-red-600" : "border-slate-500 bg-slate-600"}`}>×</span>
                             No
                           </button>
                         </div>
@@ -3976,7 +4088,7 @@ function SiteInspection() {
                                 : darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500"
                             }`}
                           >
-                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-green-400 bg-green-600 text-[10px] text-white">✓</span>
+                            <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] text-white ${newInspection.downpayment_received ? "border-green-400 bg-green-600" : "border-slate-400 bg-slate-500"}`}>✓</span>
                             {isFullPaymentPlan(newInspection.payment_terms) ? "Yes, Received" : "Yes, Paid"}
                           </button>
                           <button
@@ -3984,11 +4096,11 @@ function SiteInspection() {
                             onClick={() => handleInspectionFieldChange("downpayment_received", false)}
                             className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${
                               !newInspection.downpayment_received
-                                ? darkMode ? "bg-slate-700 text-slate-100" : "bg-slate-200 text-slate-800"
+                                ? darkMode ? "bg-red-500/15 text-red-300" : "bg-red-50 text-red-700"
                                 : darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500"
                             }`}
                           >
-                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-500 bg-slate-600 text-[10px] text-slate-100">✕</span>
+                            <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] text-white ${!newInspection.downpayment_received ? "border-red-500 bg-red-600" : "border-slate-500 bg-slate-600"}`}>×</span>
                             Not Yet
                           </button>
                         </div>
@@ -4508,30 +4620,29 @@ function SiteInspection() {
                     <div className="mt-5 grid gap-5 md:grid-cols-3">
                       <div>
                         <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Inspection Date <span className="text-red-400">*</span></label>
-                        <input
-                          type="date"
-                          className={fieldClass}
+                        <MonthDayYearDateInput
+                          label="Inspection date"
                           value={editInspection.inspection_date || ""}
                           min={today}
-                          onChange={(e) => {
-                            const value = e.target.value;
+                          onChange={(value) => {
                             handleEditChange("inspection_date", value);
                             if (getInstallationDateError(value, editInspection.estimated_installation_date)) {
                               handleEditChange("estimated_installation_date", "");
                             }
                           }}
+                          className={fieldClass}
                         />
                         {errors.inspection_date && <p className="mt-2 text-xs text-red-400">{errors.inspection_date}</p>}
                       </div>
 
                       <div>
                         <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Est. Installation Date</label>
-                        <input
-                          type="date"
-                          className={fieldClass}
+                        <MonthDayYearDateInput
+                          label="Estimated installation date"
                           value={editInspection.estimated_installation_date || ""}
                           min={getMinimumInstallationDate(editInspection.inspection_date)}
-                          onChange={(e) => handleEditChange("estimated_installation_date", e.target.value)}
+                          onChange={(value) => handleEditChange("estimated_installation_date", value)}
+                          className={fieldClass}
                         />
                         {errors.estimated_installation_date && <p className="mt-2 text-xs text-red-400">{errors.estimated_installation_date}</p>}
                       </div>
@@ -4644,16 +4755,16 @@ function SiteInspection() {
                             onClick={() => handleEditChange("has_account_on_website", true)}
                             className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-100 ${Boolean(editInspection.has_account_on_website) ? (darkMode ? "bg-green-500/15 text-green-300" : "bg-green-50 text-green-700") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
                           >
-                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-green-400 bg-green-600 text-[10px] text-white">✓</span>
+                            <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] text-white ${editInspection.has_account_on_website ? "border-green-400 bg-green-600" : "border-slate-400 bg-slate-500"}`}>✓</span>
                             Yes
                           </button>
                           <button
                             type="button"
                             disabled={editInspection.isOnlineCustomer}
                             onClick={() => handleEditChange("has_account_on_website", false)}
-                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${!Boolean(editInspection.has_account_on_website) ? (darkMode ? "bg-slate-700 text-slate-100" : "bg-slate-200 text-slate-800") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
+                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${!Boolean(editInspection.has_account_on_website) ? (darkMode ? "bg-red-500/15 text-red-300" : "bg-red-50 text-red-700") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
                           >
-                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-500 bg-slate-600 text-[10px] text-slate-100">×</span>
+                            <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] text-white ${!editInspection.has_account_on_website ? "border-red-500 bg-red-600" : "border-slate-500 bg-slate-600"}`}>×</span>
                             No
                           </button>
                         </div>
@@ -5121,15 +5232,15 @@ function SiteInspection() {
                             onClick={() => handleEditChange("downpayment_received", true)}
                             className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${editInspection.downpayment_received ? (darkMode ? "bg-green-500/15 text-green-300" : "bg-green-50 text-green-700") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
                           >
-                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-green-400 bg-green-600 text-[10px] text-white">✓</span>
+                            <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] text-white ${editInspection.downpayment_received ? "border-green-400 bg-green-600" : "border-slate-400 bg-slate-500"}`}>✓</span>
                             {isFullPaymentPlan(editInspection.payment_terms || "") ? "Yes, Received" : "Yes, Paid"}
                           </button>
                           <button
                             type="button"
                             onClick={() => handleEditChange("downpayment_received", false)}
-                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${!editInspection.downpayment_received ? (darkMode ? "bg-slate-700 text-slate-100" : "bg-slate-200 text-slate-800") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
+                            className={`flex items-center justify-center gap-2 px-4 py-3 text-sm font-bold transition ${!editInspection.downpayment_received ? (darkMode ? "bg-red-500/15 text-red-300" : "bg-red-50 text-red-700") : (darkMode ? "bg-[#122d42] text-slate-400" : "bg-white text-slate-500")}`}
                           >
-                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-500 bg-slate-600 text-[10px] text-slate-100">×</span>
+                            <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] text-white ${!editInspection.downpayment_received ? "border-red-500 bg-red-600" : "border-slate-500 bg-slate-600"}`}>×</span>
                             Not Yet
                           </button>
                         </div>

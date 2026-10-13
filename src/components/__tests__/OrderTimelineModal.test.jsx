@@ -92,6 +92,8 @@ describe("OrderTimelineModal", () => {
 
     expect(screen.queryByText("Uploading a progress photo is optional.")).toBeNull();
     expect(screen.getAllByText("Upload progress photo").length).toBeGreaterThan(0);
+    const completedStatus = screen.getByText(/^Completed ·/);
+    expect(completedStatus.parentElement.children).toHaveLength(2);
   });
 
   it("shows reported and expected dates on delayed stages", () => {

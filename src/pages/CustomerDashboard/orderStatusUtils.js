@@ -8,6 +8,8 @@ export const normalizeOrderStatus = (value) => {
     .trim();
 };
 
+export const isOrderStatusCompleted = (order) => normalizeOrderStatus(order?.status) === "completed";
+
 export const normalizeOrderStatusKey = (value) => normalizeOrderStatus(value).replace(/\s+/g, "_");
 
 const toTitleCase = (text) =>

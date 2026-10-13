@@ -31,6 +31,7 @@ import {
   runScheduledBackup,
   restoreSystemBackup,
 } from "../services/backupService.js";
+import { isPasswordPolicySatisfied, PASSWORD_POLICY_MESSAGE } from "../services/passwordPolicy.js";
 
 const backupImportUpload = multer({
   ...(process.env.VERCEL === "1" ? { storage: multer.memoryStorage() } : { dest: "backups/incoming" }),
@@ -181,6 +182,92 @@ const verificationHashesMatch = (firstHash, secondHash) => {
   return first.length === second.length && first.length > 0 && timingSafeEqual(first, second);
 };
 
+const PASSWORD_RESET_TTL_MS = 15 * 60 * 1000;
+const PASSWORD_RESET_COOLDOWN_MS = 60 * 1000;
+const PASSWORD_RESET_REQUEST_WINDOW_MS = 60 * 60 * 1000;
+const PASSWORD_RESET_MAX_REQUESTS = 5;
+const PASSWORD_RESET_MAX_ATTEMPTS = 5;
+const PASSWORD_RESET_REQUEST_LOCK_MS = 2 * 60 * 1000;
+
+const reservePasswordResetRequest = async (Model, accountId) => {
+  const now = new Date();
+  const cooldownCutoff = new Date(now.getTime() - PASSWORD_RESET_COOLDOWN_MS);
+  const windowCutoff = new Date(now.getTime() - PASSWORD_RESET_REQUEST_WINDOW_MS);
+  const baseFilter = {
+    _id: accountId,
+    $and: [
+      { $or: [
+        { password_reset_sent_at: null },
+        { password_reset_sent_at: { $lte: cooldownCutoff } },
+      ] },
+      { $or: [
+        { password_reset_request_lock_until: null },
+        { password_reset_request_lock_until: { $lte: now } },
+      ] },
+    ],
+  };
+  const lockUntil = new Date(now.getTime() + PASSWORD_RESET_REQUEST_LOCK_MS);
+  const invalidatePreviousCode = {
+    $set: {
+      password_reset_code: null,
+      password_reset_expires: null,
+      password_reset_attempts: 0,
+      password_reset_request_lock_until: lockUntil,
+    },
+  };
+
+  const newWindowAccount = await Model.findOneAndUpdate({
+    ...baseFilter,
+    $or: [
+      { password_reset_request_window_started_at: null },
+      { password_reset_request_window_started_at: { $lte: windowCutoff } },
+    ],
+  }, {
+    ...invalidatePreviousCode,
+    $set: {
+      ...invalidatePreviousCode.$set,
+      password_reset_request_window_started_at: now,
+      password_reset_request_count: 1,
+    },
+  }, { new: true });
+  if (newWindowAccount) return newWindowAccount;
+
+  return Model.findOneAndUpdate({
+    ...baseFilter,
+    password_reset_request_window_started_at: { $gt: windowCutoff },
+    password_reset_request_count: { $lt: PASSWORD_RESET_MAX_REQUESTS },
+  }, {
+    ...invalidatePreviousCode,
+    $inc: { password_reset_request_count: 1 },
+  }, { new: true });
+};
+
+const getPasswordResetTiming = (account, now = new Date()) => {
+  const fallbackSentAt = now;
+  const expiresAt = account?.password_reset_expires || new Date(fallbackSentAt.getTime() + PASSWORD_RESET_TTL_MS);
+  const sentAt = account?.password_reset_sent_at || fallbackSentAt;
+  return {
+    expiresAt: expiresAt.toISOString(),
+    resendAvailableAt: new Date(sentAt.getTime() + PASSWORD_RESET_COOLDOWN_MS).toISOString(),
+    serverNow: now.toISOString(),
+  };
+};
+
+const getPasswordResetRetrySeconds = (account, now = new Date()) => {
+  const nowMs = now.getTime();
+  const cooldownRemaining = account.password_reset_sent_at
+    ? account.password_reset_sent_at.getTime() + PASSWORD_RESET_COOLDOWN_MS - nowMs
+    : 0;
+  const lockRemaining = account.password_reset_request_lock_until
+    ? account.password_reset_request_lock_until.getTime() - nowMs
+    : 0;
+  const windowRemaining = account.password_reset_request_count >= PASSWORD_RESET_MAX_REQUESTS
+    && account.password_reset_request_window_started_at
+    ? account.password_reset_request_window_started_at.getTime() + PASSWORD_RESET_REQUEST_WINDOW_MS - nowMs
+    : 0;
+  return Math.max(1, Math.ceil(Math.max(cooldownRemaining, lockRemaining, windowRemaining, 0) / 1000));
+};
+
 const findValidAdministrator = async () => {
   const [admins, legacyAdmins] = await Promise.all([
     Admin.find({}).select("+password").lean(),
@@ -239,8 +326,7 @@ const validateRecoveryProfile = (body = {}) => {
     typeof username === "string" && /^[a-zA-Z0-9._-]{3,50}$/.test(username.trim()) &&
     typeof first_name === "string" && first_name.trim() && first_name.trim().length <= 80 &&
     typeof last_name === "string" && last_name.trim() && last_name.trim().length <= 80 &&
-    typeof password === "string" && password.length >= 12 && password.length <= 128 &&
-    /[a-z]/.test(password) && /[A-Z]/.test(password) && /\d/.test(password) && /[^A-Za-z0-9]/.test(password)
+    isPasswordPolicySatisfied(password)
   );
 };
 
@@ -695,6 +781,10 @@ router.post("/register", async (req, res) => {
       });
     }
 
+    if (!isPasswordPolicySatisfied(password)) {
+      return res.status(400).json({ success: false, message: PASSWORD_POLICY_MESSAGE });
+    }
+
     const existingUser = await User.findOne({
       $or: [{ email: email.toLowerCase().trim() }, { username: username.toLowerCase().trim() }],
     });
@@ -999,21 +1089,51 @@ router.post("/forgot-password", async (req, res) => {
       return res.status(400).json({ success: false, message: "Email is required." });
     }
 
-    const admin = await Admin.findOne({ email });
-    const user = admin ? null : await User.findOne({ email });
+    const [admin, user] = await Promise.all([
+      Admin.findOne({ email }),
+      User.findOne({ email }),
+    ]);
     const account = admin || user;
 
+    let responseAccount = account;
     if (account) {
-      const code = String(randomInt(100000, 1000000));
-      account.password_reset_code = hashVerificationToken(code);
-      account.password_reset_expires = new Date(Date.now() + 15 * 60 * 1000);
-      await account.save();
-      await sendPasswordResetCode(account, code);
+      const Model = admin ? Admin : User;
+      const reservedAccount = await reservePasswordResetRequest(Model, account._id);
+      if (reservedAccount) {
+        const code = String(randomInt(100000, 1000000));
+        try {
+          await sendPasswordResetCode(reservedAccount, code);
+          const sentAt = new Date();
+          const activeAccount = await Model.findOneAndUpdate({
+            _id: reservedAccount._id,
+            password_reset_request_lock_until: reservedAccount.password_reset_request_lock_until,
+          }, {
+            $set: {
+              password_reset_code: hashVerificationToken(`${reservedAccount._id}:${code}`),
+              password_reset_expires: new Date(sentAt.getTime() + PASSWORD_RESET_TTL_MS),
+              password_reset_sent_at: sentAt,
+              password_reset_attempts: 0,
+              password_reset_request_lock_until: null,
+            },
+          }, { new: true });
+          if (!activeAccount) throw new Error("Password reset request was superseded.");
+          responseAccount = activeAccount;
+        } catch (sendError) {
+          await Model.updateOne(
+            { _id: reservedAccount._id, password_reset_request_lock_until: reservedAccount.password_reset_request_lock_until },
+            { $set: { password_reset_request_lock_until: null } },
+          );
+          throw sendError;
+        }
+      } else {
+        responseAccount = await Model.findById(account._id);
+      }
     }
 
     return res.json({
       success: true,
       message: "If an account exists for that email, a verification code has been sent.",
+      ...getPasswordResetTiming(responseAccount),
     });
   } catch (error) {
     console.error("Forgot password error:", error);
@@ -1021,23 +1141,152 @@ router.post("/forgot-password", async (req, res) => {
   }
 });
 
+router.post("/resend-reset-code", async (req, res) => {
+  try {
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    if (!email) return res.status(400).json({ success: false, message: "Email is required." });
+
+    const [admin, user] = await Promise.all([
+      Admin.findOne({ email }),
+      User.findOne({ email }),
+    ]);
+    const account = admin || user;
+    if (!account) {
+      return res.json({
+        success: true,
+        message: "If an account exists for that email, a verification code has been sent.",
+        ...getPasswordResetTiming(null),
+      });
+    }
+
+    const Model = admin ? Admin : User;
+    const reservedAccount = await reservePasswordResetRequest(Model, account._id);
+    if (!reservedAccount) {
+      const latestAccount = await Model.findById(account._id);
+      const now = new Date();
+      return res.status(429).json({
+        success: false,
+        retry_after_seconds: getPasswordResetRetrySeconds(latestAccount || account, now),
+        retry_available_at: new Date(now.getTime() + getPasswordResetRetrySeconds(latestAccount || account, now) * 1000).toISOString(),
+        serverNow: now.toISOString(),
+        message: "Please wait before requesting another code.",
+      });
+    }
+
+    const code = String(randomInt(100000, 1000000));
+    try {
+      await sendPasswordResetCode(reservedAccount, code);
+      const sentAt = new Date();
+      const activeAccount = await Model.findOneAndUpdate({
+        _id: reservedAccount._id,
+        password_reset_request_lock_until: reservedAccount.password_reset_request_lock_until,
+      }, {
+        $set: {
+          password_reset_code: hashVerificationToken(`${reservedAccount._id}:${code}`),
+          password_reset_expires: new Date(sentAt.getTime() + PASSWORD_RESET_TTL_MS),
+          password_reset_sent_at: sentAt,
+          password_reset_attempts: 0,
+          password_reset_request_lock_until: null,
+        },
+      }, { new: true });
+      if (!activeAccount) throw new Error("Password reset request was superseded.");
+      return res.json({
+        success: true,
+        message: "A new verification code was sent.",
+        ...getPasswordResetTiming(activeAccount, sentAt),
+      });
+    } catch (sendError) {
+      await Model.updateOne(
+        { _id: reservedAccount._id, password_reset_request_lock_until: reservedAccount.password_reset_request_lock_until },
+        { $set: { password_reset_request_lock_until: null } },
+      );
+      console.error("Password reset code resend failed:", sendError);
+      return res.status(502).json({ success: false, message: "Unable to send a new code. Please try again later." });
+    }
+  } catch (error) {
+    console.error("Resend password reset code error:", error);
+    return res.status(500).json({ success: false, message: "Unable to resend the verification code." });
+  }
+});
+
 router.post("/verify-reset-code", async (req, res) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
     const code = String(req.body?.code || "").trim();
-    const admin = await Admin.findOne({
-      email,
-      password_reset_code: hashVerificationToken(code),
-      password_reset_expires: { $gt: new Date() },
-    });
-    const user = admin ? null : await User.findOne({
-      email,
-      password_reset_code: hashVerificationToken(code),
-      password_reset_expires: { $gt: new Date() },
-    });
+    if (!/^\d{6}$/.test(code)) {
+      return res.status(400).json({ success: false, message: "Enter the six-digit verification code." });
+    }
+
+    const admin = await Admin.findOne({ email }).select("+password_reset_code");
+    const user = admin ? null : await User.findOne({ email }).select("+password_reset_code");
     const account = admin || user;
 
-    if (!account) {
+    if (!account || !account.password_reset_code || !account.password_reset_expires) {
+      return res.status(400).json({ success: false, message: "The code is invalid or expired." });
+    }
+
+    const Model = admin ? Admin : User;
+    const now = new Date();
+    if (account.password_reset_expires <= now) {
+      await Model.updateOne(
+        { _id: account._id, password_reset_expires: { $lte: now } },
+        { $set: { password_reset_code: null, password_reset_expires: null } },
+      );
+      return res.status(400).json({ success: false, message: "Your verification code has expired. Please request a new code." });
+    }
+    if (account.password_reset_attempts >= PASSWORD_RESET_MAX_ATTEMPTS) {
+      return res.status(429).json({ success: false, message: "Too many incorrect codes. Request a new code to continue." });
+    }
+
+    const expectedCodeHash = hashVerificationToken(`${account._id}:${code}`);
+    const legacyCodeHash = hashVerificationToken(code);
+    const codeMatches = verificationHashesMatch(expectedCodeHash, account.password_reset_code)
+      || verificationHashesMatch(legacyCodeHash, account.password_reset_code);
+    if (!codeMatches) {
+      const updatedAccount = await Model.findOneAndUpdate({
+        _id: account._id,
+        password_reset_code: account.password_reset_code,
+        password_reset_expires: { $gt: now },
+        $or: [
+          { password_reset_attempts: { $lt: PASSWORD_RESET_MAX_ATTEMPTS } },
+          { password_reset_attempts: null },
+        ],
+      }, { $inc: { password_reset_attempts: 1 } }, { new: true });
+
+      if (!updatedAccount || updatedAccount.password_reset_attempts >= PASSWORD_RESET_MAX_ATTEMPTS) {
+        if (updatedAccount) {
+          await Model.updateOne(
+            { _id: updatedAccount._id, password_reset_code: updatedAccount.password_reset_code },
+            { $set: { password_reset_code: null, password_reset_expires: null } },
+          );
+        }
+        return res.status(429).json({ success: false, attempts_remaining: 0, message: "Too many incorrect codes. Request a new code to continue." });
+      }
+
+      const attemptsRemaining = PASSWORD_RESET_MAX_ATTEMPTS - updatedAccount.password_reset_attempts;
+      return res.status(400).json({
+        success: false,
+        attempts_remaining: attemptsRemaining,
+        message: `Incorrect verification code. ${attemptsRemaining} attempt${attemptsRemaining === 1 ? "" : "s"} remaining.`,
+      });
+    }
+
+    const consumedCode = await Model.findOneAndUpdate({
+      _id: account._id,
+      password_reset_code: account.password_reset_code,
+      password_reset_expires: { $gt: now },
+      $or: [
+        { password_reset_attempts: { $lt: PASSWORD_RESET_MAX_ATTEMPTS } },
+        { password_reset_attempts: null },
+      ],
+    }, {
+      $set: {
+        password_reset_code: null,
+        password_reset_expires: null,
+        password_reset_attempts: 0,
+      },
+    }, { new: true });
+    if (!consumedCode) {
       return res.status(400).json({ success: false, message: "The code is invalid or expired." });
     }
 
@@ -1056,8 +1305,8 @@ router.post("/verify-reset-code", async (req, res) => {
 router.post("/reset-password", async (req, res) => {
   try {
     const { resetToken, password } = req.body || {};
-    if (!resetToken || !password || password.length < 8) {
-      return res.status(400).json({ success: false, message: "A valid reset token and password of at least 8 characters are required." });
+    if (!resetToken || !isPasswordPolicySatisfied(password)) {
+      return res.status(400).json({ success: false, message: `A valid reset token and a password are required. ${PASSWORD_POLICY_MESSAGE}` });
     }
 
     const payload = jwt.verify(resetToken, process.env.JWT_SECRET || "your-secret-key");
@@ -1081,6 +1330,7 @@ router.post("/reset-password", async (req, res) => {
     account.password = password;
     account.password_reset_code = null;
     account.password_reset_expires = null;
+    account.password_reset_attempts = 0;
     await account.save();
     return res.json({ success: true, message: "Password reset successfully. You can now log in." });
   } catch (error) {
@@ -1499,10 +1749,10 @@ router.put("/profile", authMiddleware, async (req, res) => {
     }
 
     if (new_password) {
-      if (new_password.length < 8) {
+      if (!isPasswordPolicySatisfied(new_password)) {
         return res.status(400).json({
           success: false,
-          message: "New password must be at least 8 characters long",
+          message: PASSWORD_POLICY_MESSAGE,
         });
       }
 

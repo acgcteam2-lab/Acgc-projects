@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { AtSign, ArrowLeft, CheckCircle2, Eye, EyeOff, Hash, KeyRound, LockKeyhole, Mail, ShieldAlert, ShieldCheck, UserRound } from "lucide-react";
 import { restoreAdminRecovery, verifyAdminRecovery } from "@/api/auth";
-import { getPasswordStrength } from "@/lib/passwordStrength";
+import { getPasswordStrength, isPasswordPolicySatisfied, PASSWORD_POLICY_HINT, PASSWORD_POLICY_MESSAGE } from "@/lib/passwordStrength";
 import logo from "@/assets/images/ACGCLOGO1.png";
 
 const EMPTY_PROFILE = {
@@ -16,7 +16,6 @@ const EMPTY_PROFILE = {
 
 const inputClass = "w-full rounded-xl border border-gray-300 bg-white py-2.5 pr-4 text-sm text-slate-950 outline-none transition focus:border-red-500 focus:ring-4 focus:ring-red-500/10";
 const ADMIN_USERNAME_PATTERN = /^[A-Za-z0-9._-]{3,50}$/;
-const ADMIN_PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{12,128}$/;
 
 const validateRecoveryProfile = (profile) => {
   const firstName = profile.first_name.trim();
@@ -27,7 +26,7 @@ const validateRecoveryProfile = (profile) => {
   if (!firstName || !lastName) return "Enter the administrator first and last name.";
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return "Enter a valid administrator email address.";
   if (!ADMIN_USERNAME_PATTERN.test(username)) return "Use a username with 3-50 letters, numbers, dots, underscores, or hyphens. Do not use an email address as the username.";
-  if (!ADMIN_PASSWORD_PATTERN.test(profile.password)) return "Use a password with 12+ characters, uppercase, lowercase, a number, and a symbol.";
+  if (!isPasswordPolicySatisfied(profile.password)) return PASSWORD_POLICY_MESSAGE;
   if (profile.password !== profile.confirmPassword) return "The passwords do not match.";
   return "";
 };
@@ -153,7 +152,7 @@ function AdminRecovery() {
                   <label className="space-y-1.5 text-sm font-semibold text-slate-700">
                     New password
                     <span className="relative block">
-                      <RecoveryInput icon={LockKeyhole} hasVisibilityToggle autoComplete="new-password" name="password" type={showPassword ? "text" : "password"} required minLength={12} maxLength={128} value={profile.password} onChange={updateProfile} />
+                      <RecoveryInput icon={LockKeyhole} hasVisibilityToggle autoComplete="new-password" name="password" type={showPassword ? "text" : "password"} required minLength={8} maxLength={128} value={profile.password} onChange={updateProfile} />
                       <button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide new password" : "Show new password"} aria-pressed={showPassword} className="absolute right-2 top-1/2 inline-flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600">
                         {showPassword ? <EyeOff size={17} aria-hidden="true" /> : <Eye size={17} aria-hidden="true" />}
                       </button>
@@ -166,12 +165,12 @@ function AdminRecovery() {
                         <span className="mt-1 block text-xs font-semibold" style={{ color: passwordStrength.color }}>{passwordStrength.label} password</span>
                       </span>
                     ) : null}
-                    <span className="mt-2 block text-xs leading-4 text-slate-500">Use 12+ characters with uppercase, lowercase, a number, and a symbol for a stronger password.</span>
+                    <span className="mt-2 block text-xs leading-4 text-slate-500">{PASSWORD_POLICY_HINT}</span>
                   </label>
                   <label className="space-y-1.5 text-sm font-semibold text-slate-700">
                     Confirm password
                     <span className="relative block">
-                      <RecoveryInput icon={LockKeyhole} hasVisibilityToggle autoComplete="new-password" name="confirmPassword" type={showConfirmPassword ? "text" : "password"} required minLength={12} maxLength={128} value={profile.confirmPassword} onChange={updateProfile} />
+                      <RecoveryInput icon={LockKeyhole} hasVisibilityToggle autoComplete="new-password" name="confirmPassword" type={showConfirmPassword ? "text" : "password"} required minLength={8} maxLength={128} value={profile.confirmPassword} onChange={updateProfile} />
                       <button type="button" onClick={() => setShowConfirmPassword((visible) => !visible)} aria-label={showConfirmPassword ? "Hide confirmed password" : "Show confirmed password"} aria-pressed={showConfirmPassword} className="absolute right-2 top-1/2 inline-flex size-8 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600">
                         {showConfirmPassword ? <EyeOff size={17} aria-hidden="true" /> : <Eye size={17} aria-hidden="true" />}
                       </button>

@@ -913,7 +913,7 @@ function LandingPage() {
           <button
             type="button"
             onClick={() => scrollToSection("home")}
-            className="mx-auto flex min-w-0 items-center gap-2 px-1 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 sm:gap-3 sm:px-1.5 lg:mx-0 lg:flex-1"
+            className="mx-auto flex min-w-0 items-center gap-2 px-1 py-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 sm:gap-3 sm:px-1.5 lg:mx-0"
             aria-label="Go to ACGC Services home"
           >
             <img

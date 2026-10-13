@@ -67,8 +67,29 @@ const AdminSchema = new mongoose.Schema(
     password_reset_code: {
       type: String,
       default: null,
+      select: false,
     },
     password_reset_expires: {
+      type: Date,
+      default: null,
+    },
+    password_reset_sent_at: {
+      type: Date,
+      default: null,
+    },
+    password_reset_attempts: {
+      type: Number,
+      default: 0,
+    },
+    password_reset_request_window_started_at: {
+      type: Date,
+      default: null,
+    },
+    password_reset_request_count: {
+      type: Number,
+      default: 0,
+    },
+    password_reset_request_lock_until: {
       type: Date,
       default: null,
     },
@@ -94,6 +115,11 @@ AdminSchema.methods.toJSON = function () {
   delete admin.password;
   delete admin.password_reset_code;
   delete admin.password_reset_expires;
+  delete admin.password_reset_sent_at;
+  delete admin.password_reset_attempts;
+  delete admin.password_reset_request_window_started_at;
+  delete admin.password_reset_request_count;
+  delete admin.password_reset_request_lock_until;
   return admin;
 };
 

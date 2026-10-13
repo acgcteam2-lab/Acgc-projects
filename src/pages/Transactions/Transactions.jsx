@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   FileText,
+  FileDown,
   CheckCircle,
   Eye,
   Pencil,
@@ -10,6 +11,7 @@ import {
   Trash2,
   X,
   Info,
+  TriangleAlert,
   Paperclip,
   LoaderCircle,
 } from "lucide-react";
@@ -22,23 +24,35 @@ import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
 import ContractModal from "../../components/ContractModal";
 import TransactionDetailsModal from "../../components/TransactionDetailsModal";
-import { getAdminOrders, acceptContract, declineContract, updateOrderStatus, deleteOrderReview } from "@/api/orders";
+import { getAdminOrders, acceptContract, declineContract, updateOrderStatus, deleteOrderReview, downloadTransactionReport } from "@/api/orders";
 import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { useAuth } from "@/contexts/AuthContext";
 import { recordActivity } from "@/lib/activityLog";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
-import { getCustomerPaymentProof, getPaymentSummary, isPaymentProofConfirmed, validateCustomerPaymentAmount } from "./paymentProofUtils";
+import { getCustomerPaymentProof, getPaymentSummary, getSavedPaymentTermsLabel, getUnresolvedPaymentProofRecords, isPaymentProofConfirmed, validateCustomerPaymentAmount } from "./paymentProofUtils";
 import { uploadAdminPaymentDocument, uploadFiles } from "@/api/uploads";
 import { API_BASE } from "@/api/client";
 import { subscribeToRealtime } from "@/lib/realtimeEvents";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import useNotificationHighlight from "@/hooks/useNotificationHighlight";
 
+const TRANSACTION_REPORT_OPTIONS = [
+  { value: "all_reports", label: "All Reports" },
+  { value: "all_transactions", label: "All Transactions" },
+  { value: "completed_projects", label: "Completed Projects" },
+  { value: "active_projects", label: "Active Projects" },
+  { value: "pending_transactions", label: "Pending Transactions" },
+  { value: "customer_feedback", label: "Customer Feedback" },
+  { value: "payment_records", label: "Payment Records" },
+  { value: "warranty_records", label: "Warranty Records" },
+];
+
 function Transactions() {
   const isMobile = useIsMobile();
   const { user } = useAuth();
   const { darkMode } = useAdminTheme();
+  const canGenerateTransactionReport = ["admin", "super_admin"].includes(user?.role);
   const navigate = useNavigate();
   const [isSidebarOpen, setIsSidebarOpen] =
     useState(() => {
@@ -79,6 +93,16 @@ function Transactions() {
   const [cancelledPage, setCancelledPage] =
     useState(1);
   const [tableSearch, setTableSearch] = useState("");
+  const [showGenerateReportModal, setShowGenerateReportModal] = useState(false);
+  const [reportType, setReportType] = useState("all_transactions");
+  const [reportStartDate, setReportStartDate] = useState("");
+  const [reportEndDate, setReportEndDate] = useState("");
+  const [reportProjectStatus, setReportProjectStatus] = useState("all");
+  const [reportCustomer, setReportCustomer] = useState("all");
+  const [reportPaymentStatus, setReportPaymentStatus] = useState("all");
+  const [reportSearch, setReportSearch] = useState("");
+  const [reportGenerationLoading, setReportGenerationLoading] = useState(false);
+  const reportGenerationSubmittingRef = useRef(false);
 
   useEffect(() => {
     setReceiptPage(1);
@@ -112,11 +136,14 @@ function Transactions() {
   const [editPaymentProofPreviewUrl, setEditPaymentProofPreviewUrl] = useState("");
   const editPaymentProofInputRef = useRef(null);
   const [editPaymentRequestId, setEditPaymentRequestId] = useState("");
-  const [showDownpaymentExceptionModal, setShowDownpaymentExceptionModal] = useState(false);
+  const [lowDownpaymentWarning, setLowDownpaymentWarning] = useState(null);
+  const [lowDownpaymentReason, setLowDownpaymentReason] = useState("");
+  const [lowDownpaymentSellerApprovalParty, setLowDownpaymentSellerApprovalParty] = useState("");
+  const [lowDownpaymentSellerApprovalConfirmed, setLowDownpaymentSellerApprovalConfirmed] = useState(false);
+  const [lowDownpaymentWarningError, setLowDownpaymentWarningError] = useState("");
   const [paymentActionLoading, setPaymentActionLoading] = useState(false);
   const [paymentDocumentPreview, setPaymentDocumentPreview] = useState(null);
   const [paymentDocumentLoading, setPaymentDocumentLoading] = useState(false);
-  const [transactionApprovalOrderId, setTransactionApprovalOrderId] = useState("");
   const paymentActionSubmittingRef = useRef(false);
 
   useEffect(() => () => {
@@ -378,6 +405,46 @@ function Transactions() {
     );
   };
 
+  const handleGenerateTransactionReport = async (event) => {
+    event.preventDefault();
+    if (reportGenerationSubmittingRef.current || reportGenerationLoading) return;
+    if (reportStartDate && reportEndDate && reportStartDate > reportEndDate) {
+      toast.error("Start date must be on or before end date.");
+      return;
+    }
+
+    reportGenerationSubmittingRef.current = true;
+    setReportGenerationLoading(true);
+    try {
+      const { blob, filename } = await downloadTransactionReport({
+        type: reportType,
+        startDate: reportStartDate,
+        endDate: reportEndDate,
+        startAt: reportStartDate ? new Date(`${reportStartDate}T00:00:00`).toISOString() : "",
+        endAt: reportEndDate ? new Date(`${reportEndDate}T23:59:59.999`).toISOString() : "",
+        projectStatus: reportHasProjectStatus ? reportProjectStatus : "all",
+        customer: reportCustomer,
+        paymentStatus: reportHasPaymentStatus ? reportPaymentStatus : "all",
+        search: reportSearch.trim(),
+      });
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+      setShowGenerateReportModal(false);
+      toast.success("Transaction report downloaded.");
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to generate transaction report.");
+    } finally {
+      reportGenerationSubmittingRef.current = false;
+      setReportGenerationLoading(false);
+    }
+  };
+
   const handleDeleteCustomerFeedback = async () => {
     if (!feedbackDeleteOrder) return;
     const orderId = feedbackDeleteOrder._id || feedbackDeleteOrder.id;
@@ -503,7 +570,6 @@ function Transactions() {
     setEditPaymentProofFile(null);
     setEditPaymentProofPreviewUrl("");
     setEditPaymentRequestId(globalThis.crypto?.randomUUID?.() || `payment-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-    setShowDownpaymentExceptionModal(false);
     setShowEditPaymentModal(true);
   };
 
@@ -527,7 +593,11 @@ function Transactions() {
     setEditPaymentProofFile(null);
     setEditPaymentProofPreviewUrl("");
     setEditPaymentRequestId("");
-    setShowDownpaymentExceptionModal(false);
+    setLowDownpaymentWarning(null);
+    setLowDownpaymentReason("");
+    setLowDownpaymentSellerApprovalParty("");
+    setLowDownpaymentSellerApprovalConfirmed(false);
+    setLowDownpaymentWarningError("");
   };
 
   const viewAdminPaymentSupportingDocument = async (orderId, recordId, document) => {
@@ -592,7 +662,12 @@ function Transactions() {
     }
   };
 
-  const handleSavePaymentEdit = async () => {
+  const handleSavePaymentEdit = async ({
+    acceptLowerDownpayment = false,
+    reasonOverride,
+    sellerApprovalConfirmed = false,
+    sellerApprovalParty = "",
+  } = {}) => {
     if (!editPaymentOrder) return;
     if (paymentActionSubmittingRef.current || paymentActionLoading) return;
     const amountValidation = validateCustomerPaymentAmount(editPaymentAmount, Number.MAX_SAFE_INTEGER);
@@ -628,8 +703,6 @@ function Transactions() {
     }
 
     const existingSummary = getPaymentSummary(editPaymentOrder);
-    const totalAmount = existingSummary.totalAmount;
-    const existingPaid = existingSummary.paidAmount;
     const proof = getCustomerPaymentProof(editPaymentOrder);
     const pendingSubmission = proof.status === "pending" || (
       !(editPaymentOrder.payment_records || []).length && Boolean(editPaymentOrder.payment_proof_submitted_at && !isPaymentProofConfirmed(editPaymentOrder))
@@ -637,6 +710,35 @@ function Transactions() {
     const selectedRecord = (editPaymentOrder.payment_records || []).find((record) => String(record._id) === editPaymentRecordId);
     const isAdjusting = !pendingSubmission && editPaymentAction === "adjust";
     const amountBeingReplaced = isAdjusting ? Number(selectedRecord?.verified_amount) || 0 : 0;
+    const paidBeforeThisPayment = Math.max(existingSummary.paidAmount - amountBeingReplaced, 0);
+    const remainingRequiredDownpayment = Math.max(existingSummary.requiredAmount - paidBeforeThisPayment, 0);
+    const lowerPaymentReason = String(reasonOverride ?? editPaymentReason).trim();
+    const isBelowRemainingDownpayment = Math.round(nextAmount * 100) < Math.round(remainingRequiredDownpayment * 100);
+    if (isBelowRemainingDownpayment && !acceptLowerDownpayment) {
+      setLowDownpaymentReason("");
+      setLowDownpaymentSellerApprovalParty("");
+      setLowDownpaymentSellerApprovalConfirmed(false);
+      setLowDownpaymentWarningError("");
+      setLowDownpaymentWarning({
+        requiredAmount: existingSummary.requiredAmount,
+        enteredAmount: nextAmount,
+        remainingDownpayment: Math.max(remainingRequiredDownpayment - nextAmount, 0),
+        remainingProjectBalance: Math.max(existingSummary.remainingAmount + amountBeingReplaced - nextAmount, 0),
+      });
+      return;
+    }
+    if (acceptLowerDownpayment && !lowerPaymentReason) {
+      setLowDownpaymentWarningError("Provide a reason for accepting the lower payment.");
+      return;
+    }
+    if (acceptLowerDownpayment && !sellerApprovalConfirmed) {
+      setLowDownpaymentWarningError("Confirm that the seller approved this lower payment before proceeding.");
+      return;
+    }
+    if (acceptLowerDownpayment && !String(sellerApprovalParty).trim()) {
+      setLowDownpaymentWarningError("Record the seller or authorized party who approved this lower payment.");
+      return;
+    }
     const maxAllowedAmount = existingSummary.remainingAmount + amountBeingReplaced;
     if (Math.round(nextAmount * 100) > Math.round(maxAllowedAmount * 100)) {
       toast.error("Payment cannot exceed the remaining project balance.");
@@ -649,12 +751,18 @@ function Transactions() {
     const submittedAmount = Number(proof.submittedAmount ?? proof.amount) || 0;
     const amountChanged = (pendingSubmission && Math.round(nextAmount * 100) !== Math.round(submittedAmount * 100))
       || (isAdjusting && Math.round(nextAmount * 100) !== Math.round(amountBeingReplaced * 100));
-    if ((pendingSubmission || isAdjusting) && amountChanged && !editPaymentReason.trim()) {
+    const sellerApprovalPayload = acceptLowerDownpayment
+      ? {
+          seller_approval_confirmed: sellerApprovalConfirmed,
+          seller_approval_party: String(sellerApprovalParty).trim(),
+        }
+      : {};
+    if ((pendingSubmission || isAdjusting) && amountChanged && !lowerPaymentReason) {
       toast.error("Explain why the verified amount differs from the submitted or previously verified amount.");
       return;
     }
     const isAdminRecording = !pendingSubmission && !isAdjusting && editPaymentAction === "record";
-    if (isAdminRecording && !editPaymentReason.trim()) {
+    if (isAdminRecording && !lowerPaymentReason) {
       toast.error("Provide an admin note for recording a payment on behalf of the customer.");
       return;
     }
@@ -678,17 +786,20 @@ function Transactions() {
       const payload = {
         payment_record_action: pendingSubmission
           ? {
-              action: "verify",
+              action: acceptLowerDownpayment ? "accept_downpayment_exception" : "verify",
               ...(proof.recordId ? { record_id: proof.recordId } : {}),
               verified_amount: nextAmount,
-              reason: editPaymentReason.trim(),
+              reason: lowerPaymentReason,
+              ...sellerApprovalPayload,
             }
           : isAdjusting
             ? {
                 action: "adjust",
                 record_id: editPaymentRecordId,
                 verified_amount: nextAmount,
-                reason: editPaymentReason.trim(),
+                reason: lowerPaymentReason,
+                ...(acceptLowerDownpayment ? { accept_downpayment_exception: true } : {}),
+                ...sellerApprovalPayload,
               }
           : {
               action: "record",
@@ -697,7 +808,9 @@ function Transactions() {
               transaction_number: editPaymentTransactionNumber || editPaymentOrder.transaction_number || "",
               request_id: editPaymentRequestId,
               payment_date: editPaymentDate,
-              reason: editPaymentReason.trim(),
+              reason: lowerPaymentReason,
+              ...(acceptLowerDownpayment ? { accept_downpayment_exception: true } : {}),
+              ...sellerApprovalPayload,
             },
       };
 
@@ -767,98 +880,6 @@ function Transactions() {
       closeEditPaymentModal();
     } catch (error) {
       toast.error(error?.data?.message || error?.message || "Unable to reject payment proof.");
-    } finally {
-      paymentActionSubmittingRef.current = false;
-      setPaymentActionLoading(false);
-    }
-  };
-
-  const handleApproveDownpaymentException = async () => {
-    if (!editPaymentOrder) return;
-    if (paymentActionSubmittingRef.current || paymentActionLoading) return;
-    const proof = getCustomerPaymentProof(editPaymentOrder);
-    if (proof.status !== "pending" || !proof.recordId) {
-      toast.error("The customer payment must be pending verification before an exception can be approved.");
-      return;
-    }
-    if (!editPaymentReason.trim()) {
-      toast.error("Provide a reason for approving the downpayment exception.");
-      return;
-    }
-
-    const orderId = editPaymentOrder._id || editPaymentOrder.id;
-    paymentActionSubmittingRef.current = true;
-    setPaymentActionLoading(true);
-    try {
-      const response = await updateOrderStatus(orderId, {
-        payment_record_action: {
-          action: "accept_downpayment_exception",
-          record_id: proof.recordId,
-          reason: editPaymentReason.trim(),
-        },
-      });
-      const updated = response?.order || {};
-      updateOrderLocally(orderId, updated);
-      const summary = getPaymentSummary(updated);
-      toast.success(`Downpayment exception approved. Remaining project balance: ${formatCurrency(summary.remainingAmount)}.`);
-      closeEditPaymentModal();
-    } catch (error) {
-      toast.error(error?.data?.message || error?.message || "Unable to approve this downpayment exception.");
-    } finally {
-      paymentActionSubmittingRef.current = false;
-      setPaymentActionLoading(false);
-    }
-  };
-
-  const approveTransactionForProgress = async (order) => {
-    if (user?.role !== "admin" || !order || transactionApprovalOrderId) return;
-    const orderId = order._id || order.id;
-    if (!orderId) return;
-    setTransactionApprovalOrderId(String(orderId));
-    try {
-      const response = await updateOrderStatus(orderId, {
-        transaction_approval_action: { action: "approve" },
-      });
-      updateOrderLocally(orderId, response?.order || {});
-      toast.success("Transaction approved. The project is now available in Progress Monitor.");
-    } catch (error) {
-      toast.error(error?.data?.message || error?.message || "Unable to approve this transaction.");
-    } finally {
-      setTransactionApprovalOrderId("");
-    }
-  };
-
-  const handleRequestDownpaymentException = async () => {
-    if (!editPaymentOrder || paymentActionSubmittingRef.current || paymentActionLoading) return;
-    const proof = getCustomerPaymentProof(editPaymentOrder);
-    if (proof.status !== "pending" || !proof.recordId) {
-      toast.error("A customer payment awaiting verification is required to request an exception.");
-      return;
-    }
-    if (proof.downpaymentException?.status === "pending") {
-      setEditPaymentReason("");
-      setShowDownpaymentExceptionModal(true);
-      return;
-    }
-
-    paymentActionSubmittingRef.current = true;
-    setPaymentActionLoading(true);
-    try {
-      const orderId = editPaymentOrder._id || editPaymentOrder.id;
-      const response = await updateOrderStatus(orderId, {
-        payment_record_action: {
-          action: "request_downpayment_exception",
-          record_id: proof.recordId,
-        },
-      });
-      const updated = response?.order || {};
-      updateOrderLocally(orderId, updated);
-      setEditPaymentOrder(updated);
-      setEditPaymentReason("");
-      setShowDownpaymentExceptionModal(true);
-      toast.success("Exception request recorded. The payment remains unverified until you approve it.");
-    } catch (error) {
-      toast.error(error?.data?.message || error?.message || "Unable to request this downpayment exception.");
     } finally {
       paymentActionSubmittingRef.current = false;
       setPaymentActionLoading(false);
@@ -1141,6 +1162,24 @@ function Transactions() {
     const tracking = (o.tracking || "").toString().toLowerCase();
     return tracking.includes(q) || customer.includes(q) || project.includes(q);
   });
+  const transactionTabs = [
+    { key: "all", label: "All", count: transactionOrders.length },
+    { key: "projects", label: "Completed Projects", count: completedProjects.length },
+    { key: "receipts", label: "Contract & Warranties", count: receipts.length },
+    { key: "feedback", label: "Customer Feedbacks", count: feedbackOrders.length },
+  ];
+  const reportCustomerOptions = (() => {
+    const customers = new Map();
+    orders.forEach((order) => {
+      const name = order.customer_name || `${order.customer?.first_name || ""} ${order.customer?.last_name || ""}`.trim() || order.customer_email || "Customer";
+      const customerId = order.customer?._id || order.customer?.id || (typeof order.customer === "string" ? order.customer : "");
+      const value = customerId ? String(customerId) : `name:${name}`;
+      customers.set(value, { value, label: name });
+    });
+    return [...customers.values()].sort((first, second) => first.label.localeCompare(second.label));
+  })();
+  const reportHasProjectStatus = ["all_reports", "all_transactions", "completed_projects", "active_projects", "pending_transactions"].includes(reportType);
+  const reportHasPaymentStatus = ["all_reports", "all_transactions", "pending_transactions", "payment_records"].includes(reportType);
 
   useEffect(() => {
     if (!highlightedNotificationRecordId) return;
@@ -1312,7 +1351,6 @@ function Transactions() {
     const secondaryTextClass = darkMode ? "text-slate-300" : "text-slate-600";
     const tertiaryTextClass = darkMode ? "text-slate-400" : "text-slate-500";
     const strongTextClass = darkMode ? "text-slate-100" : "text-slate-900";
-    const footerClass = darkMode ? "grid grid-cols-2 gap-2 border-t border-slate-700 bg-[#1d2f45] px-4 py-3 sm:gap-3 sm:px-5 sm:py-4" : "grid grid-cols-2 gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:gap-3 sm:px-5 sm:py-4";
     const footerCancelClass = darkMode ? "rounded-xl border border-slate-600 bg-[#15263f] px-5 py-2.5 text-sm font-medium text-slate-200 transition hover:bg-slate-700" : "rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100";
     const footerSaveClass = darkMode ? "rounded-xl border border-red-500/50 bg-red-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-500" : "rounded-xl border border-red-200 bg-red-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-500";
     const proofIconBoxClass = darkMode ? "inline-flex h-5 w-5 items-center justify-center rounded bg-slate-700 text-slate-200" : "inline-flex h-5 w-5 items-center justify-center rounded bg-slate-200 text-slate-700";
@@ -1323,6 +1361,13 @@ function Transactions() {
     const pendingPaymentProof = currentProof.status === "pending" || (
       !(editPaymentOrder.payment_records || []).length && Boolean(editPaymentOrder.payment_proof_submitted_at && !isPaymentProofConfirmed(editPaymentOrder))
     );
+    const footerClass = pendingPaymentProof
+      ? darkMode
+        ? "grid grid-cols-2 gap-2 border-t border-slate-700 bg-[#1d2f45] px-4 py-3 min-[560px]:grid-cols-3 sm:gap-3 sm:px-5 sm:py-4"
+        : "grid grid-cols-2 gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3 min-[560px]:grid-cols-3 sm:gap-3 sm:px-5 sm:py-4"
+      : darkMode
+        ? "grid grid-cols-2 gap-2 border-t border-slate-700 bg-[#1d2f45] px-4 py-3 sm:gap-3 sm:px-5 sm:py-4"
+        : "grid grid-cols-2 gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:gap-3 sm:px-5 sm:py-4";
     const verifiedPaymentRecords = (editPaymentOrder.payment_records || []).filter((record) => record.status === "verified");
     const selectedVerifiedRecord = verifiedPaymentRecords.find((record) => String(record._id) === editPaymentRecordId);
     const adjustingVerifiedPayment = !pendingPaymentProof && editPaymentAction === "adjust";
@@ -1330,9 +1375,6 @@ function Transactions() {
     const maxConfirmableAmount = getPaymentSummary(editPaymentOrder).remainingAmount
       + (adjustingVerifiedPayment ? Number(selectedVerifiedRecord?.verified_amount) || 0 : 0);
     const paymentSummary = getPaymentSummary(editPaymentOrder);
-    const submittedPaymentAmount = Number(currentProof.submittedAmount ?? currentProof.amount) || 0;
-    const exceptionShortfall = Math.max(paymentSummary.requiredAmount - paymentSummary.paidAmount - submittedPaymentAmount, 0);
-    const canOfferDownpaymentException = pendingPaymentProof && Boolean(currentProof.recordId) && submittedPaymentAmount > 0 && exceptionShortfall > 0;
     const orderId = editPaymentOrder._id || editPaymentOrder.id;
     const supportingDocuments = (editPaymentOrder.payment_records || []).flatMap((record) => (
       (record.supporting_documents || []).map((document) => ({
@@ -1363,7 +1405,7 @@ function Transactions() {
             <div className={`${panelClass} mt-3 grid grid-cols-2 gap-3 p-3 text-xs sm:grid-cols-3`}>
               <div><span className={tertiaryTextClass}>ORDER TRACKING ID</span><p className={`mt-1 font-bold ${strongTextClass}`}>{editPaymentOrder.tracking || editPaymentOrder._id}</p></div>
               <div><span className={tertiaryTextClass}>TOTAL PROJECT COST</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.totalAmount)}</p></div>
-              <div><span className={tertiaryTextClass}>REQUIRED DOWNPAYMENT ({paymentSummary.requiredPercentage.toFixed(0)}%)</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.requiredAmount)}</p></div>
+              <div><span className={tertiaryTextClass}>{editPaymentOrder.payment_terms === "full_payment" ? "REQUIRED FULL PAYMENT" : "REQUIRED DOWNPAYMENT"}</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.requiredAmount)}</p><p className={`mt-1 text-[10px] ${tertiaryTextClass}`}>Site Inspection terms: {getSavedPaymentTermsLabel(editPaymentOrder.payment_terms)}</p></div>
               <div><span className={tertiaryTextClass}>AMOUNT ALREADY PAID</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.paidAmount)}</p></div>
               <div><span className={tertiaryTextClass}>DOWNPAYMENT REMAINING</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(Math.max(paymentSummary.requiredAmount - paymentSummary.paidAmount, 0))}</p></div>
               <div><span className={tertiaryTextClass}>REMAINING PROJECT BALANCE</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.remainingAmount)}</p></div>
@@ -1797,15 +1839,7 @@ function Transactions() {
             {pendingPaymentProof && (
               <button type="button" disabled={paymentActionLoading} onClick={handleRejectPaymentProof} className={`${footerCancelClass} min-w-0 text-center leading-tight`}>Reject Proof</button>
             )}
-            {canOfferDownpaymentException && (
-              <button
-                type="button"
-                onClick={handleRequestDownpaymentException}
-                disabled={paymentActionLoading}
-                className={`${footerCancelClass} min-w-0 text-center leading-tight`}
-              >Accept Below Required Downpayment</button>
-            )}
-            <button type="button" disabled={paymentActionLoading} onClick={handleSavePaymentEdit} className={`${footerSaveClass} min-w-0 text-center leading-tight`}>{paymentActionLoading ? "Saving..." : "Save Changes"}</button>
+            <button type="button" disabled={paymentActionLoading} onClick={handleSavePaymentEdit} className={`${footerSaveClass} min-w-0 text-center leading-tight ${pendingPaymentProof ? "col-span-2 min-[560px]:col-span-1" : ""}`}>{paymentActionLoading ? "Saving..." : "Save Changes"}</button>
           </div>
         </div>
       </div>
@@ -1838,55 +1872,31 @@ function Transactions() {
               onChange={(event) => setActiveTable(event.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
             >
-              <option value="all">All</option>
-              <option value="projects">Completed Projects</option>
-              <option value="receipts">Contract &amp; Warranties</option>
-              <option value="feedback">Customer Feedbacks</option>
+              {transactionTabs.map((tab) => (
+                <option key={tab.key} value={tab.key}>{tab.label} ({tab.count})</option>
+              ))}
             </select>
           </div>
 
-          <div className="mt-6 hidden flex-wrap gap-4 md:flex">
-
-            <button
-              onClick={() => setActiveTable("all")}
-              className={`px-5 py-3 rounded-xl font-medium ${
-                activeTable === "all" ? "bg-red-600 text-white" : "bg-white border"
-              }`}
-            >
-              All
-            </button>
-
-            <button
-              onClick={() => setActiveTable("projects")}
-              className={`px-5 py-3 rounded-xl font-medium ${
-                activeTable === "projects" ? "bg-red-600 text-white" : "bg-white border"
-              }`}
-            >
-              <CheckCircle className="inline mr-2" size={18} />
-              Completed Projects
-            </button>
-
-            <button
-              onClick={() => setActiveTable("receipts")}
-              className={`px-5 py-3 rounded-xl font-medium ${
-                activeTable === "receipts" ? "bg-red-600 text-white" : "bg-white border"
-              }`}
-            >
-              Contract &amp; Warranties
-            </button>
-
-            <button
-              onClick={() => setActiveTable("feedback")}
-              className={`px-5 py-3 rounded-xl font-medium ${
-                activeTable === "feedback" ? "bg-red-600 text-white" : "bg-white border"
-              }`}
-            >
-              Customer Feedbacks
-            </button>
-
+          <div className={`mt-6 hidden max-w-full flex-wrap gap-1.5 rounded-2xl border p-1.5 md:flex ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-slate-100"}`} role="tablist" aria-label="Filter transactions">
+            {transactionTabs.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={activeTable === tab.key}
+                onClick={() => setActiveTable(tab.key)}
+                className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 ${activeTable === tab.key ? (darkMode ? "border-red-700 bg-red-950/60 text-red-100 shadow-sm shadow-black/10" : "border-red-200 bg-red-50 text-red-950 shadow-sm") : (darkMode ? "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white" : "border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 hover:text-slate-900")}`}
+              >
+                {tab.label}
+                <span className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] tabular-nums ${activeTable === tab.key ? (darkMode ? "bg-red-800 text-red-50" : "bg-red-200 text-red-900") : (darkMode ? "bg-slate-700 text-slate-300" : "bg-slate-200 text-slate-700")}`}>
+                  {tab.count}
+                </span>
+              </button>
+            ))}
           </div>
 
-          <div className="mt-4">
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <input
               type="text"
               placeholder={activeTable === "feedback" ? "Search customer, product, tracking, review..." : "Search tracking, customer, project..."}
@@ -1895,8 +1905,18 @@ function Transactions() {
                 setTableSearch(e.target.value);
                 if (activeTable === "feedback") setFeedbackPage(1);
               }}
-              className="w-full md:w-1/3 pl-3 pr-3 py-2 border rounded-lg"
+              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/10 sm:max-w-sm ${darkMode ? "border-slate-700 bg-slate-900 text-slate-100 placeholder:text-slate-500" : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"}`}
             />
+            {canGenerateTransactionReport && (
+              <button
+                type="button"
+                onClick={() => setShowGenerateReportModal(true)}
+                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-red-800 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+              >
+                <FileDown size={17} aria-hidden="true" />
+                Generate Report
+              </button>
+            )}
           </div>
 
           <div className="bg-white rounded-3xl shadow mt-6 overflow-hidden">
@@ -1946,10 +1966,8 @@ function Transactions() {
                       const statusLabel = paymentSummary.status.label;
                       const isFullyPaid = paymentSummary.status.key === "paid";
                       const showNeedsConfirmation = (order.payment_records || []).length > 0
-                        ? order.payment_records.some((record) => record.status === "pending")
+                        ? getUnresolvedPaymentProofRecords(order).length > 0
                         : Boolean(order.payment_proof_submitted_at && !isPaymentProofConfirmed(order));
-                      const needsTransactionApproval = order.transaction_approved !== true
-                        && !["approved", "processing", "completed"].includes(String(order.status || "").toLowerCase());
                       const warrantyStatus = getWarrantyStatus(order);
 
                       return (
@@ -2011,8 +2029,8 @@ function Transactions() {
                               <td className="p-4 text-sm text-slate-600">{installDate}</td>
                               <td className="p-4"><span className={`inline-flex rounded-md px-3 py-1 text-xs font-semibold ${projectCategory === "Completed" ? "bg-rose-50 text-rose-700" : "bg-violet-50 text-violet-700"}`}>{projectCategory}</span></td>
                               {activeTable === "receipts" && <td className="p-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getWarrantyStatusClass(warrantyStatus)}`}>{warrantyStatus}</span></td>}
-                              <td className="p-4"><div className="flex flex-col items-start gap-1.5"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${isFullyPaid ? (darkMode ? "border border-emerald-400/40 bg-emerald-500/15 text-emerald-300" : "bg-emerald-100 text-emerald-700") : (darkMode ? "border border-amber-400/40 bg-amber-500/15 text-amber-300" : "bg-amber-50 text-amber-700")}`}>{statusLabel}</span>{needsTransactionApproval && <span className="inline-flex rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">Awaiting transaction approval</span>}{showNeedsConfirmation && (<span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-rose-400/40 bg-rose-500/15 text-rose-300" : "bg-rose-100 text-rose-700"}`}><span aria-hidden="true">🔔</span>Needs Confirmation</span>)}</div></td>
-                              <td className="p-4"><div className="flex flex-wrap justify-center gap-2">{user?.role === "admin" && needsTransactionApproval && <button type="button" disabled={Boolean(transactionApprovalOrderId)} title={transactionApprovalOrderId === String(order._id || order.id) ? "Approving transaction..." : "Approve transaction and move to Progress Monitor"} aria-label={transactionApprovalOrderId === String(order._id || order.id) ? "Approving transaction" : "Approve transaction and move to Progress Monitor"} onClick={() => approveTransactionForProgress(order)} className="inline-flex size-9 items-center justify-center rounded-lg bg-emerald-100 text-emerald-800 transition hover:bg-emerald-200 disabled:opacity-60"><CheckCircle size={16} aria-hidden="true" /></button>}<button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>{isFullyPaid ? (<button type="button" title="Fully paid" aria-label="Fully paid. Payment editing is locked." disabled className={`cursor-not-allowed rounded-lg p-2 ${darkMode ? "bg-slate-700 text-slate-400" : "bg-slate-100 text-slate-500"}`}><Lock size={18} aria-hidden="true" /></button>) : (<button type="button" title="Add Payment" aria-label="Add Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>)}<button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button></div></td>
+                              <td className="p-4"><div className="flex flex-col items-start gap-1.5"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${isFullyPaid ? (darkMode ? "border border-emerald-400/40 bg-emerald-500/15 text-emerald-300" : "bg-emerald-100 text-emerald-700") : (darkMode ? "border border-amber-400/40 bg-amber-500/15 text-amber-300" : "bg-amber-50 text-amber-700")}`}>{statusLabel}</span>{showNeedsConfirmation && (<span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${darkMode ? "border border-rose-400/40 bg-rose-500/15 text-rose-300" : "bg-rose-100 text-rose-700"}`}><span aria-hidden="true">🔔</span>Needs Confirmation</span>)}</div></td>
+                              <td className="p-4"><div className="flex flex-wrap justify-center gap-2"><button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>{isFullyPaid ? (<button type="button" title="Fully paid" aria-label="Fully paid. Payment editing is locked." disabled className={`cursor-not-allowed rounded-lg p-2 ${darkMode ? "bg-slate-700 text-slate-400" : "bg-slate-100 text-slate-500"}`}><Lock size={18} aria-hidden="true" /></button>) : (<button type="button" title="Add Payment" aria-label="Add Payment" onClick={() => openEditPaymentModal(order)} className="p-2 rounded-lg bg-violet-100 text-violet-700 hover:bg-violet-200 transition"><Pencil size={18} /></button>)}<button type="button" title="View Contract" aria-label="View Contract" onClick={() => openReadOnlyContract(order)} className="p-2 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 transition"><FileText size={18} /></button></div></td>
                             </>
                           )}
                         </tr>
@@ -2062,9 +2080,6 @@ function Transactions() {
                 const amountVal = paymentSummary.totalAmount;
                 const paymentMethod = order.payment_method || (order.acceptance_method === "online" ? "Online" : "Cash");
                 const isFullyPaid = paymentSummary.status.key === "paid";
-                const needsTransactionApproval = order.transaction_approved !== true
-                  && !["approved", "processing", "completed"].includes(String(order.status || "").toLowerCase());
-
                 return (
                   <div
                     key={order._id || index}
@@ -2101,7 +2116,6 @@ function Transactions() {
                       </div>
                     )}
                     <div className="mt-3 flex justify-end gap-2">
-                      {user?.role === "admin" && needsTransactionApproval && <button type="button" disabled={Boolean(transactionApprovalOrderId)} title={transactionApprovalOrderId === String(order._id || order.id) ? "Approving transaction..." : "Approve transaction and move to Progress Monitor"} aria-label={transactionApprovalOrderId === String(order._id || order.id) ? "Approving transaction" : "Approve transaction and move to Progress Monitor"} onClick={() => approveTransactionForProgress(order)} className="inline-flex size-9 items-center justify-center rounded-lg bg-emerald-100 text-emerald-800 transition hover:bg-emerald-200 disabled:opacity-60"><CheckCircle size={15} aria-hidden="true" /></button>}
                       <button title="View Transaction" onClick={() => openContractModal(order)} className="p-2 rounded-lg bg-blue-100 text-blue-600 hover:bg-blue-200 transition"><Eye size={18} /></button>
                       {isFullyPaid ? (
                         <button type="button" title="Fully paid" aria-label="Fully paid. Payment editing is locked." disabled className="cursor-not-allowed rounded-lg bg-slate-100 p-2 text-slate-500">
@@ -2167,6 +2181,151 @@ function Transactions() {
           </div>
 
           <Toaster position="bottom-right" />
+
+          {showGenerateReportModal && (
+            <div
+              className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+              role="presentation"
+              onMouseDown={(event) => event.target === event.currentTarget && !reportGenerationLoading && setShowGenerateReportModal(false)}
+            >
+              <section
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="generate-report-title"
+                className={`w-full max-w-2xl overflow-hidden rounded-2xl border shadow-2xl ${darkMode ? "border-slate-700 bg-[#132238] text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+              >
+                <header className={`flex items-start justify-between gap-4 border-b px-5 py-4 ${darkMode ? "border-slate-700 bg-[#0f1b2c]" : "border-slate-200 bg-slate-50"}`}>
+                  <div>
+                    <h2 id="generate-report-title" className="text-lg font-bold">Generate Transaction Report</h2>
+                    <p className={`mt-1 text-sm ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Choose a report and optional filters. All Reports creates a separate worksheet for each category.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowGenerateReportModal(false)}
+                    disabled={reportGenerationLoading}
+                    aria-label="Close report dialog"
+                    className={`inline-flex size-9 shrink-0 items-center justify-center rounded-lg border transition disabled:opacity-50 ${darkMode ? "border-slate-600 text-slate-300 hover:bg-slate-800" : "border-slate-200 text-slate-600 hover:bg-slate-100"}`}
+                  >
+                    <X size={17} aria-hidden="true" />
+                  </button>
+                </header>
+
+                <form onSubmit={handleGenerateTransactionReport}>
+                  <div className="grid max-h-[65vh] gap-4 overflow-y-auto p-5 sm:grid-cols-2">
+                    <label className="block sm:col-span-2">
+                      <span className={`mb-1.5 block text-xs font-bold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Report category</span>
+                      <select
+                        value={reportType}
+                        onChange={(event) => setReportType(event.target.value)}
+                        className={`w-full rounded-lg border px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/10 ${darkMode ? "border-slate-600 bg-[#1d2f45] text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+                      >
+                        {TRANSACTION_REPORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className={`mb-1.5 block text-xs font-bold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Start date</span>
+                      <input
+                        type="date"
+                        value={reportStartDate}
+                        max={reportEndDate || undefined}
+                        onChange={(event) => setReportStartDate(event.target.value)}
+                        className={`w-full rounded-lg border px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/10 ${darkMode ? "border-slate-600 bg-[#1d2f45] text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className={`mb-1.5 block text-xs font-bold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>End date</span>
+                      <input
+                        type="date"
+                        value={reportEndDate}
+                        min={reportStartDate || undefined}
+                        onChange={(event) => setReportEndDate(event.target.value)}
+                        className={`w-full rounded-lg border px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/10 ${darkMode ? "border-slate-600 bg-[#1d2f45] text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+                      />
+                    </label>
+
+                    {reportHasProjectStatus && (
+                      <label className="block">
+                        <span className={`mb-1.5 block text-xs font-bold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Project status</span>
+                        <select
+                          value={reportProjectStatus}
+                          onChange={(event) => setReportProjectStatus(event.target.value)}
+                          className={`w-full rounded-lg border px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/10 ${darkMode ? "border-slate-600 bg-[#1d2f45] text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+                        >
+                          <option value="all">All statuses</option>
+                          <option value="pending">Pending</option>
+                          <option value="active">Active / In Progress</option>
+                          <option value="completed">Completed</option>
+                          <option value="cancelled">Cancelled</option>
+                        </select>
+                      </label>
+                    )}
+
+                    {reportHasPaymentStatus && (
+                      <label className="block">
+                        <span className={`mb-1.5 block text-xs font-bold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Payment status</span>
+                        <select
+                          value={reportPaymentStatus}
+                          onChange={(event) => setReportPaymentStatus(event.target.value)}
+                          className={`w-full rounded-lg border px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/10 ${darkMode ? "border-slate-600 bg-[#1d2f45] text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+                        >
+                          <option value="all">All payment statuses</option>
+                          <option value="pending">Pending</option>
+                          <option value="partial_downpayment">Partial Downpayment</option>
+                          <option value="downpayment">Downpayment Completed</option>
+                          <option value="partial">Partial Payment</option>
+                          <option value="paid">Fully Paid</option>
+                        </select>
+                      </label>
+                    )}
+
+                    <label className="block">
+                      <span className={`mb-1.5 block text-xs font-bold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Customer</span>
+                      <select
+                        value={reportCustomer}
+                        onChange={(event) => setReportCustomer(event.target.value)}
+                        className={`w-full rounded-lg border px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/10 ${darkMode ? "border-slate-600 bg-[#1d2f45] text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
+                      >
+                        <option value="all">All customers</option>
+                        {reportCustomerOptions.map((customer) => <option key={customer.value} value={customer.value}>{customer.label}</option>)}
+                      </select>
+                    </label>
+
+                    <label className="block sm:col-span-2">
+                      <span className={`mb-1.5 block text-xs font-bold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>Search</span>
+                      <input
+                        type="search"
+                        maxLength={200}
+                        value={reportSearch}
+                        onChange={(event) => setReportSearch(event.target.value)}
+                        placeholder="Customer, tracking ID, order ID, or transaction reference"
+                        className={`w-full rounded-lg border px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/10 ${darkMode ? "border-slate-600 bg-[#1d2f45] text-slate-100 placeholder:text-slate-400" : "border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"}`}
+                      />
+                    </label>
+                  </div>
+
+                  <footer className={`flex flex-col-reverse gap-2 border-t px-5 py-4 sm:flex-row sm:justify-end ${darkMode ? "border-slate-700 bg-[#0f1b2c]" : "border-slate-200 bg-slate-50"}`}>
+                    <button
+                      type="button"
+                      onClick={() => setShowGenerateReportModal(false)}
+                      disabled={reportGenerationLoading}
+                      className={`rounded-lg border px-4 py-2.5 text-sm font-semibold transition disabled:opacity-50 ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"}`}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={reportGenerationLoading}
+                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-800 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {reportGenerationLoading ? <LoaderCircle size={16} className="animate-spin" aria-hidden="true" /> : <FileDown size={16} aria-hidden="true" />}
+                      {reportGenerationLoading ? "Generating..." : "Generate Excel Report"}
+                    </button>
+                  </footer>
+                </form>
+              </section>
+            </div>
+          )}
 
           {showContractModal && contractPreviewOrder && (
             <TransactionDetailsModal
@@ -2234,12 +2393,8 @@ function Transactions() {
             </div>
           )}
 
-          {showDownpaymentExceptionModal && editPaymentOrder && (() => {
-            const proof = getCustomerPaymentProof(editPaymentOrder);
+          {lowDownpaymentWarning && editPaymentOrder && (() => {
             const summary = getPaymentSummary(editPaymentOrder);
-            const acceptedAmount = Number(proof.submittedAmount ?? proof.amount) || 0;
-            const shortfallAfterApproval = Math.max(summary.requiredAmount - summary.paidAmount - acceptedAmount, 0);
-            const balanceAfterApproval = Math.max(summary.remainingAmount - acceptedAmount, 0);
             const exceptionInputClass = darkMode
               ? "w-full rounded-xl border border-slate-600 bg-[#1d2f45] px-3 py-2.5 text-base text-slate-100 outline-none focus:border-red-400 focus:ring-2 focus:ring-red-500/30"
               : "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base text-slate-900 outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100";
@@ -2254,36 +2409,78 @@ function Transactions() {
               : "rounded-xl border border-red-200 bg-red-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-500 disabled:opacity-60";
             return (
               <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-4" role="presentation">
-                <section className={`w-full max-w-xl rounded-2xl border shadow-2xl ${darkMode ? "border-slate-700 bg-[#132238] text-slate-100" : "border-slate-200 bg-white text-slate-900"}`} role="dialog" aria-modal="true" aria-labelledby="downpayment-exception-title">
+                <section className={`w-full max-w-xl rounded-2xl border shadow-2xl ${darkMode ? "border-slate-700 bg-[#132238] text-slate-100" : "border-slate-200 bg-white text-slate-900"}`} role="alertdialog" aria-modal="true" aria-labelledby="downpayment-exception-title">
                   <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-700">
-                    <h2 id="downpayment-exception-title" className="text-base font-black">Approve Downpayment Exception</h2>
-                    <p className="mt-2 text-sm font-semibold">The customer's payment is below the required downpayment. Do you approve accepting this amount as an exception to the configured payment terms?</p>
+                    <h2 id="downpayment-exception-title" className="text-base font-black">Confirm Lower Downpayment</h2>
+                    <div className="mt-2 flex items-start gap-2 text-sm font-semibold text-amber-700 dark:text-amber-200">
+                      <TriangleAlert size={18} className="mt-0.5 shrink-0 text-amber-500" aria-hidden="true" />
+                      <p>Warning: Payment is below the required downpayment amount. Please contact the seller to confirm whether this lower payment can be accepted before proceeding.</p>
+                    </div>
                   </div>
                   <div className="space-y-3 px-5 py-4 text-sm">
                     <p className="text-xs font-semibold text-slate-500">Order {editPaymentOrder.tracking || editPaymentOrder._id}</p>
                     <div className="grid grid-cols-2 gap-3">
-                      <div><span className="text-xs text-slate-500">Required downpayment ({summary.requiredPercentage.toFixed(0)}%)</span><p className="mt-1 font-bold">{formatCurrency(summary.requiredAmount)}</p></div>
-                      <div><span className="text-xs text-slate-500">Customer's submitted payment</span><p className="mt-1 font-bold">{formatCurrency(acceptedAmount)}</p></div>
-                      <div><span className="text-xs text-slate-500">Amount already paid</span><p className="mt-1 font-bold">{formatCurrency(summary.paidAmount)}</p></div>
-                      <div><span className="text-xs text-slate-500">Shortfall after this payment</span><p className="mt-1 font-bold text-amber-600">{formatCurrency(shortfallAfterApproval)}</p></div>
-                      <div><span className="text-xs text-slate-500">Remaining balance before</span><p className="mt-1 font-bold">{formatCurrency(summary.remainingAmount)}</p></div>
-                      <div><span className="text-xs text-slate-500">Remaining balance after</span><p className="mt-1 font-bold">{formatCurrency(balanceAfterApproval)}</p></div>
+                      <div><span className="text-xs text-slate-500">{editPaymentOrder.payment_terms === "full_payment" ? "Required full payment" : "Required downpayment"} · {getSavedPaymentTermsLabel(editPaymentOrder.payment_terms)}</span><p className="mt-1 font-bold">{formatCurrency(lowDownpaymentWarning.requiredAmount)}</p></div>
+                      <div><span className="text-xs text-slate-500">Entered payment</span><p className="mt-1 font-bold">{formatCurrency(lowDownpaymentWarning.enteredAmount)}</p></div>
+                      <div><span className="text-xs text-slate-500">Remaining shortfall</span><p className="mt-1 font-bold text-amber-600">{formatCurrency(lowDownpaymentWarning.remainingDownpayment)}</p></div>
+                      <div><span className="text-xs text-slate-500">Remaining project balance</span><p className="mt-1 font-bold">{formatCurrency(lowDownpaymentWarning.remainingProjectBalance)}</p></div>
                     </div>
                     <p className={`rounded-lg px-3 py-2 text-xs ${darkMode ? "bg-amber-500/10 text-amber-200" : "bg-amber-50 text-amber-900"}`}>The configured downpayment remains unchanged. Approval verifies only the submitted amount; it does not mark the downpayment completed.</p>
-                    <label htmlFor="downpayment-exception-reason" className="block text-xs font-bold">Reason for approving this exception <span className="text-red-500">(required)</span></label>
+                    <label htmlFor="downpayment-seller-approval-party" className="block text-xs font-bold">Seller or authorized approving party <span className="text-red-500">(required)</span></label>
+                    <input
+                      id="downpayment-seller-approval-party"
+                      type="text"
+                      maxLength={200}
+                      value={lowDownpaymentSellerApprovalParty}
+                      onChange={(event) => {
+                        setLowDownpaymentSellerApprovalParty(event.target.value);
+                        setLowDownpaymentWarningError("");
+                      }}
+                      placeholder="Name of seller or authorized approver"
+                      className={exceptionInputClass}
+                    />
+                    <label className="flex items-start gap-2 text-xs font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={lowDownpaymentSellerApprovalConfirmed}
+                        onChange={(event) => {
+                          setLowDownpaymentSellerApprovalConfirmed(event.target.checked);
+                          setLowDownpaymentWarningError("");
+                        }}
+                        className="mt-0.5 accent-red-600"
+                      />
+                      <span>I confirm that the seller or authorized party above approved accepting this lower payment.</span>
+                    </label>
+                    <label htmlFor="downpayment-exception-reason" className="block text-xs font-bold">Reason for accepting this lower payment <span className="text-red-500">(required)</span></label>
                     <textarea
                       id="downpayment-exception-reason"
-                      value={editPaymentReason}
-                      onChange={(event) => setEditPaymentReason(event.target.value)}
-                      placeholder="Record the customer agreement and why the lower amount is accepted."
+                      value={lowDownpaymentReason}
+                      onChange={(event) => {
+                        setLowDownpaymentReason(event.target.value);
+                        setLowDownpaymentWarningError("");
+                      }}
+                      placeholder="Record the customer agreement and why this lower amount is accepted."
                       rows={3}
                       maxLength={1000}
                       className={exceptionInputClass}
                     />
+                    {lowDownpaymentWarningError && <p role="alert" className="text-sm font-semibold text-red-600">{lowDownpaymentWarningError}</p>}
                   </div>
                   <div className={exceptionFooterClass}>
-                    <button type="button" disabled={paymentActionLoading} onClick={() => { setShowDownpaymentExceptionModal(false); setEditPaymentReason(""); }} className={exceptionCancelClass}>Cancel</button>
-                    <button type="button" disabled={paymentActionLoading} onClick={handleApproveDownpaymentException} className={exceptionApproveClass}>{paymentActionLoading ? "Approving..." : "Approve Exception"}</button>
+                    <button type="button" disabled={paymentActionLoading} onClick={() => { setLowDownpaymentWarning(null); setLowDownpaymentReason(""); setLowDownpaymentSellerApprovalParty(""); setLowDownpaymentSellerApprovalConfirmed(false); setLowDownpaymentWarningError(""); }} className={exceptionCancelClass}>Cancel</button>
+                    <button
+                      type="button"
+                      disabled={paymentActionLoading || !lowDownpaymentReason.trim() || !lowDownpaymentSellerApprovalParty.trim() || !lowDownpaymentSellerApprovalConfirmed}
+                      onClick={() => handleSavePaymentEdit({
+                        acceptLowerDownpayment: true,
+                        reasonOverride: lowDownpaymentReason,
+                        sellerApprovalConfirmed: lowDownpaymentSellerApprovalConfirmed,
+                        sellerApprovalParty: lowDownpaymentSellerApprovalParty,
+                      })}
+                      className={exceptionApproveClass}
+                    >
+                      {paymentActionLoading ? "Saving..." : "Record Approved Exception"}
+                    </button>
                   </div>
                 </section>
               </div>

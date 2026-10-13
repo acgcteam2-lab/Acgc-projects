@@ -12,6 +12,8 @@ import {
   normalizeWarrantyPeriodValue,
   validateInspectionPayload,
   resolveInspectionProductPrice,
+  formatInspectionDateForDisplay,
+  parseInspectionDateFromDisplay,
 } from "./SiteInspection";
 import { buildOrderTimelineStages } from "@/lib/orderTimeline";
 
@@ -40,6 +42,19 @@ describe("isSiteInspectionVisible", () => {
         contract_status: "accepted",
       })
     ).toBe(false);
+  });
+});
+
+describe("inspection date display format", () => {
+  it("formats ISO dates as month-day-year and parses them back to ISO", () => {
+    expect(formatInspectionDateForDisplay("2026-10-13")).toBe("10-13-2026");
+    expect(parseInspectionDateFromDisplay("10-13-2026")).toBe("2026-10-13");
+    expect(parseInspectionDateFromDisplay("2/9/2026")).toBe("2026-02-09");
+  });
+
+  it("rejects invalid calendar dates", () => {
+    expect(parseInspectionDateFromDisplay("02-29-2025")).toBe("");
+    expect(parseInspectionDateFromDisplay("13-40-2026")).toBe("");
   });
 });
 
@@ -404,6 +419,24 @@ describe("inspection measurement calculations", () => {
 });
 
 describe("resolveInspectionProductPrice", () => {
+  it("prefers the product's configured measurement unit over a new row default", () => {
+    expect(resolveInspectionProductPrice({
+      pricing_method: "sqft",
+      price_per_sqft: 1000,
+      width: 100,
+      height: 199.99,
+      measurement_unit: "cm",
+    }, {
+      width: 1,
+      height: 1,
+      measurement_unit: "in",
+    })).toMatchObject({
+      width: 100,
+      height: 199.99,
+      measurement_unit: "cm",
+    });
+  });
+
   it("uses the product pricing method instead of a stale generic unit price", () => {
     expect(resolveInspectionProductPrice({
       pricing_method: "sqft",

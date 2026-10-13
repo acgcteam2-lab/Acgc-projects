@@ -24,6 +24,7 @@ import {
   sendWalkInApprovalEmail,
 } from "../controllers/orderController.js";
 import { paymentProofUploadMiddleware } from "../controllers/uploadController.js";
+import { generateTransactionReport } from "../controllers/reportController.js";
 
 const router = express.Router();
 
@@ -40,6 +41,7 @@ router.get("/reviews/product/:productId", authMiddleware, permissionMiddleware("
 
 // Admin routes
 router.get("/admin/list", authMiddleware, staffModulePermission((req) => req.query.module), getAdminOrders);
+router.get("/admin/reports", authMiddleware, roleMiddleware(["admin", "super_admin"]), generateTransactionReport);
 router.get("/admin/:orderId", authMiddleware, staffModulePermission((req) => req.query.module), getAdminOrderById);
 router.post("/admin/create", authMiddleware, roleMiddleware("admin"), createOrderAsAdmin);
 router.put("/admin/:orderId/status", authMiddleware, roleMiddleware("admin"), updateOrderStatus);

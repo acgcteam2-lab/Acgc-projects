@@ -2,16 +2,16 @@ import { describe, expect, it } from "vitest";
 import { isProgressMonitorEligibleOrder } from "./orderWorkflow";
 
 describe("isProgressMonitorEligibleOrder", () => {
-  it("keeps a customer-accepted contract in Transactions until an admin approves it", () => {
+  it("sends customer-accepted contracts to Progress Monitor without admin approval", () => {
     expect(isProgressMonitorEligibleOrder({
       status: "contract_accepted",
       contract_status: "accepted",
       acceptedByCustomer: true,
       transaction_approved: false,
-    })).toBe(false);
+    })).toBe(true);
   });
 
-  it("admits a transaction after approval while retaining existing admin review projects", () => {
+  it("retains existing eligible transaction and admin review statuses", () => {
     expect(isProgressMonitorEligibleOrder({ status: "approved", transaction_approved: true })).toBe(true);
     expect(isProgressMonitorEligibleOrder({ status: "admin_review" })).toBe(true);
   });
@@ -36,12 +36,21 @@ describe("isProgressMonitorEligibleOrder", () => {
     })).toBe(true);
   });
 
-  it("continues excluding unapproved accepted contracts with no saved progress", () => {
+  it("keeps accepted transactions eligible when all saved stages are still pending", () => {
     expect(isProgressMonitorEligibleOrder({
       status: "contract_accepted",
       contract_status: "accepted",
       transaction_approved: false,
       progress_stages: [{ key: "installation", status: "pending", completed: false }],
+    })).toBe(true);
+  });
+
+  it("keeps orders out of Progress Monitor before contract acceptance", () => {
+    expect(isProgressMonitorEligibleOrder({
+      status: "site_inspection",
+      contract_status: "sent",
+      acceptedByCustomer: false,
+      transaction_approved: false,
     })).toBe(false);
   });
 });

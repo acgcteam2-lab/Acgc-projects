@@ -54,6 +54,23 @@ describe("backup encryption", () => {
     await reader.close();
   });
 
+  it("creates new backup ZIPs without a transaction report workbook", async () => {
+    const encrypted = await encryptZipBackupBuffer(Buffer.from("compressed backup contents"));
+    const reader = new ZipReader(new Uint8ArrayReader(encrypted), {
+      password: testKey,
+      checkAuthenticationCode: true,
+      useWebWorkers: false,
+    });
+
+    try {
+      const entries = await reader.getEntries();
+      assert.deepEqual(entries.map((entry) => entry.filename), ["system-backup.json.gz"]);
+      assert.deepEqual(await decryptZipBackupBuffer(encrypted), Buffer.from("compressed backup contents"));
+    } finally {
+      await reader.close();
+    }
+  });
+
   it("rejects AES ZIP archives encrypted with a different key", async () => {
     const encrypted = await encryptZipBackupBuffer(Buffer.from("backup contents"));
     process.env.BACKUP_ENCRYPTION_KEY = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";

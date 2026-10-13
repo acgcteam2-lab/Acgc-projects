@@ -3,6 +3,27 @@ import { getFinalProjectCost, getRequiredDownpayment } from "../../src/lib/order
 const toCents = (value) => Math.round((Number(value) || 0) * 100);
 const fromCents = (value) => value / 100;
 
+const hasMatchingPaymentIdentity = (first, second) => {
+  if (toCents(first?.submitted_amount ?? first?.verified_amount) !== toCents(second?.submitted_amount ?? second?.verified_amount)) {
+    return false;
+  }
+  const firstProofUrl = String(first?.proof_file_url || "").trim();
+  const secondProofUrl = String(second?.proof_file_url || "").trim();
+  const firstTransactionNumber = String(first?.transaction_number || "").trim().toLowerCase();
+  const secondTransactionNumber = String(second?.transaction_number || "").trim().toLowerCase();
+  const firstProofNames = [first?.proof_file_name, ...(first?.supporting_documents || []).map((document) => document.original_name)]
+    .map((name) => String(name || "").trim().toLowerCase())
+    .filter(Boolean);
+  const secondProofNames = [second?.proof_file_name, ...(second?.supporting_documents || []).map((document) => document.original_name)]
+    .map((name) => String(name || "").trim().toLowerCase())
+    .filter(Boolean);
+  return Boolean(
+    (firstProofUrl && secondProofUrl && firstProofUrl === secondProofUrl) ||
+    (firstTransactionNumber && secondTransactionNumber && firstTransactionNumber === secondTransactionNumber) ||
+    firstProofNames.some((name) => secondProofNames.includes(name))
+  );
+};
+
 export const getOrderPaymentAmounts = (order = {}) => {
   const totalAmount = getFinalProjectCost(order);
   const requiredAmount = getRequiredDownpayment(order);
@@ -44,15 +65,30 @@ export const getOrderPaymentStatus = (order = {}) => {
 };
 
 export const initializePaymentLedger = (order) => {
+  order.payment_records = Array.isArray(order.payment_records) ? order.payment_records : [];
+  const verifiedRecords = order.payment_records.filter((record) => record.status === "verified");
+  let removedDuplicate = false;
+  for (let index = order.payment_records.length - 1; index >= 0; index -= 1) {
+    const record = order.payment_records[index];
+    if (record.status === "pending" && verifiedRecords.some((verified) => hasMatchingPaymentIdentity(record, verified))) {
+      order.payment_records.splice(index, 1);
+      removedDuplicate = true;
+    }
+  }
+  if (removedDuplicate) order.markModified?.("payment_records");
   if (order.payment_ledger_initialized) return;
   const previousPaid = getOrderPaymentAmounts(order).paidAmount;
   order.legacy_verified_amount = previousPaid;
   order.payment_ledger_initialized = true;
-  order.payment_records = Array.isArray(order.payment_records) ? order.payment_records : [];
   if (
     order.payment_proof_submitted_at &&
     !order.payment_proof_confirmed_at &&
     Number(order.payment_proof_amount) > 0 &&
+    !verifiedRecords.some((record) => hasMatchingPaymentIdentity({
+      submitted_amount: order.payment_proof_amount,
+      proof_file_url: order.payment_proof_file_url,
+      transaction_number: order.transaction_number,
+    }, record)) &&
     !order.payment_records.some((record) => record.status === "pending")
   ) {
     order.payment_records.push({
@@ -99,4 +135,55 @@ export const getDownpaymentExceptionSummary = (order, acceptedAmount, replacedVe
     shortfall,
     eligible: acceptedAmount > 0 && requiredAmount > 0 && toCents(projectedPaidAmount) < toCents(requiredAmount),
   };
+};
+
+export const validateDownpaymentExceptionAcceptance = (
+  order,
+  paymentAmount,
+  replacedVerifiedAmount = 0,
+  explicitlyAccepted = false,
+) => {
+  const summary = getDownpaymentExceptionSummary(order, paymentAmount, replacedVerifiedAmount);
+  if (summary.eligible && !explicitlyAccepted) {
+    return {
+      valid: false,
+      requiresAcceptance: true,
+      message: "Warning: Payment is below the required downpayment amount. Please contact the seller to confirm whether this lower payment can be accepted before proceeding.",
+      summary,
+    };
+  }
+  if (explicitlyAccepted && !summary.eligible) {
+    return {
+      valid: false,
+      requiresAcceptance: false,
+      message: "A downpayment exception is not needed because this payment covers the remaining required downpayment.",
+      summary,
+    };
+  }
+  return { valid: true, requiresAcceptance: summary.eligible, summary };
+};
+
+export const validateDownpaymentExceptionApproval = ({
+  explicitlyAccepted = false,
+  sellerApprovalConfirmed = false,
+  sellerApprovalParty = "",
+  reason = "",
+} = {}) => {
+  if (!explicitlyAccepted) return { valid: true, message: "" };
+  if (sellerApprovalConfirmed !== true) {
+    return { valid: false, message: "Confirm that the seller approved this lower payment before proceeding." };
+  }
+  if (!String(sellerApprovalParty).trim()) {
+    return { valid: false, message: "Record the seller or authorized party who approved this lower payment." };
+  }
+  if (String(sellerApprovalParty).trim().length > 200) {
+    return { valid: false, message: "The seller approval name must be 200 characters or fewer." };
+  }
+  if (!String(reason).trim()) {
+    return { valid: false, message: "Provide a reason for accepting a payment below the required downpayment." };
+  }
+  if (String(reason).trim().length > 1000) {
+    return { valid: false, message: "The exception reason must be 1000 characters or fewer." };
+  }
+  return { valid: true, message: "" };
 };

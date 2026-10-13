@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { getRealtimeClientId } from "@/lib/realtimeClientId";
 
 const RealtimeContext = createContext({ connected: false });
+const REALTIME_FALLBACK_INTERVAL_MS = 10_000;
 
 const getRealtimeUrl = () => {
   const configuredUrl = import.meta.env.VITE_REALTIME_URL?.trim();
@@ -34,7 +35,7 @@ export function RealtimeProvider({ children }) {
       setConnected(false);
       const fallbackInterval = window.setInterval(() => {
         publishToPages({ area: "all", action: "reconcile", timestamp: new Date().toISOString() });
-      }, 60_000);
+      }, REALTIME_FALLBACK_INTERVAL_MS);
       const reconcileOnFocus = () => {
         if (document.visibilityState === "visible") {
           publishToPages({ area: "all", action: "reconcile", timestamp: new Date().toISOString() });
@@ -67,7 +68,7 @@ export function RealtimeProvider({ children }) {
       if (fallbackInterval || socket.connected) return;
       fallbackInterval = window.setInterval(() => {
         publishToPages({ area: "all", action: "reconcile", timestamp: new Date().toISOString() });
-      }, 60_000);
+      }, REALTIME_FALLBACK_INTERVAL_MS);
     };
     const handleReady = () => {
       publishToPages({ area: "all", action: "reconcile", timestamp: new Date().toISOString() });

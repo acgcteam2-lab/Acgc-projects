@@ -12,6 +12,14 @@ export const requestPasswordReset = (email) =>
   apiFetch("/auth/forgot-password", {
     method: "POST",
     body: JSON.stringify({ email }),
+    _retries: 1,
+  });
+
+export const resendPasswordResetCode = (email) =>
+  apiFetch("/auth/resend-reset-code", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+    _retries: 1,
   });
 
 export const verifyPasswordResetCode = (email, code) =>
