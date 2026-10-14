@@ -28,13 +28,55 @@ Set these in the backend service's Vercel environment settings:
 - `CLOUDINARY_URL` (copied from Cloudinary's API environment variable field), or `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`
 - `BACKUP_ENCRYPTION_KEY` (the existing key is required to read old encrypted backups)
 - `CRON_SECRET` (a newly generated long random secret)
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`
+- `EMAIL_FROM` using a Brevo-verified sender, for example `ACGC Services <no-reply@example.com>`
+- Brevo Nodemailer SMTP: `BREVO_SMTP_LOGIN` and `BREVO_SMTP_KEY`
+- Optional Brevo REST fallback: `BREVO_API_KEY`
+- Optional SMTP fallback: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, and either `SMTP_PASS` or `SMTP_PASSWORD`
 - `ADMIN_EMAIL`
 - `FRONTEND_URL` (the production Vercel site URL)
 - `SUPPORT_EMAIL` and `SUPPORT_PHONE` if configured
 - `NODE_ENV=production`
 
 Do not set `PORT`; Vercel supplies it. The Vercel Cron job calls `/api/auth/system-settings/cron-backup` daily and authenticates using `CRON_SECRET`.
+
+## Brevo Transactional Email
+
+The backend mailer tries Brevo SMTP through Nodemailer first whenever `BREVO_SMTP_LOGIN` and `BREVO_SMTP_KEY` are present. If those are missing, it can use the Brevo REST API when `BREVO_API_KEY` is present, then the generic SMTP fallback. This covers password reset codes, email verification, profile email-change codes, contract emails, and order notifications because they all use the shared `sendMail` helper.
+
+Before deploying, complete these Brevo account steps:
+
+- Rotate any API key or SMTP key that was stored locally or shared during setup.
+- Verify the sender email or authenticate the sending domain in Brevo.
+- If Brevo API security has authorized IPs enabled, either disable that restriction for Vercel or use infrastructure with a stable outbound IP and add that IP in Brevo. Vercel serverless outbound IPs are not a stable single value by default.
+- Set `EMAIL_FROM` to the exact verified sender identity.
+- Copy the SMTP login and SMTP key from Brevo > SMTP & API > SMTP. The SMTP key is not the same thing as the REST API key.
+
+Recommended backend Vercel variables for email:
+
+```env
+EMAIL_FROM=ACGC Services <your_verified_sender@example.com>
+BREVO_SMTP_HOST=smtp-relay.brevo.com
+BREVO_SMTP_PORT=587
+BREVO_SMTP_LOGIN=your_brevo_smtp_login
+BREVO_SMTP_KEY=your_brevo_smtp_key
+BREVO_SENDER_NAME=ACGC Services
+```
+
+Optional Brevo REST fallback:
+
+```env
+BREVO_API_KEY=your_rotated_brevo_api_key
+```
+
+Optional Gmail SMTP fallback:
+
+```env
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=yourgmail@gmail.com
+SMTP_PASSWORD=your_gmail_app_password
+```
 
 ## Before Production
 
