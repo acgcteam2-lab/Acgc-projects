@@ -232,11 +232,38 @@ const sendSmtpMail = async (mailOptions) => {
   return result;
 };
 
+const createPooledTransport = (smtpConfig) => nodemailer.createTransport({
+  ...smtpConfig,
+  pool: true,
+  maxConnections: 5,
+  maxMessages: 100,
+  connectionTimeout: 15000,
+  greetingTimeout: 15000,
+  socketTimeout: 60000,
+});
+
+const sendGenericSmtpMail = async (mailOptions) => {
+  const smtpConfig = getSmtpConfig();
+  if (!smtpConfig) {
+    throw new Error("Generic SMTP fallback is not configured.");
+  }
+
+  const fallbackTransporter = createPooledTransport(smtpConfig);
+  try {
+    return await fallbackTransporter.sendMail(mailOptions);
+  } finally {
+    fallbackTransporter.close();
+  }
+};
+
 const hasSmtpCredentials = () =>
   Boolean(
     (process.env.BREVO_SMTP_LOGIN || process.env.BREVO_SMTP_USER) &&
     (process.env.BREVO_SMTP_KEY || process.env.BREVO_SMTP_PASSWORD)
   ) || Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_USER && (process.env.SMTP_PASS || process.env.SMTP_PASSWORD));
+
+const hasGenericSmtpCredentials = () =>
+  Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_USER && (process.env.SMTP_PASS || process.env.SMTP_PASSWORD));
 
 const hasBrevoSmtpCredentials = () =>
   Boolean(
@@ -247,7 +274,17 @@ const hasBrevoSmtpCredentials = () =>
 export const sendMail = async (mailOptions) => {
   try {
     if (hasBrevoSmtpCredentials()) {
-      return await sendSmtpMail(mailOptions);
+      try {
+        return await sendSmtpMail(mailOptions);
+      } catch (brevoSmtpError) {
+        if (!hasGenericSmtpCredentials()) throw brevoSmtpError;
+        console.warn("Brevo SMTP send failed; retrying with configured SMTP fallback.", {
+          code: brevoSmtpError.code,
+          responseCode: brevoSmtpError.responseCode,
+          message: brevoSmtpError.message,
+        });
+        return await sendGenericSmtpMail(mailOptions);
+      }
     }
 
     if (process.env.BREVO_API_KEY?.trim()) {
