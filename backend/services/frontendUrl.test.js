@@ -6,7 +6,7 @@ describe("frontend email URLs", () => {
   it("uses the configured production domain and normalizes slashes and query values", () => {
     const url = buildFrontendUrl("/verify-email", { token: "token/value" }, {
       NODE_ENV: "production",
-      FRONTEND_URL: "https://acgc.example.com///",
+      FRONTEND_URL: "https://acgc.example.com/login///",
     });
     assert.equal(url, "https://acgc.example.com/verify-email?token=token%2Fvalue");
   });

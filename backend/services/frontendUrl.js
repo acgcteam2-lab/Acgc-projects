@@ -24,8 +24,7 @@ export const getFrontendBaseUrl = (environment = process.env) => {
 
 export const buildFrontendUrl = (path, query = {}, environment = process.env) => {
   const baseUrl = getFrontendBaseUrl(environment);
-  const basePath = baseUrl.pathname.replace(/\/+$/, "");
-  const normalizedBaseUrl = `${baseUrl.origin}${basePath}/`;
+  const normalizedBaseUrl = `${baseUrl.origin}/`;
   const normalizedPath = String(path || "").replace(/^\/+/, "");
   const url = new URL(normalizedPath, normalizedBaseUrl);
 

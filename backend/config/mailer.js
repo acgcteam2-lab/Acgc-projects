@@ -270,47 +270,49 @@ const hasBrevoSmtpCredentials = () =>
   );
 
 export const sendMail = async (mailOptions) => {
-  try {
-    if (hasBrevoSmtpCredentials() && !brevoSmtpAuthenticationFailed) {
-      try {
-        return await sendSmtpMail(mailOptions);
-      } catch (brevoSmtpError) {
-        if (!hasGenericSmtpCredentials()) throw brevoSmtpError;
-        if (brevoSmtpError.code === "EAUTH") {
-          brevoSmtpAuthenticationFailed = true;
-          transporter?.close();
-          transporter = null;
-        }
-        console.warn("Brevo SMTP send failed; retrying with configured SMTP fallback.", {
-          code: brevoSmtpError.code,
-          responseCode: brevoSmtpError.responseCode,
-          message: brevoSmtpError.message,
-        });
-        return await sendGenericSmtpMail(mailOptions);
+  let lastProviderError = null;
+
+  if (hasBrevoSmtpCredentials() && !brevoSmtpAuthenticationFailed) {
+    try {
+      return await sendSmtpMail(mailOptions);
+    } catch (error) {
+      lastProviderError = error;
+      if (error.code === "EAUTH") {
+        brevoSmtpAuthenticationFailed = true;
+        transporter?.close();
+        transporter = null;
       }
+      console.warn("Brevo SMTP send failed; trying the next configured email provider.", {
+        code: error.code,
+        responseCode: error.responseCode,
+        message: error.message,
+      });
     }
+  }
 
-    if (process.env.BREVO_API_KEY?.trim()) {
-      try {
-        return await sendBrevoMail(mailOptions);
-      } catch (brevoError) {
-        if (!hasSmtpCredentials()) throw brevoError;
-        console.warn("Brevo email send failed; retrying with configured SMTP transport.", {
-          status: brevoError.status,
-          message: brevoError.message,
-        });
-      }
+  if (process.env.BREVO_API_KEY?.trim()) {
+    try {
+      return await sendBrevoMail(mailOptions);
+    } catch (error) {
+      lastProviderError = error;
+      console.warn("Brevo API send failed; trying the configured SMTP fallback.", {
+        status: error.status,
+        message: error.message,
+      });
     }
+  }
 
-    return await sendSmtpMail(mailOptions);
-  } catch (error) {
-    console.error("Primary email send failed:", error);
+  if (hasGenericSmtpCredentials()) {
+    try {
+      return await sendGenericSmtpMail(mailOptions);
+    } catch (error) {
+      lastProviderError = error;
+    }
+  }
 
-    // Do not silently route real customer mail to Ethereal when configured SMTP
-    // credentials are invalid. That makes the API look successful while the
-    // customer receives nothing.
-    if (process.env.NODE_ENV !== "production" && !isTestAccount && !process.env.BREVO_API_KEY && !process.env.SMTP_HOST) {
-      console.warn("Primary mail transport failed; falling back to Nodemailer test account for development email.");
+  if (!hasSmtpCredentials() && !process.env.BREVO_API_KEY?.trim() && process.env.NODE_ENV !== "production") {
+    try {
+      console.warn("No production mail provider is configured; using a Nodemailer test account for development email.");
       const testAccount = await nodemailer.createTestAccount();
       transporter = nodemailer.createTransport({
         host: testAccount.smtp.host,
@@ -322,10 +324,16 @@ export const sendMail = async (mailOptions) => {
         },
       });
       isTestAccount = true;
-
       return await sendSmtpMail(mailOptions);
+    } catch (error) {
+      lastProviderError = error;
     }
-
-    throw error;
   }
+
+  if (lastProviderError) {
+    console.error("All configured email providers failed:", lastProviderError);
+    throw lastProviderError;
+  }
+
+  return await sendSmtpMail(mailOptions);
 };
