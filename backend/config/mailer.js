@@ -272,6 +272,18 @@ const hasBrevoSmtpCredentials = () =>
 export const sendMail = async (mailOptions) => {
   let lastProviderError = null;
 
+  if (process.env.BREVO_API_KEY?.trim()) {
+    try {
+      return await sendBrevoMail(mailOptions);
+    } catch (error) {
+      lastProviderError = error;
+      console.warn("Brevo API send failed; trying SMTP providers.", {
+        status: error.status,
+        message: error.message,
+      });
+    }
+  }
+
   if (hasBrevoSmtpCredentials() && !brevoSmtpAuthenticationFailed) {
     try {
       return await sendSmtpMail(mailOptions);
@@ -285,18 +297,6 @@ export const sendMail = async (mailOptions) => {
       console.warn("Brevo SMTP send failed; trying the next configured email provider.", {
         code: error.code,
         responseCode: error.responseCode,
-        message: error.message,
-      });
-    }
-  }
-
-  if (process.env.BREVO_API_KEY?.trim()) {
-    try {
-      return await sendBrevoMail(mailOptions);
-    } catch (error) {
-      lastProviderError = error;
-      console.warn("Brevo API send failed; trying the configured SMTP fallback.", {
-        status: error.status,
         message: error.message,
       });
     }
