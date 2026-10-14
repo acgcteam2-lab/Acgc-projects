@@ -3,6 +3,8 @@ import { promises as fs } from "node:fs";
 
 let transporter = null;
 let isTestAccount = false;
+let genericFallbackTransporter = null;
+let brevoSmtpAuthenticationFailed = false;
 
 const parseEmailAddress = (value, fallbackName = "ACGC Services") => {
   const address = String(value || "").trim();
@@ -189,7 +191,7 @@ const createTransporter = async () => {
     return transporter;
   }
 
-  const smtpConfig = getBrevoSmtpConfig() || getSmtpConfig();
+  const smtpConfig = (brevoSmtpAuthenticationFailed ? null : getBrevoSmtpConfig()) || getSmtpConfig();
   if (smtpConfig) {
     transporter = nodemailer.createTransport({
       ...smtpConfig,
@@ -248,12 +250,8 @@ const sendGenericSmtpMail = async (mailOptions) => {
     throw new Error("Generic SMTP fallback is not configured.");
   }
 
-  const fallbackTransporter = createPooledTransport(smtpConfig);
-  try {
-    return await fallbackTransporter.sendMail(mailOptions);
-  } finally {
-    fallbackTransporter.close();
-  }
+  genericFallbackTransporter ||= createPooledTransport(smtpConfig);
+  return genericFallbackTransporter.sendMail(mailOptions);
 };
 
 const hasSmtpCredentials = () =>
@@ -273,11 +271,16 @@ const hasBrevoSmtpCredentials = () =>
 
 export const sendMail = async (mailOptions) => {
   try {
-    if (hasBrevoSmtpCredentials()) {
+    if (hasBrevoSmtpCredentials() && !brevoSmtpAuthenticationFailed) {
       try {
         return await sendSmtpMail(mailOptions);
       } catch (brevoSmtpError) {
         if (!hasGenericSmtpCredentials()) throw brevoSmtpError;
+        if (brevoSmtpError.code === "EAUTH") {
+          brevoSmtpAuthenticationFailed = true;
+          transporter?.close();
+          transporter = null;
+        }
         console.warn("Brevo SMTP send failed; retrying with configured SMTP fallback.", {
           code: brevoSmtpError.code,
           responseCode: brevoSmtpError.responseCode,

@@ -832,7 +832,11 @@ router.post("/register", async (req, res) => {
       await sendVerificationEmail(user, verificationToken);
     } catch (mailError) {
       await User.deleteOne({ _id: user._id });
-      throw new Error(`Unable to send verification email: ${mailError.message}`);
+      console.error("Registration verification email failed:", mailError);
+      return res.status(502).json({
+        success: false,
+        message: "We couldn't send the verification email. Please check the mail service configuration and try again.",
+      });
     }
 
     res.status(201).json({
@@ -845,7 +849,6 @@ router.post("/register", async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error registering user",
-      error: error.message,
     });
   }
 });
