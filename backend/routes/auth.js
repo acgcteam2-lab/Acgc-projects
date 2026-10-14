@@ -31,6 +31,7 @@ import {
   runScheduledBackup,
   restoreSystemBackup,
 } from "../services/backupService.js";
+import { buildFrontendUrl } from "../services/frontendUrl.js";
 import { isPasswordPolicySatisfied, PASSWORD_POLICY_MESSAGE } from "../services/passwordPolicy.js";
 
 const backupImportUpload = multer({
@@ -528,7 +529,7 @@ router.post("/admin-recovery/restore", async (req, res) => {
 });
 
 const sendVerificationEmail = async (user, token) => {
-  const verificationUrl = "https://acgc-services-seven.vercel.app/login";
+  const verificationUrl = buildFrontendUrl("/verify-email", { token });
 
   await sendMail({
     from: process.env.EMAIL_FROM || "ACGC <no-reply@acgc.local>",
@@ -828,7 +829,7 @@ router.post("/register", async (req, res) => {
     await user.save();
 
     try {
-      await sendVerificationEmail(user);
+      await sendVerificationEmail(user, verificationToken);
     } catch (mailError) {
       await User.deleteOne({ _id: user._id });
       console.error("Registration verification email failed:", mailError);
