@@ -11,6 +11,7 @@ import User from "../models/User.js";
 import Cart from "../models/Cart.js";
 import { sendMail } from "../config/mailer.js";
 import { formatOrderEmailDate, getCurrentCustomerContact, sendOrderNotification } from "../services/orderEmails.js";
+import { buildFrontendUrl } from "../services/frontendUrl.js";
 import { applyInstallationWarranty, isCompletedInstallationStage } from "../services/warranty.js";
 import {
   applyInstallationNotificationTimestamps,
@@ -2957,8 +2958,7 @@ export const sendWalkInApprovalEmail = async (req, res) => {
     const orderIdentifier = order.tracking || order._id.toString();
     const contractLink = contractUrl || order.signed_contract_url || "";
     const fromAddress = process.env.EMAIL_FROM || "ACGC Site Inspection <no-reply@acgc.com>";
-    const frontendUrl = (process.env.FRONTEND_URL || process.env.CLIENT_URL || "http://localhost:5173").replace(/\/$/, "");
-    const contractLoginLink = `${frontendUrl}/customer-dashboard?tab=contracts&orderId=${encodeURIComponent(order._id)}`;
+    const contractLoginLink = buildFrontendUrl("/customer-dashboard", { tab: "contracts", orderId: order._id });
 
     const htmlBody = `
       <div style="font-family:Arial,sans-serif;color:#111827">

@@ -2,6 +2,7 @@ import process from "node:process";
 import { sendMail } from "../config/mailer.js";
 import User from "../models/User.js";
 import { getOrderPaymentAmounts } from "./paymentLedger.js";
+import { buildFrontendUrl } from "./frontendUrl.js";
 
 const escapeHtml = (value) => String(value ?? "")
   .replace(/&/g, "&amp;")
@@ -339,10 +340,7 @@ const getEventContent = (event, order, audience, extra) => {
 
 export const buildOrderEmail = (event, order, { audience = "customer", ...extra } = {}) => {
   const content = getEventContent(event, order, audience, extra);
-  const frontendUrl = (process.env.FRONTEND_URL || process.env.CLIENT_URL || "http://localhost:5173").replace(/\/$/, "");
-  const orderQuery = `orderId=${encodeURIComponent(String(order?._id || order?.id || ""))}`;
-  const separator = content.path.includes("?") ? "&" : "?";
-  const actionUrl = `${frontendUrl}/${content.path}${separator}${orderQuery}`;
+  const actionUrl = buildFrontendUrl(content.path, { orderId: order?._id || order?.id || "" });
   const supportEmail = process.env.SUPPORT_EMAIL || "support@acgc.com";
   const fieldRows = content.fields.map(([label, value]) => `<tr><th align="left" style="padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#475569;font-size:13px">${escapeHtml(label)}</th><td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px">${String(value).split("; ").map(escapeHtml).join("<br>")}</td></tr>`).join("");
   const text = [

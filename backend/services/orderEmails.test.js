@@ -15,6 +15,24 @@ describe("order email templates", () => {
     assert.equal(resolveOrderCustomerEmail({ customer_email: "walkin@example.com" }), "walkin@example.com");
   });
 
+  it("builds email action links from the configured deployed frontend URL", () => {
+    const previousFrontendUrl = process.env.FRONTEND_URL;
+    process.env.FRONTEND_URL = "https://acgc.example.com/";
+    try {
+      const email = buildOrderEmail("order_cancelled", {
+        _id: "mongo-id",
+        tracking: "TRK-123",
+        status: "cancelled",
+        items: [{ name: "Window", quantity: 1 }],
+      });
+      assert.ok(email.text.includes("https://acgc.example.com/customer-dashboard?tab=orders&orderId=mongo-id"));
+      assert.ok(!email.text.includes("localhost"));
+    } finally {
+      if (previousFrontendUrl === undefined) delete process.env.FRONTEND_URL;
+      else process.env.FRONTEND_URL = previousFrontendUrl;
+    }
+  });
+
   it("includes order details, escapes dynamic data, and omits irrelevant cancellation fields", () => {
     const email = buildOrderEmail("order_cancelled", {
       _id: "mongo-id",

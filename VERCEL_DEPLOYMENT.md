@@ -33,11 +33,13 @@ Set these in the backend service's Vercel environment settings:
 - Optional Brevo REST fallback: `BREVO_API_KEY`
 - Optional SMTP fallback: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, and either `SMTP_PASS` or `SMTP_PASSWORD`
 - `ADMIN_EMAIL`
-- `FRONTEND_URL` (the production Vercel site URL)
+- `FRONTEND_URL` (the production frontend's actual Vercel or custom domain, for example `https://your-frontend-project.vercel.app`; do not use the backend API domain)
 - `SUPPORT_EMAIL` and `SUPPORT_PHONE` if configured
 - `NODE_ENV=production`
 
 Do not set `PORT`; Vercel supplies it. The Vercel Cron job calls `/api/auth/system-settings/cron-backup` daily and authenticates using `CRON_SECRET`.
+
+Set `FRONTEND_URL` in the backend Vercel project's Production environment to the frontend deployment's primary domain. Set the matching Preview domain in Preview environments if preview emails should return to the preview app. Production email links fail safely rather than falling back to localhost when this variable is missing. Local development uses `http://localhost:5173` when `FRONTEND_URL` is unset.
 
 ## Brevo Transactional Email
 

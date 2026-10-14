@@ -32,6 +32,7 @@ import {
   restoreSystemBackup,
 } from "../services/backupService.js";
 import { isPasswordPolicySatisfied, PASSWORD_POLICY_MESSAGE } from "../services/passwordPolicy.js";
+import { buildFrontendUrl } from "../services/frontendUrl.js";
 
 const backupImportUpload = multer({
   ...(process.env.VERCEL === "1" ? { storage: multer.memoryStorage() } : { dest: "backups/incoming" }),
@@ -528,8 +529,7 @@ router.post("/admin-recovery/restore", async (req, res) => {
 });
 
 const sendVerificationEmail = async (user, token) => {
-  const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
-  const verificationUrl = `${frontendUrl}/verify-email?token=${encodeURIComponent(token)}`;
+  const verificationUrl = buildFrontendUrl("/verify-email", { token });
 
   await sendMail({
     from: process.env.EMAIL_FROM || "ACGC <no-reply@acgc.local>",
