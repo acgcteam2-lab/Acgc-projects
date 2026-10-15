@@ -5,6 +5,7 @@ import {
   initializePaymentLedger,
   validateDownpaymentExceptionAcceptance,
   validateDownpaymentExceptionApproval,
+  validatePaymentAmount,
 } from "./paymentLedger.js";
 
 const baseOrder = {
@@ -146,5 +147,20 @@ describe("payment ledger duplicate proof reconciliation", () => {
     assert.equal(order.payment_ledger_initialized, true);
     assert.equal(order.payment_records.length, 1);
     assert.equal(order.payment_records[0]._id, "verified");
+  });
+});
+
+describe("customer payment amount validation", () => {
+  it("rejects an amount below the remaining required downpayment", () => {
+    assert.equal(validatePaymentAmount(4999.99, 10000, 5000).valid, false);
+  });
+
+  it("accepts an amount that covers the remaining required downpayment", () => {
+    assert.equal(validatePaymentAmount(5000, 10000, 5000).valid, true);
+    assert.equal(validatePaymentAmount(6000, 10000, 5000).valid, true);
+  });
+
+  it("allows smaller installment payments after the downpayment is covered", () => {
+    assert.equal(validatePaymentAmount(1000, 5000, 0).valid, true);
   });
 });

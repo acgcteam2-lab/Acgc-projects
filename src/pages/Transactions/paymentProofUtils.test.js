@@ -156,6 +156,19 @@ describe("validateCustomerPaymentAmount", () => {
     expect(validateCustomerPaymentAmount("16,000", 16000)).toMatchObject({ valid: true, amount: 16000 });
   });
 
+  it("rejects amounts below the remaining required downpayment", () => {
+    expect(validateCustomerPaymentAmount("4,999.99", 10000, 5000)).toMatchObject({
+      valid: false,
+      amount: 4999.99,
+      message: expect.stringContaining("₱5,000.00"),
+    });
+  });
+
+  it("accepts amounts equal to or above the remaining required downpayment", () => {
+    expect(validateCustomerPaymentAmount("5,000", 10000, 5000).valid).toBe(true);
+    expect(validateCustomerPaymentAmount("6,000", 10000, 5000).valid).toBe(true);
+  });
+
   it.each(["0", "-1", "abc", "1,00", "₱1000", "1.234", "100000.01"])("rejects invalid or over-balance input: %s", (amount) => {
     expect(validateCustomerPaymentAmount(amount, 100000).valid).toBe(false);
   });

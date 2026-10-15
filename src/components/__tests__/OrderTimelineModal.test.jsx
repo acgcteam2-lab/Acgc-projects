@@ -96,6 +96,19 @@ describe("OrderTimelineModal", () => {
     expect(completedStatus.parentElement.children).toHaveLength(2);
   });
 
+  it("does not render empty optional photo rows when uploads are unavailable", () => {
+    const order = {
+      ...singleItemOrderMock,
+      items: singleItemOrderMock.items.map((item) => ({
+        ...item,
+        stages: item.stages.map((stage) => ({ ...stage, photoRequirement: "optional" })),
+      })),
+    };
+    const { container } = render(<OrderTimelineModal order={order} onClose={vi.fn()} />);
+
+    expect(container.querySelectorAll("div.mt-2.rounded-lg.border")).toHaveLength(0);
+  });
+
   it("shows reported and expected dates on delayed stages", () => {
     const order = {
       ...singleItemOrderMock,

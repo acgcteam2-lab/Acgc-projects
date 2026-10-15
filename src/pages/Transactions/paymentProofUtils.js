@@ -24,7 +24,7 @@ export const formatCustomerPaymentAmountInput = (value) => {
   return `${formattedInteger}${hasDecimal ? `.${decimalPart}` : ""}`;
 };
 
-export const validateCustomerPaymentAmount = (value, remainingAmount) => {
+export const validateCustomerPaymentAmount = (value, remainingAmount, minimumAmount = 0) => {
   const input = String(value ?? "").trim();
   if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(input)) {
     return { valid: false, amount: 0, message: "Enter a valid amount greater than zero, with up to two decimal places." };
@@ -36,6 +36,9 @@ export const validateCustomerPaymentAmount = (value, remainingAmount) => {
   }
   if (Math.round(amount * 100) > Math.round((Number(remainingAmount) || 0) * 100)) {
     return { valid: false, amount, message: `Payment cannot exceed the remaining balance of ${new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(Number(remainingAmount) || 0)}.` };
+  }
+  if (Math.round(amount * 100) < Math.round((Number(minimumAmount) || 0) * 100)) {
+    return { valid: false, amount, message: `Payment must be at least ${new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(Number(minimumAmount) || 0)} to cover the required downpayment.` };
   }
 
   return { valid: true, amount, message: "" };

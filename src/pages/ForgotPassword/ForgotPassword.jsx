@@ -7,7 +7,6 @@ import {
   Check,
   Eye,
   EyeOff,
-  KeyRound,
   LoaderCircle,
   LockKeyhole,
   Mail,
@@ -117,28 +116,25 @@ function ForgotPassword() {
   const formatCountdown = (seconds) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 
   return (
-    <main className="auth-light-canvas flex min-h-screen items-center justify-center px-4 py-5 sm:px-6">
+    <main className="auth-light-canvas flex h-[100dvh] min-h-[100dvh] items-stretch justify-center overflow-hidden lg:items-center lg:px-4 lg:py-5">
       <motion.section
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.45, ease: "easeOut" }}
-        className="relative z-10 grid w-full max-w-4xl overflow-hidden rounded-[20px] border border-white/10 bg-white shadow-[0_24px_80px_rgba(2,6,23,0.6)] lg:grid-cols-[0.8fr_1.2fr]"
+        className="relative z-10 grid h-full w-full max-w-none grid-rows-[minmax(10rem,30dvh)_minmax(0,1fr)] overflow-hidden bg-white lg:h-auto lg:max-w-5xl lg:grid-cols-2 lg:grid-rows-1 lg:rounded-[22px] lg:border lg:border-white/10 lg:shadow-[0_28px_90px_rgba(2,6,23,0.65)]"
       >
-        <div className="relative flex min-h-[240px] flex-col justify-center overflow-hidden bg-gradient-to-br from-slate-950 via-[#111827] to-[#450a0a] p-5 text-white sm:p-8 lg:min-h-[520px]">
+        <div className="relative flex min-h-0 flex-col items-center justify-center gap-2 overflow-hidden bg-gradient-to-br from-slate-950 via-[#111827] to-[#450a0a] p-4 text-white sm:gap-3 lg:min-h-[560px] lg:p-8">
           <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full border border-white/10" />
           <div className="relative z-10 text-center">
-            <img src={logo} alt="ACGC" className="mx-auto mb-4 w-32 drop-shadow-[0_0_4px_rgba(255,255,255,0.7)] sm:w-40" />
+            <p className="mb-2 text-[10px] font-black uppercase tracking-[0.28em] text-red-100 sm:text-xs lg:mb-6 lg:tracking-[0.3em]">Welcome To</p>
+            <img src={logo} alt="ACGC" className="mx-auto mb-2 w-28 drop-shadow-[0_0_4px_rgba(255,255,255,0.7)] sm:mb-3 sm:w-36 lg:w-56" />
             <p className="mx-auto max-w-sm text-xs font-medium leading-5 text-red-50">
-              Regain access securely with a verification link sent to your registered email.
+              Regain access securely with a verification code sent to your registered email.
             </p>
-          </div>
-          <div className="absolute bottom-5 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap text-[11px] text-slate-300">
-            <KeyRound size={15} aria-hidden="true" />
-            <span>Protected account recovery</span>
           </div>
         </div>
 
-        <div className="flex items-center bg-white p-5 text-slate-900 sm:p-8 lg:p-10">
+        <div className="min-h-0 overflow-y-auto bg-white px-4 py-3 text-slate-900 sm:px-6 sm:py-4 lg:flex lg:items-center lg:p-8">
           <AnimatePresence mode="wait">
             <motion.div
               key={step}
@@ -146,7 +142,7 @@ function ForgotPassword() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -24 }}
               transition={{ duration: 0.28, ease: "easeOut" }}
-              className="w-full max-w-xl"
+              className="mx-auto w-full max-w-md"
             >
             <p className="text-xs font-black uppercase tracking-[0.28em] text-red-700">Account recovery</p>
             <h1 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">

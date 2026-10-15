@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
 import { AtSign, ArrowLeft, CheckCircle2, Eye, EyeOff, Hash, KeyRound, LockKeyhole, Mail, ShieldAlert, ShieldCheck, UserRound } from "lucide-react";
 import { restoreAdminRecovery, verifyAdminRecovery } from "@/api/auth";
 import { getPasswordStrength, isPasswordPolicySatisfied, PASSWORD_POLICY_HINT, PASSWORD_POLICY_MESSAGE } from "@/lib/passwordStrength";
@@ -32,6 +33,7 @@ const validateRecoveryProfile = (profile) => {
 };
 
 function AdminRecovery() {
+  const { refreshAdminStatus } = useAuth();
   const [step, setStep] = useState("verify");
   const [ownerCredentials, setOwnerCredentials] = useState({ username: "", secret: "", code: "" });
   const [recoverySession, setRecoverySession] = useState("");
@@ -40,8 +42,17 @@ function AdminRecovery() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [retrySeconds, setRetrySeconds] = useState(0);
   const [error, setError] = useState("");
   const passwordStrength = getPasswordStrength(profile.password);
+
+  useEffect(() => {
+    if (retrySeconds <= 0) return undefined;
+    const timeoutId = window.setTimeout(() => {
+      setRetrySeconds((remaining) => Math.max(remaining - 1, 0));
+    }, 1000);
+    return () => window.clearTimeout(timeoutId);
+  }, [retrySeconds]);
 
   const updateOwnerCredential = (event) => {
     const { name, value } = event.target;
@@ -55,7 +66,7 @@ function AdminRecovery() {
 
   const verifyOwner = async (event) => {
     event.preventDefault();
-    if (busy) return;
+    if (busy || retrySeconds > 0) return;
     setBusy(true);
     setError("");
     try {
@@ -64,7 +75,20 @@ function AdminRecovery() {
       setOwnerCredentials({ username: "", secret: "", code: "" });
       setStep("restore");
     } catch (requestError) {
-      setError(requestError.data?.message || "Recovery is unavailable or the provided recovery details are invalid.");
+      const status = requestError.response?.status;
+      if (status === 429) {
+        const seconds = Math.max(1, Number(requestError.retryAfterSeconds) || 1);
+        setRetrySeconds(seconds);
+        setError(`Too many attempts. Wait ${seconds} seconds before trying again.`);
+      } else if (status === 401) {
+        const seconds = Math.max(0, Number(requestError.retryAfterSeconds) || 0);
+        setRetrySeconds(seconds);
+        setError("The recovery details do not match the deployed backend. Check ADMIN_RECOVERY_USERNAME, ADMIN_RECOVERY_SECRET, and ADMIN_RECOVERY_TOTP_SECRET in Vercel and confirm the authenticator setup before retrying.");
+      } else if (status === 403) {
+        setError("Emergency recovery is unavailable. It is disabled while a valid administrator account exists; otherwise check the backend recovery configuration.");
+      } else {
+        setError(requestError.data?.message || "Unable to verify recovery details right now.");
+      }
     } finally {
       setBusy(false);
     }
@@ -94,6 +118,7 @@ function AdminRecovery() {
         username: profile.username.trim().toLowerCase(),
         password: profile.password,
       });
+      await refreshAdminStatus();
       setRecoverySession("");
       setProfile(EMPTY_PROFILE);
       setConfirmed(false);
@@ -129,8 +154,8 @@ function AdminRecovery() {
                 <RecoveryField icon={UserRound} label="Recovery username" autoComplete="username" name="username" required value={ownerCredentials.username} onChange={updateOwnerCredential} placeholder="Enter recovery username" />
                 <RecoveryField icon={LockKeyhole} label="Recovery secret" autoComplete="off" name="secret" type="password" required minLength={32} value={ownerCredentials.secret} onChange={updateOwnerCredential} placeholder="Enter recovery secret" />
                 <RecoveryField icon={Hash} label="Authenticator code" autoComplete="one-time-code" name="code" type="text" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} required value={ownerCredentials.code} onChange={updateOwnerCredential} placeholder="000000" className="max-w-48 font-mono tracking-[0.2em]" />
-                <button type="submit" disabled={busy} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-red-700 px-4 text-sm font-bold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60">
-                  <KeyRound size={17} aria-hidden="true" />{busy ? "Verifying..." : "Verify owner credentials"}
+                <button type="submit" disabled={busy || retrySeconds > 0} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-red-700 px-4 text-sm font-bold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60">
+                  <KeyRound size={17} aria-hidden="true" />{busy ? "Verifying..." : retrySeconds > 0 ? `Try again in ${retrySeconds}s` : "Verify owner credentials"}
                 </button>
               </form>
             </>

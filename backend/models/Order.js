@@ -262,6 +262,8 @@ const PaymentAmountChangeSchema = new mongoose.Schema({
   reason: { type: String, trim: true, required: true },
   changed_at: { type: Date, default: Date.now },
   changed_by: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+  changed_by_name: { type: String, trim: true, default: "" },
+  changed_by_role: { type: String, trim: true, default: "" },
 }, { _id: false });
 
 const DownpaymentExceptionSchema = new mongoose.Schema({
@@ -294,6 +296,33 @@ const PaymentSupportingDocumentSchema = new mongoose.Schema({
   uploaded_at: { type: Date, default: Date.now },
 }, { timestamps: false });
 
+const PaymentDiscrepancyStatusChangeSchema = new mongoose.Schema({
+  status: { type: String, enum: ["pending_review", "under_review", "resolved"], required: true },
+  note: { type: String, trim: true, default: "" },
+  changed_at: { type: Date, default: Date.now },
+  changed_by: { type: mongoose.Schema.Types.ObjectId, default: null },
+  changed_by_name: { type: String, trim: true, default: "" },
+  changed_by_role: { type: String, trim: true, default: "" },
+}, { _id: false });
+
+const PaymentDiscrepancySchema = new mongoose.Schema({
+  customer_reported_amount: { type: Number, min: 0, required: true },
+  admin_recorded_amount: { type: Number, min: 0, required: true },
+  difference: { type: Number, min: 0, required: true },
+  status: { type: String, enum: ["pending_review", "under_review", "resolved"], default: "pending_review" },
+  reason: { type: String, trim: true, default: "" },
+  detected_at: { type: Date, default: Date.now },
+  detected_by: { type: mongoose.Schema.Types.ObjectId, default: null },
+  detected_by_name: { type: String, trim: true, default: "" },
+  detected_by_role: { type: String, trim: true, default: "" },
+  resolution_note: { type: String, trim: true, default: "" },
+  resolved_at: { type: Date, default: null },
+  resolved_by: { type: mongoose.Schema.Types.ObjectId, default: null },
+  resolved_by_name: { type: String, trim: true, default: "" },
+  resolved_by_role: { type: String, trim: true, default: "" },
+  status_history: { type: [PaymentDiscrepancyStatusChangeSchema], default: [] },
+}, { timestamps: false });
+
 const PaymentRecordSchema = new mongoose.Schema({
   request_id: { type: String, trim: true, default: "" },
   record_source: { type: String, enum: ["customer_submitted", "admin_recorded"], default: "customer_submitted" },
@@ -305,6 +334,7 @@ const PaymentRecordSchema = new mongoose.Schema({
   proof_file_name: { type: String, trim: true, default: "" },
   proof_file_url: { type: String, trim: true, default: "" },
   supporting_documents: { type: [PaymentSupportingDocumentSchema], default: [] },
+  discrepancies: { type: [PaymentDiscrepancySchema], default: [] },
   submitted_at: { type: Date, default: Date.now },
   payment_date: { type: Date, default: null },
   recorded_at: { type: Date, default: null },
@@ -818,6 +848,5 @@ OrderSchema.index({ contract_status: 1, createdAt: -1 });
 OrderSchema.index({ payment_proof_submitted_at: -1 });
 OrderSchema.index({ updatedAt: -1 });
 OrderSchema.index({ customer_email: 1 });
-OrderSchema.index({ tracking: 1 });
 
 export default mongoose.model("Order", OrderSchema);

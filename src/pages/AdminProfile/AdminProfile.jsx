@@ -21,6 +21,7 @@ import { isPasswordPolicySatisfied, PASSWORD_POLICY_HINT, PASSWORD_POLICY_MESSAG
 import { getPhilippinePhoneError, isValidPhilippinePhone, normalizePhoneInput } from "@/lib/phoneValidation";
 import { getActivityStorageKey, readActivityLog } from "@/lib/activityLog";
 import { getAdminOrder } from "@/api/orders";
+import { requestEmailChange, resendEmailChangeCode, verifyEmailChangeCode } from "@/api/auth";
 import { formatDateTimeToMMMDDYYYY } from "@/lib/dateUtils";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 
@@ -31,22 +32,27 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
 import { subscribeToRealtime } from "@/lib/realtimeEvents";
 
-function AdminProfileTextField({ label, icon: Icon, darkMode, inputClassName = "", ...inputProps }) {
+function AdminProfileTextField({ label, icon: Icon, darkMode, action, inputClassName = "", ...inputProps }) {
+  const inputId = inputProps.id || `admin-profile-${inputProps.name}`;
   const themeClass = darkMode
     ? "border-slate-700 bg-slate-900 text-white placeholder:text-slate-400 disabled:text-slate-400"
     : "border-gray-300 bg-white text-slate-900 placeholder:text-gray-400 disabled:border-slate-200 disabled:bg-gray-100 disabled:text-gray-500";
 
   return (
-    <label className={`block text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
-      <span className="mb-1 flex min-h-4 items-center">{label}</span>
+    <div className={`block text-xs font-semibold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
+      <span className="mb-1 flex min-h-4 items-center justify-between gap-2">
+        <label htmlFor={inputId}>{label}</label>
+        {action}
+      </span>
       <span className="relative block">
         <Icon size={18} strokeWidth={1.8} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" />
         <input
           {...inputProps}
+          id={inputId}
           className={`w-full rounded-xl border py-2.5 pl-11 pr-4 outline-none transition focus:border-red-500 focus:ring-4 focus:ring-red-500/10 disabled:cursor-not-allowed ${themeClass} ${inputClassName}`}
         />
       </span>
-    </label>
+    </div>
   );
 }
 
@@ -81,7 +87,7 @@ function AdminProfile() {
     const stored = localStorage.getItem("sidebarOpen");
     return stored !== null ? JSON.parse(stored) : true;
   });
-  const { user, loading, updateProfile } = useAuth();
+  const { user, loading, updateProfile, refreshUser } = useAuth();
   const isStaff = user?.role === "skilled_worker";
   const profileType = isStaff ? "Staff" : "Admin";
   const [profile, setProfile] = useState(() => user ? createProfileDraft(user) : null);
@@ -98,10 +104,30 @@ function AdminProfile() {
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordModalError, setPasswordModalError] = useState("");
   const [showDiscardConfirmation, setShowDiscardConfirmation] = useState(false);
+  const [emailChangeOpen, setEmailChangeOpen] = useState(false);
+  const [emailChangeSaving, setEmailChangeSaving] = useState(false);
+  const [emailChangeError, setEmailChangeError] = useState("");
+  const [emailChangeForm, setEmailChangeForm] = useState({ new_email: "", confirm_new_email: "", current_password: "" });
+  const [emailVerifyOpen, setEmailVerifyOpen] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState("");
+  const [emailVerificationCode, setEmailVerificationCode] = useState("");
+  const [emailVerifyError, setEmailVerifyError] = useState("");
+  const [emailVerifyMessage, setEmailVerifyMessage] = useState("");
+  const [emailVerifyLoading, setEmailVerifyLoading] = useState(false);
+  const [emailResending, setEmailResending] = useState(false);
+  const [emailResendCooldown, setEmailResendCooldown] = useState(0);
 
   useEffect(() => {
     localStorage.setItem("sidebarOpen", JSON.stringify(isSidebarOpen));
   }, [isSidebarOpen]);
+
+  useEffect(() => {
+    if (!emailVerifyOpen) return undefined;
+    const cooldownTimer = window.setInterval(() => {
+      setEmailResendCooldown((remaining) => Math.max(remaining - 1, 0));
+    }, 1000);
+    return () => window.clearInterval(cooldownTimer);
+  }, [emailVerifyOpen]);
 
   useEffect(() => {
     const accountId = user?.id || user?._id || "";
@@ -302,6 +328,7 @@ function AdminProfile() {
     const { name, value } = e.target;
     setError("");
     setSuccess("");
+    setPasswordModalError("");
     setProfile((prev) => ({ ...prev, [name]: name === "phone" ? normalizePhoneInput(value) : value }));
   };
 
@@ -329,35 +356,37 @@ function AdminProfile() {
     setShowDiscardConfirmation(false);
   };
 
-  const performSave = async () => {
+  const performSave = async ({ showErrorInModal = false } = {}) => {
+    const setSaveError = showErrorInModal ? setPasswordModalError : setError;
+
     if (profile.phone.trim() && !isValidPhilippinePhone(profile.phone)) {
-      setError(getPhilippinePhoneError(profile.phone));
+      setSaveError(getPhilippinePhoneError(profile.phone));
       return false;
     }
 
     if (!profile.current_password) {
-      setError("Please enter your current password to save profile changes.");
+      setSaveError("Please enter your current password to save profile changes.");
       return false;
     }
 
     if (!profile.first_name || !profile.last_name) {
-      setError("Please enter both first name and last name.");
+      setSaveError("Please enter both first name and last name.");
       return false;
     }
 
     if (profile.new_password || profile.confirm_password) {
       if (!profile.new_password) {
-        setError("Please enter a new password.");
+        setSaveError("Please enter a new password.");
         return false;
       }
 
       if (!isPasswordPolicySatisfied(profile.new_password)) {
-        setError(PASSWORD_POLICY_MESSAGE);
+        setSaveError(PASSWORD_POLICY_MESSAGE);
         return false;
       }
 
       if (profile.new_password !== profile.confirm_password) {
-        setError("New password and confirmation do not match.");
+        setSaveError("New password and confirmation do not match.");
         return false;
       }
     }
@@ -391,7 +420,7 @@ function AdminProfile() {
       setSuccess("Profile updated successfully.");
       return true;
     } catch (err) {
-      setError(err.data?.message || err.message || "Failed to update profile.");
+      setSaveError(err.data?.message || err.message || "Failed to update profile.");
       return false;
     } finally {
       setSaving(false);
@@ -414,6 +443,126 @@ function AdminProfile() {
     }
 
     await performSave();
+  };
+
+  const openEmailChange = () => {
+    setEmailChangeError("");
+    setEmailVerifyError("");
+    setEmailVerifyMessage("");
+    setEmailChangeForm({ new_email: "", confirm_new_email: "", current_password: "" });
+    setEmailChangeOpen(true);
+  };
+
+  const closeEmailChange = () => {
+    if (emailChangeSaving) return;
+    setEmailChangeOpen(false);
+    setEmailChangeError("");
+  };
+
+  const handleEmailChangeSubmit = async (event) => {
+    event.preventDefault();
+    if (emailChangeSaving) return;
+    setEmailChangeError("");
+
+    const newEmail = emailChangeForm.new_email.trim().toLowerCase();
+    const confirmedEmail = emailChangeForm.confirm_new_email.trim().toLowerCase();
+    const currentEmail = String(profile?.email || user?.email || "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+      setEmailChangeError("Enter a valid new email address.");
+      return;
+    }
+    if (newEmail !== confirmedEmail) {
+      setEmailChangeError("The new email address and confirmation do not match.");
+      return;
+    }
+    if (newEmail === currentEmail) {
+      setEmailChangeError("The new email address matches your current email.");
+      return;
+    }
+    if (!emailChangeForm.current_password) {
+      setEmailChangeError("Enter your current password to continue.");
+      return;
+    }
+
+    setEmailChangeSaving(true);
+    try {
+      const response = await requestEmailChange({
+        new_email: newEmail,
+        current_password: emailChangeForm.current_password,
+      });
+      const nextPendingEmail = response.pending_email || newEmail;
+      setPendingEmail(nextPendingEmail);
+      setEmailVerificationCode("");
+      setEmailVerifyError("");
+      setEmailVerifyMessage(`A verification code was sent to ${nextPendingEmail}. Your current email stays active until verified.`);
+      setEmailResendCooldown(60);
+      setEmailChangeOpen(false);
+      setEmailVerifyOpen(true);
+      setEmailChangeForm({ new_email: "", confirm_new_email: "", current_password: "" });
+    } catch (requestError) {
+      setEmailChangeError(requestError.data?.message || requestError.message || "Unable to request an email change.");
+    } finally {
+      setEmailChangeSaving(false);
+    }
+  };
+
+  const handleEmailCodeVerify = async (event) => {
+    event.preventDefault();
+    if (emailVerifyLoading) return;
+    setEmailVerifyError("");
+    if (!/^\d{6}$/.test(emailVerificationCode)) {
+      setEmailVerifyError("Enter the six-digit verification code.");
+      return;
+    }
+
+    setEmailVerifyLoading(true);
+    try {
+      const response = await verifyEmailChangeCode(emailVerificationCode);
+      let updatedUser = null;
+      try {
+        updatedUser = await refreshUser();
+      } catch (refreshError) {
+        console.warn("Profile refresh after email verification failed", refreshError);
+      }
+      const verifiedEmail = updatedUser?.email || response.email || pendingEmail;
+      setProfile((current) => ({ ...current, email: verifiedEmail }));
+      setEmailVerifyOpen(false);
+      setEmailVerificationCode("");
+      setPendingEmail("");
+      setEmailVerifyMessage("");
+      setSuccess(response.message || "Your email address has been updated and verified successfully.");
+    } catch (requestError) {
+      setEmailVerifyError(requestError.data?.message || requestError.message || "Unable to verify the code.");
+    } finally {
+      setEmailVerifyLoading(false);
+    }
+  };
+
+  const handleEmailCodeResend = async () => {
+    if (emailResending || emailVerifyLoading || emailResendCooldown > 0) return;
+    setEmailVerifyError("");
+    setEmailResending(true);
+    try {
+      await resendEmailChangeCode();
+      setEmailVerificationCode("");
+      setEmailResendCooldown(60);
+      setEmailVerifyMessage("A new verification code was sent.");
+    } catch (requestError) {
+      const retryAfter = Number(requestError.data?.retry_after_seconds) || 0;
+      if (retryAfter > 0) setEmailResendCooldown(retryAfter);
+      setEmailVerifyError(requestError.data?.message || requestError.message || "Unable to resend the verification code.");
+    } finally {
+      setEmailResending(false);
+    }
+  };
+
+  const closeEmailVerification = () => {
+    if (emailVerifyLoading || emailResending) return;
+    setEmailVerifyOpen(false);
+    setEmailVerificationCode("");
+    setEmailVerifyError("");
+    setEmailVerifyMessage("");
+    setPendingEmail("");
   };
 
   if (loading || !profile) {
@@ -548,7 +697,24 @@ function AdminProfile() {
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                       <AdminProfileTextField label="First Name" icon={User} darkMode={darkMode} type="text" name="first_name" value={profile.first_name} onChange={handleChange} placeholder="First Name" />
                       <AdminProfileTextField label="Last Name" icon={User} darkMode={darkMode} type="text" name="last_name" value={profile.last_name} onChange={handleChange} placeholder="Last Name" />
-                      <AdminProfileTextField label="Email Address" icon={Mail} darkMode={darkMode} type="email" name="email" value={profile.email} disabled />
+                      <AdminProfileTextField
+                        label="Email Address"
+                        icon={Mail}
+                        darkMode={darkMode}
+                        type="email"
+                        name="email"
+                        value={profile.email}
+                        disabled
+                        action={(
+                          <button
+                            type="button"
+                            onClick={openEmailChange}
+                            className={`inline-flex items-center gap-1.5 text-xs font-semibold ${darkMode ? "text-red-300 hover:text-red-200" : "text-red-700 hover:text-red-800"}`}
+                          >
+                            <Mail size={13} aria-hidden="true" /> Change email
+                          </button>
+                        )}
+                      />
                       <AdminProfileTextField label="Username" icon={User} darkMode={darkMode} type="text" name="username" value={profile.username} disabled />
                       <AdminProfileTextField label="Phone Number" icon={Phone} darkMode={darkMode} type="tel" inputMode="tel" maxLength={13} name="phone" value={profile.phone} onChange={handleChange} placeholder="+639171234567 or 09171234567" />
                       <div className="md:col-span-2">
@@ -762,56 +928,195 @@ function AdminProfile() {
                 </div>
               )}
 
+              {emailChangeOpen && (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4">
+                  <form
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="admin-email-change-title"
+                    onSubmit={handleEmailChangeSubmit}
+                    className={`w-full max-w-lg rounded-2xl border p-5 shadow-2xl sm:p-6 ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                  >
+                    <h3 id="admin-email-change-title" className="text-lg font-bold">Change email address</h3>
+                    <p className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                      We’ll send a verification code to the new address. Your current email stays active until verification.
+                    </p>
+                    {emailChangeError && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{emailChangeError}</p>}
+                    <div className="mt-5 space-y-4">
+                      <label className="block text-sm font-medium">
+                        New email address
+                        <input
+                          type="email"
+                          autoComplete="email"
+                          required
+                          value={emailChangeForm.new_email}
+                          onChange={(event) => setEmailChangeForm((current) => ({ ...current, new_email: event.target.value }))}
+                          className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-700 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                        />
+                      </label>
+                      <label className="block text-sm font-medium">
+                        Confirm new email address
+                        <input
+                          type="email"
+                          autoComplete="email"
+                          required
+                          value={emailChangeForm.confirm_new_email}
+                          onChange={(event) => setEmailChangeForm((current) => ({ ...current, confirm_new_email: event.target.value }))}
+                          className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-700 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                        />
+                      </label>
+                      <label className="block text-sm font-medium">
+                        Current password
+                        <input
+                          type="password"
+                          autoComplete="current-password"
+                          required
+                          value={emailChangeForm.current_password}
+                          onChange={(event) => setEmailChangeForm((current) => ({ ...current, current_password: event.target.value }))}
+                          className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-700 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                        />
+                      </label>
+                    </div>
+                    <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                      <button
+                        type="button"
+                        onClick={closeEmailChange}
+                        disabled={emailChangeSaving}
+                        className={`rounded-xl border px-4 py-2.5 text-sm font-semibold disabled:opacity-60 ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={emailChangeSaving}
+                        aria-busy={emailChangeSaving}
+                        className="rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {emailChangeSaving ? "Sending code..." : "Send verification code"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {emailVerifyOpen && (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4">
+                  <form
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="admin-email-verify-title"
+                    onSubmit={handleEmailCodeVerify}
+                    className={`w-full max-w-lg rounded-2xl border p-5 shadow-2xl sm:p-6 ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                  >
+                    <h3 id="admin-email-verify-title" className="text-lg font-bold">Verify new email</h3>
+                    <p className={`mt-1 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                      Enter the six-digit code sent to <strong>{pendingEmail}</strong>. Your current email remains active until verified.
+                    </p>
+                    {emailVerifyMessage && <p role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{emailVerifyMessage}</p>}
+                    {emailVerifyError && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{emailVerifyError}</p>}
+                    <label htmlFor="admin-email-verification-code" className="mb-2 mt-5 block text-sm font-medium">Verification code</label>
+                    <input
+                      id="admin-email-verification-code"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      required
+                      autoFocus
+                      value={emailVerificationCode}
+                      onChange={(event) => setEmailVerificationCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                      className={`w-full rounded-xl border px-3 py-3 text-center text-lg font-bold tracking-[0.3em] outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-700 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleEmailCodeResend}
+                      disabled={emailResending || emailVerifyLoading || emailResendCooldown > 0}
+                      className={`mt-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${darkMode ? "text-red-300" : "text-red-700"}`}
+                    >
+                      {emailResending ? "Sending code..." : emailResendCooldown > 0 ? `Resend code in ${emailResendCooldown}s` : "Resend code"}
+                    </button>
+                    <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                      <button
+                        type="button"
+                        onClick={closeEmailVerification}
+                        disabled={emailVerifyLoading || emailResending}
+                        className={`rounded-xl border px-4 py-2.5 text-sm font-semibold disabled:opacity-60 ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={emailVerifyLoading || emailResending}
+                        aria-busy={emailVerifyLoading}
+                        className="rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {emailVerifyLoading ? "Verifying..." : "Verify email"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
               {showPasswordModal && (
                 <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
-                  <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
-                    <h3 className="text-xl font-semibold mb-3">Confirm Profile Changes</h3>
+                  <form
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="admin-profile-confirm-title"
+                    onSubmit={async (event) => {
+                      event.preventDefault();
+                      setPasswordModalError("");
+                      if (!profile.current_password) {
+                        setPasswordModalError("Please enter your current password.");
+                        return;
+                      }
+                      const saved = await performSave({ showErrorInModal: true });
+                      if (saved) setShowPasswordModal(false);
+                    }}
+                    className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl"
+                  >
+                    <h3 id="admin-profile-confirm-title" className="mb-3 text-xl font-semibold">Confirm Profile Changes</h3>
                     <p className="text-gray-600 mb-4">
                       Enter your current password to confirm saving profile changes.
                     </p>
                     {passwordModalError && (
-                      <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
+                      <div role="alert" className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
                         {passwordModalError}
                       </div>
                     )}
+                    <label htmlFor="admin-profile-current-password" className="mb-1.5 block text-sm font-medium text-gray-700">Current password</label>
                     <input
+                      id="admin-profile-current-password"
                       type="password"
                       name="current_password"
                       value={profile.current_password}
                       onChange={handleChange}
                       placeholder="Current password"
+                      autoComplete="current-password"
                       className="w-full border rounded-2xl px-4 py-3 mb-4 focus:outline-none focus:ring-2 focus:ring-red-500"
                     />
                     <div className="flex justify-end gap-3">
                       <button
                         type="button"
+                        disabled={saving}
                         onClick={() => {
                           setShowPasswordModal(false);
                           setPasswordModalError("");
                         }}
-                        className="px-4 py-3 rounded-2xl border border-gray-200 bg-white hover:bg-gray-50"
+                        className="px-4 py-3 rounded-2xl border border-gray-200 bg-white hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         Cancel
                       </button>
                       <button
-                        type="button"
-                        onClick={async () => {
-                          setPasswordModalError("");
-                          if (!profile.current_password) {
-                            setPasswordModalError("Please enter your current password.");
-                            return;
-                          }
-                          const success = await performSave();
-                          if (success) {
-                            setShowPasswordModal(false);
-                          }
-                        }}
-                        className="px-4 py-3 rounded-2xl bg-red-600 text-white hover:bg-red-700"
+                        type="submit"
+                        disabled={saving}
+                        aria-busy={saving}
+                        className="px-4 py-3 rounded-2xl bg-red-600 text-white hover:bg-red-700 disabled:cursor-wait disabled:opacity-60"
                       >
-                        Confirm
+                        {saving ? "Saving..." : "Confirm"}
                       </button>
                     </div>
-                  </div>
+                  </form>
                 </div>
               )}
 

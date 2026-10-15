@@ -3,6 +3,7 @@ import { apiFetch } from "./client";
 export const register = (payload) => apiFetch("/auth/register", {
   method: "POST",
   body: JSON.stringify(payload),
+  _retries: 1,
 });
 
 export const verifyEmail = (token) =>
@@ -39,7 +40,7 @@ export const login = (payload) => apiFetch("/auth/login", {
   body: JSON.stringify(payload),
 });
 
-export const adminExists = () => apiFetch("/auth/admin-exists");
+export const adminExists = () => apiFetch("/auth/admin-exists", { cache: "no-store" });
 
 export const verifyAdminRecovery = (payload) => apiFetch("/auth/admin-recovery/verify", {
   method: "POST",

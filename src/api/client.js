@@ -150,6 +150,10 @@ export async function apiFetch(path, options = {}) {
     const error = new Error(errorMessage);
     error.response = response;
     error.data = data;
+    const retryAfterSeconds = Number(response.headers.get("Retry-After"));
+    if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+      error.retryAfterSeconds = Math.ceil(retryAfterSeconds);
+    }
     error.rawText = rawText;
     throw error;
   }

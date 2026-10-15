@@ -19,6 +19,16 @@ Configure the backend with an active Cloudinary account:
 
 Media URLs are Cloudinary URLs. Review access rules for payment proofs and signed contracts before storing sensitive customer documents.
 
+## Admin Backup and Restore
+
+In Admin Settings > Backup & Recovery, configure an owner-controlled recovery password before creating or restoring a backup. Use 12-128 characters; the known default value is rejected. The password is stored as a salted verifier and is required to authorize a restore.
+
+Full backups include every non-system MongoDB collection and local files under `backend/uploads`. Cloudinary-hosted media is not copied into the archive; its database references remain in the snapshot and the media stays in Cloudinary. Keep Cloudinary retention and account access available when recovering the application.
+
+`BACKUP_ENCRYPTION_KEY` remains a backend-only deployment secret for encrypted archive storage and existing archives. Admin users do not need to view or handle this key. Preserve it when rotating deployment configuration so existing archives remain readable.
+
+New encrypted ZIP backups contain an `integrity.json` SHA-256 manifest for the compressed database snapshot. The backend verifies it when importing or restoring; older ZIPs without a manifest remain supported and rely on ZIP authentication.
+
 ## Backend Environment Variables
 
 Set these in the backend service's Vercel environment settings:
@@ -26,7 +36,7 @@ Set these in the backend service's Vercel environment settings:
 - `MONGO_URI`
 - `JWT_SECRET`
 - `CLOUDINARY_URL` (copied from Cloudinary's API environment variable field), or `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`
-- `BACKUP_ENCRYPTION_KEY` (the existing key is required to read old encrypted backups)
+- `BACKUP_ENCRYPTION_KEY` (backend-only key for encrypted archive storage; keep it stable to preserve archive access)
 - `CRON_SECRET` (a newly generated long random secret)
 - `EMAIL_FROM` using a Brevo-verified sender, for example `ACGC Services <no-reply@example.com>`
 - Brevo Nodemailer SMTP: `BREVO_SMTP_LOGIN` and `BREVO_SMTP_KEY`

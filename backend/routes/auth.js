@@ -12,6 +12,7 @@ import AdminRecoveryAttempt from "../models/AdminRecoveryAttempt.js";
 import AdminRecoveryAudit from "../models/AdminRecoveryAudit.js";
 import AdminRecoveryState from "../models/AdminRecoveryState.js";
 import SystemSetting from "../models/SystemSetting.js";
+import BackupOperationAudit from "../models/BackupOperationAudit.js";
 import { authMiddleware, roleMiddleware, staffModulePermission } from "../middleware/auth.js";
 import { sendMail } from "../config/mailer.js";
 import {
@@ -31,6 +32,10 @@ import {
   runScheduledBackup,
   restoreSystemBackup,
 } from "../services/backupService.js";
+import {
+  hashBackupRecoveryPassword,
+  verifyBackupRecoveryPassword,
+} from "../services/backupRecoverySecurity.js";
 import { buildFrontendUrl } from "../services/frontendUrl.js";
 import { isPasswordPolicySatisfied, PASSWORD_POLICY_MESSAGE } from "../services/passwordPolicy.js";
 
@@ -48,6 +53,22 @@ const backupImportUpload = multer({
     callback(null, true);
   },
 });
+
+const recordBackupOperation = async (req, action, outcome, backup, details = "") => {
+  try {
+    await BackupOperationAudit.create({
+      actor_id: String(req.user?.id || ""),
+      actor_role: String(req.user?.role || "unknown"),
+      action,
+      outcome,
+      backup_id: backup?.id || null,
+      backup_name: backup?.name || null,
+      details: String(details).slice(0, 500),
+    });
+  } catch (error) {
+    console.error("Unable to record backup operation audit:", error.message);
+  }
+};
 
 const STAFF_MODULE_KEYS = ["dashboard", "product_management", "site_inspection", "progress_monitoring", "transactions", "settings", "profile"];
 const STAFF_MODULE_ACTIONS = {
@@ -292,7 +313,7 @@ const recordRecoveryFailure = async (key) => {
           next_allowed_at: nextAllowedAt,
           expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000),
         });
-        return { retryAfterSeconds: 0 };
+        return { retryAfterSeconds: getRecoveryRetryDelaySeconds(1) };
       } catch (error) {
         if (error.code === 11000) continue;
         throw error;
@@ -311,7 +332,7 @@ const recordRecoveryFailure = async (key) => {
 
     const updated = await AdminRecoveryAttempt.findOneAndUpdate(filter, update, { new: true }).lean();
     if (!updated) continue;
-    return { retryAfterSeconds: 0 };
+    return { retryAfterSeconds };
   }
 };
 
@@ -363,7 +384,8 @@ router.post("/admin-recovery/verify", async (req, res) => {
     const timestamp = Date.now();
     const totpStep = verifyRecoveryCredentials(req.body || {}, process.env, timestamp);
     if (totpStep === null) {
-      await recordRecoveryFailure(attemptKey);
+      const { retryAfterSeconds: retryDelay } = await recordRecoveryFailure(attemptKey);
+      res.set("Retry-After", String(retryDelay));
       return res.status(401).json({
         success: false,
         message: "Recovery is unavailable or the provided recovery details are invalid.",
@@ -565,6 +587,32 @@ const createEmailChangeCode = async (user, pendingEmail) => {
   await sendPendingEmailVerificationCode(user, pendingEmail, code);
 };
 
+const getProfileEmailChangeAccount = async (req) => {
+  let AccountModel = req.user.auth_source === "admin" || (!req.user.auth_source && req.user.role === "admin")
+    ? Admin
+    : User;
+  let account = await AccountModel.findById(req.user.id);
+
+  if (!account && !req.user.auth_source && AccountModel === Admin) {
+    AccountModel = User;
+    account = await AccountModel.findById(req.user.id);
+  }
+
+  return { account, AccountModel };
+};
+
+const hasEmailChangeConflict = async (email, account, AccountModel) => {
+  const userFilter = AccountModel === User ? { _id: { $ne: account._id } } : {};
+  const adminFilter = AccountModel === Admin ? { _id: { $ne: account._id } } : {};
+  const [existingUser, existingPendingUser, existingAdmin, existingPendingAdmin] = await Promise.all([
+    User.findOne({ email, ...userFilter }).select("_id"),
+    User.findOne({ pending_email: email, ...userFilter }).select("_id"),
+    Admin.findOne({ email, ...adminFilter }).select("_id"),
+    Admin.findOne({ pending_email: email, ...adminFilter }).select("_id"),
+  ]);
+  return Boolean(existingUser || existingPendingUser || existingAdmin || existingPendingAdmin);
+};
+
 const sendPasswordResetCode = async (account, code) => {
   await sendMail({
     from: process.env.EMAIL_FROM || "ACGC <no-reply@acgc.local>",
@@ -582,7 +630,9 @@ const sendPasswordResetCode = async (account, code) => {
 
 router.get("/system-settings", authMiddleware, async (req, res) => {
   try {
-    const settings = await SystemSetting.findOne({ key: "global" }).lean();
+    const settings = await SystemSetting.findOne({ key: "global" })
+      .select("+backup_recovery_password_salt +backup_recovery_password_hash")
+      .lean();
     const backupHistory = await hydrateBackupHistorySizes(settings?.backup_history);
     res.json({
       success: true,
@@ -592,10 +642,50 @@ router.get("/system-settings", authMiddleware, async (req, res) => {
       backup_status: settings?.backup_status || "Success",
       last_backup_at: settings?.last_backup_at || null,
       backup_history: backupHistory,
+      backup_recovery_password_configured: Boolean(settings?.backup_recovery_password_salt && settings?.backup_recovery_password_hash),
     });
   } catch (error) {
     console.error("Get system settings error:", error);
     res.status(500).json({ success: false, message: "Unable to load system settings." });
+  }
+});
+
+router.put("/system-settings/backups/recovery-password", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
+  try {
+    const settings = await SystemSetting.findOne({ key: "global" })
+      .select("+backup_recovery_password_salt +backup_recovery_password_hash")
+      .lean();
+    const isConfigured = Boolean(settings?.backup_recovery_password_salt && settings?.backup_recovery_password_hash);
+
+    if (isConfigured) {
+      const currentPasswordValid = await verifyBackupRecoveryPassword(
+        req.body?.current_password,
+        settings.backup_recovery_password_salt,
+        settings.backup_recovery_password_hash,
+      );
+      if (!currentPasswordValid) {
+        return res.status(403).json({ success: false, message: "The current recovery password is incorrect." });
+      }
+    }
+
+    const verifier = await hashBackupRecoveryPassword(req.body?.new_password);
+    await SystemSetting.findOneAndUpdate(
+      { key: "global" },
+      {
+        $set: {
+          backup_recovery_password_salt: verifier.salt,
+          backup_recovery_password_hash: verifier.hash,
+          backup_recovery_password_set_at: new Date(),
+        },
+      },
+      { upsert: true, setDefaultsOnInsert: true },
+    );
+    return res.json({ success: true, backup_recovery_password_configured: true });
+  } catch (error) {
+    return res.status(error.status || 500).json({
+      success: false,
+      message: error.status ? error.message : "Unable to update the recovery password.",
+    });
   }
 });
 
@@ -610,6 +700,34 @@ router.get("/customer-permissions", async (_req, res) => {
   } catch (error) {
     console.error("Get public customer permissions error:", error);
     res.status(500).json({ success: false, message: "Unable to load customer permissions." });
+  }
+});
+
+router.get("/customer-payment-contact", authMiddleware, roleMiddleware("customer"), async (_req, res) => {
+  try {
+    const username = String(process.env.ADMIN_RECOVERY_USERNAME || "").trim().toLowerCase();
+    let account = null;
+    if (username) {
+      account = await Admin.findOne({ username, is_active: { $ne: false } }).select("phone").lean();
+    }
+    if (!String(account?.phone || "").trim()) {
+      account = await Admin.findOne({
+        is_active: { $ne: false },
+        phone: { $regex: /\S/ },
+      }).sort({ updatedAt: -1, _id: 1 }).select("phone").lean();
+    }
+    if (!String(account?.phone || "").trim()) {
+      account = await User.findOne({
+        role: "admin",
+        is_active: { $ne: false },
+        phone: { $regex: /\S/ },
+      }).sort({ updatedAt: -1, _id: 1 }).select("phone").lean();
+    }
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ success: true, phone: String(account?.phone || "").trim() });
+  } catch (error) {
+    console.error("Get customer payment contact error:", error);
+    return res.status(500).json({ success: false, message: "Unable to load payment support contact." });
   }
 });
 
@@ -658,9 +776,20 @@ router.patch("/system-settings", authMiddleware, roleMiddleware(["admin", "super
 
 router.post("/system-settings/backups", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
   try {
+    const recoverySettings = await SystemSetting.findOne({ key: "global" })
+      .select("+backup_recovery_password_salt +backup_recovery_password_hash")
+      .lean();
+    if (!recoverySettings?.backup_recovery_password_salt || !recoverySettings?.backup_recovery_password_hash) {
+      return res.status(428).json({ success: false, message: "Set a backup recovery password before creating a manual backup." });
+    }
     const result = await createSystemBackup(req.body?.type);
+    await recordBackupOperation(req, "create", "success", result.backup, "Manual backup created.");
     res.status(201).json({ success: true, ...result });
   } catch (error) {
+    await recordBackupOperation(req, "create", "failed", null, error.message || "Backup creation failed.");
+    await SystemSetting.updateOne({ key: "global" }, { $set: { backup_status: "Failed" } }).catch((statusError) => {
+      console.error("Unable to update failed backup status:", statusError.message);
+    });
     console.error("Create system backup error:", error);
     res.status(error.status || 500).json({ success: false, message: error.message || "Unable to create backup." });
   }
@@ -701,8 +830,10 @@ router.post(
 
     try {
       const result = await importSystemBackup(req.file.buffer || req.file.path);
+      await recordBackupOperation(req, "import", "success", result.backup, "Backup archive imported.");
       res.status(201).json({ success: true, ...result });
     } catch (error) {
+      await recordBackupOperation(req, "import", "failed", null, error.message || "Backup import failed.");
       console.error("Import system backup error:", error);
       res.status(error.status || 400).json({ success: false, message: error.message || "Unable to import backup." });
     } finally {
@@ -714,8 +845,10 @@ router.post(
 router.post("/system-settings/backups/import-cloudinary", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
   try {
     const result = await importSystemBackupFromCloudinary(req.body?.public_id, req.body?.format);
+    await recordBackupOperation(req, "import", "success", result.backup, "Backup archive imported from private storage.");
     res.status(201).json({ success: true, ...result });
   } catch (error) {
+    await recordBackupOperation(req, "import", "failed", null, error.message || "Backup import failed.");
     console.error("Import Cloudinary backup error:", error);
     res.status(error.status || 400).json({ success: false, message: error.message || "Unable to import backup." });
   }
@@ -735,10 +868,33 @@ router.get("/system-settings/backups/:backupId/download", authMiddleware, roleMi
 });
 
 router.post("/system-settings/backups/:backupId/restore", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
+  let backup;
   try {
+    const settings = await SystemSetting.findOne({ key: "global" })
+      .select("+backup_recovery_password_salt +backup_recovery_password_hash")
+      .lean();
+    if (!settings?.backup_recovery_password_salt || !settings?.backup_recovery_password_hash) {
+      return res.status(428).json({ success: false, message: "Configure a backup recovery password before restoring." });
+    }
+
+    const validRecoveryPassword = await verifyBackupRecoveryPassword(
+      req.body?.recovery_password,
+      settings.backup_recovery_password_salt,
+      settings.backup_recovery_password_hash,
+    );
+    if (!validRecoveryPassword) {
+      await recordBackupOperation(req, "restore", "failed", { id: req.params.backupId }, "Recovery password verification failed.");
+      return res.status(403).json({ success: false, message: "The recovery password is incorrect." });
+    }
+
+    const backupRecord = await SystemSetting.findOne({ key: "global" }).select("backup_history").lean();
+    backup = backupRecord?.backup_history?.find((item) => item.id === req.params.backupId) || { id: req.params.backupId };
+    await recordBackupOperation(req, "restore", "started", backup, "Restore started.");
     const result = await restoreSystemBackup(req.params.backupId);
+    await recordBackupOperation(req, "restore", "success", backup, "Restore completed; all sessions revoked.");
     res.json({ success: true, ...result });
   } catch (error) {
+    await recordBackupOperation(req, "restore", "failed", backup || { id: req.params.backupId }, error.message || "Restore failed.");
     console.error("Restore system backup error:", error);
     res.status(error.status || 500).json({ success: false, message: error.message || "Unable to restore backup." });
   }
@@ -785,9 +941,12 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ success: false, message: PASSWORD_POLICY_MESSAGE });
     }
 
-    const existingUser = await User.findOne({
-      $or: [{ email: email.toLowerCase().trim() }, { username: username.toLowerCase().trim() }],
-    });
+    const [existingUser, adminExists] = await Promise.all([
+      User.findOne({
+        $or: [{ email: email.toLowerCase().trim() }, { username: username.toLowerCase().trim() }],
+      }),
+      findValidAdministrator(),
+    ]);
 
     if (existingUser) {
       return res.status(400).json({
@@ -796,7 +955,6 @@ router.post("/register", async (req, res) => {
       });
     }
 
-    const adminExists = await findValidAdministrator();
     if (!adminExists) {
       return res.status(403).json({
         success: false,
@@ -805,6 +963,7 @@ router.post("/register", async (req, res) => {
       });
     }
 
+    const verificationToken = randomBytes(32).toString("hex");
     const user = new User({
       email,
       username,
@@ -818,14 +977,10 @@ router.post("/register", async (req, res) => {
       zip_code: zip_code || "",
       role: "customer",
       email_verified: false,
-      email_verification_token: hashVerificationToken(randomBytes(32).toString("hex")),
+      email_verification_token: hashVerificationToken(verificationToken),
       email_verification_expires: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
 
-    await user.save();
-
-    const verificationToken = randomBytes(32).toString("hex");
-    user.email_verification_token = hashVerificationToken(verificationToken);
     await user.save();
 
     try {
@@ -890,10 +1045,6 @@ router.get("/verify-email", async (req, res) => {
 
 router.post("/profile/email-change", authMiddleware, async (req, res) => {
   try {
-    if (req.user.role !== "customer") {
-      return res.status(403).json({ success: false, message: "Only customers can change their account email." });
-    }
-
     const newEmail = String(req.body?.new_email || "").trim().toLowerCase();
     const currentPassword = String(req.body?.current_password || "");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
@@ -903,37 +1054,32 @@ router.post("/profile/email-change", authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, message: "Current password is required." });
     }
 
-    const user = await User.findById(req.user.id);
-    if (!user || user.role !== "customer") {
-      return res.status(404).json({ success: false, message: "Customer account not found." });
+    const { account, AccountModel } = await getProfileEmailChangeAccount(req);
+    if (!account) {
+      return res.status(404).json({ success: false, message: "Account not found." });
     }
-    if (!(await user.comparePassword(currentPassword))) {
+    if (!(await account.comparePassword(currentPassword))) {
       return res.status(401).json({ success: false, message: "Current password is incorrect." });
     }
-    if (newEmail === user.email.toLowerCase()) {
+    if (newEmail === account.email.toLowerCase()) {
       return res.status(400).json({ success: false, message: "The new email address matches your current email." });
     }
 
-    const [existingUser, existingPendingEmail, existingAdmin] = await Promise.all([
-      User.findOne({ email: newEmail, _id: { $ne: user._id } }).select("_id"),
-      User.findOne({ pending_email: newEmail, _id: { $ne: user._id } }).select("_id"),
-      Admin.findOne({ email: newEmail }).select("_id"),
-    ]);
-    if (existingUser || existingPendingEmail || existingAdmin) {
+    if (await hasEmailChangeConflict(newEmail, account, AccountModel)) {
       return res.status(409).json({ success: false, message: "This email address is already registered or pending verification for another account." });
     }
 
-    user.pending_email = newEmail;
-    user.pending_email_verification_code = null;
-    user.pending_email_verification_expires = null;
-    user.pending_email_verification_attempts = 0;
-    user.pending_email_verification_sent_at = null;
+    account.pending_email = newEmail;
+    account.pending_email_verification_code = null;
+    account.pending_email_verification_expires = null;
+    account.pending_email_verification_attempts = 0;
+    account.pending_email_verification_sent_at = null;
 
     try {
-      await createEmailChangeCode(user, newEmail);
+      await createEmailChangeCode(account, newEmail);
     } catch (mailError) {
-      await User.updateOne(
-        { _id: user._id, pending_email: newEmail },
+      await AccountModel.updateOne(
+        { _id: account._id, pending_email: newEmail },
         { $set: {
           pending_email: null,
           pending_email_verification_code: null,
@@ -961,20 +1107,16 @@ router.post("/profile/email-change", authMiddleware, async (req, res) => {
 
 router.post("/profile/email-change/resend", authMiddleware, async (req, res) => {
   try {
-    if (req.user.role !== "customer") {
-      return res.status(403).json({ success: false, message: "Only customers can change their account email." });
+    const { account, AccountModel } = await getProfileEmailChangeAccount(req);
+    if (!account) {
+      return res.status(404).json({ success: false, message: "Account not found." });
     }
-
-    const user = await User.findById(req.user.id);
-    if (!user || user.role !== "customer") {
-      return res.status(404).json({ success: false, message: "Customer account not found." });
-    }
-    if (!user.pending_email) {
+    if (!account.pending_email) {
       return res.status(400).json({ success: false, message: "There is no pending email change to verify." });
     }
 
-    const cooldownEndsAt = user.pending_email_verification_sent_at
-      ? user.pending_email_verification_sent_at.getTime() + 60 * 1000
+    const cooldownEndsAt = account.pending_email_verification_sent_at
+      ? account.pending_email_verification_sent_at.getTime() + 60 * 1000
       : 0;
     if (Date.now() < cooldownEndsAt) {
       return res.status(429).json({
@@ -985,11 +1127,11 @@ router.post("/profile/email-change/resend", authMiddleware, async (req, res) => 
     }
 
     try {
-      await createEmailChangeCode(user, user.pending_email);
+      await createEmailChangeCode(account, account.pending_email);
     } catch (mailError) {
       console.error("Email change code resend failed:", mailError);
-      await User.updateOne(
-        { _id: user._id, pending_email: user.pending_email },
+      await AccountModel.updateOne(
+        { _id: account._id, pending_email: account.pending_email },
         { $set: {
           pending_email_verification_code: null,
           pending_email_verification_expires: null,
@@ -1008,46 +1150,42 @@ router.post("/profile/email-change/resend", authMiddleware, async (req, res) => 
 
 router.post("/profile/email-change/verify", authMiddleware, async (req, res) => {
   try {
-    if (req.user.role !== "customer") {
-      return res.status(403).json({ success: false, message: "Only customers can change their account email." });
-    }
-
     const code = String(req.body?.code || "").trim();
     if (!/^\d{6}$/.test(code)) {
       return res.status(400).json({ success: false, message: "Enter the six-digit verification code." });
     }
 
-    const user = await User.findById(req.user.id);
-    if (!user || user.role !== "customer") {
-      return res.status(404).json({ success: false, message: "Customer account not found." });
+    const { account, AccountModel } = await getProfileEmailChangeAccount(req);
+    if (!account) {
+      return res.status(404).json({ success: false, message: "Account not found." });
     }
-    if (!user.pending_email) {
+    if (!account.pending_email) {
       return res.status(400).json({ success: false, message: "There is no pending email change to verify." });
     }
-    if (!user.pending_email_verification_code || !user.pending_email_verification_expires) {
+    if (!account.pending_email_verification_code || !account.pending_email_verification_expires) {
       return res.status(400).json({ success: false, message: "Your verification code has expired. Request a new code to continue." });
     }
-    if (user.pending_email_verification_expires <= new Date()) {
-      user.pending_email_verification_code = null;
-      await user.save();
+    if (account.pending_email_verification_expires <= new Date()) {
+      account.pending_email_verification_code = null;
+      await account.save();
       return res.status(400).json({ success: false, message: "Your verification code has expired. Request a new code to continue." });
     }
-    if (user.pending_email_verification_attempts >= 5) {
-      user.pending_email_verification_code = null;
-      user.pending_email_verification_expires = null;
-      await user.save();
+    if (account.pending_email_verification_attempts >= 5) {
+      account.pending_email_verification_code = null;
+      account.pending_email_verification_expires = null;
+      await account.save();
       return res.status(429).json({ success: false, message: "Too many incorrect codes. Request a new code to continue." });
     }
 
-    const expectedCodeHash = hashVerificationToken(`${user._id}:${user.pending_email}:${code}`);
-    if (!verificationHashesMatch(expectedCodeHash, user.pending_email_verification_code)) {
-      user.pending_email_verification_attempts += 1;
-      if (user.pending_email_verification_attempts >= 5) {
-        user.pending_email_verification_code = null;
-        user.pending_email_verification_expires = null;
+    const expectedCodeHash = hashVerificationToken(`${account._id}:${account.pending_email}:${code}`);
+    if (!verificationHashesMatch(expectedCodeHash, account.pending_email_verification_code)) {
+      account.pending_email_verification_attempts += 1;
+      if (account.pending_email_verification_attempts >= 5) {
+        account.pending_email_verification_code = null;
+        account.pending_email_verification_expires = null;
       }
-      await user.save();
-      const attemptsRemaining = Math.max(0, 5 - user.pending_email_verification_attempts);
+      await account.save();
+      const attemptsRemaining = Math.max(0, 5 - account.pending_email_verification_attempts);
       return res.status(attemptsRemaining ? 400 : 429).json({
         success: false,
         attempts_remaining: attemptsRemaining,
@@ -1057,25 +1195,21 @@ router.post("/profile/email-change/verify", authMiddleware, async (req, res) => 
       });
     }
 
-    const pendingEmail = user.pending_email.toLowerCase().trim();
-    const [existingUser, existingAdmin] = await Promise.all([
-      User.findOne({ email: pendingEmail, _id: { $ne: user._id } }).select("_id"),
-      Admin.findOne({ email: pendingEmail }).select("_id"),
-    ]);
-    if (existingUser || existingAdmin) {
+    const pendingEmail = account.pending_email.toLowerCase().trim();
+    if (await hasEmailChangeConflict(pendingEmail, account, AccountModel)) {
       return res.status(409).json({ success: false, message: "This email address is already registered to another account." });
     }
 
-    user.email = pendingEmail;
-    user.email_verified = true;
-    user.pending_email = null;
-    user.pending_email_verification_code = null;
-    user.pending_email_verification_expires = null;
-    user.pending_email_verification_attempts = 0;
-    user.pending_email_verification_sent_at = null;
-    await user.save();
+    account.email = pendingEmail;
+    if (AccountModel === User) account.email_verified = true;
+    account.pending_email = null;
+    account.pending_email_verification_code = null;
+    account.pending_email_verification_expires = null;
+    account.pending_email_verification_attempts = 0;
+    account.pending_email_verification_sent_at = null;
+    await account.save();
 
-    return res.json({ success: true, email: user.email, message: "Your email address has been updated and verified successfully." });
+    return res.json({ success: true, email: account.email, message: "Your email address has been updated and verified successfully." });
   } catch (error) {
     if (error?.code === 11000) {
       return res.status(409).json({ success: false, message: "This email address is already registered to another account." });
@@ -1348,6 +1482,7 @@ router.post("/reset-password", async (req, res) => {
  */
 router.get("/admin-exists", async (req, res) => {
   try {
+    res.setHeader("Cache-Control", "no-store");
     res.json({ exists: Boolean(await findValidAdministrator()) });
   } catch (error) {
     console.error("Admin exists check error:", error.name || "Error");

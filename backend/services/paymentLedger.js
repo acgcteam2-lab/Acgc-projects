@@ -104,7 +104,7 @@ export const initializePaymentLedger = (order) => {
   order.amount_paid = previousPaid;
 };
 
-export const validatePaymentAmount = (value, remainingAmount) => {
+export const validatePaymentAmount = (value, remainingAmount, minimumAmount = 0) => {
   const amount = Number(value);
   if (!Number.isFinite(amount) || amount <= 0 || !/^\d+(?:\.\d{1,2})?$/.test(String(value).trim())) {
     return { valid: false, amount: 0, message: "Please enter a valid payment amount greater than zero, with up to two decimal places." };
@@ -112,6 +112,9 @@ export const validatePaymentAmount = (value, remainingAmount) => {
   const cents = toCents(amount);
   if (cents > toCents(remainingAmount)) {
     return { valid: false, amount, message: "Payment cannot exceed the remaining project balance." };
+  }
+  if (cents < toCents(minimumAmount)) {
+    return { valid: false, amount, message: "Payment must cover the remaining required downpayment." };
   }
   return { valid: true, amount: fromCents(cents), message: "" };
 };

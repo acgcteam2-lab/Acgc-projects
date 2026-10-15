@@ -107,6 +107,22 @@ const getEventContent = (event, order, audience, extra) => {
         ["Remaining project balance", money(balance)],
       ],
     },
+    payment_discrepancy_resolved: {
+      title: "Payment Discrepancy Resolved",
+      summary: "An administrator has formally resolved the payment amount discrepancy on your order.",
+      subject: `Payment discrepancy resolved - ${orderIdOf(order)}`,
+      status: "Resolved",
+      action: "Review payment details",
+      path: "customer-dashboard?tab=orders",
+      next: extra.reason || "Review the updated payment history in your account.",
+      fields: [
+        ["Order reference", order?.tracking || orderIdOf(order)],
+        ["Customer-reported amount", money(extra.customerReportedAmount)],
+        ["Admin-recorded amount", money(extra.adminRecordedAmount)],
+        ["Difference", money(extra.difference)],
+        ["Resolution note", extra.reason || "-"],
+      ],
+    },
     payment_proof_rejected: {
       title: "Payment Proof Rejected",
       summary: "The admin reviewed your payment proof and could not verify it. The submitted amount has not been counted as paid.",
@@ -325,7 +341,7 @@ const getEventContent = (event, order, audience, extra) => {
         ["Installation status", statusLabel(extra.installationStatus || "Scheduled")],
         ...(order?.inspection_notes ? [["Preparation instructions", order.inspection_notes]] : []),
         ["Customer requirements", "Provide clear access to the installation area and ensure an authorized person is available."],
-        ["Questions or concerns", process.env.SUPPORT_EMAIL || "support@acgc.com"],
+        ["Questions or concerns", process.env.SUPPORT_EMAIL || "acgc.services00@gmail.com"],
       ],
     },
   };
@@ -341,7 +357,7 @@ const getEventContent = (event, order, audience, extra) => {
 export const buildOrderEmail = (event, order, { audience = "customer", ...extra } = {}) => {
   const content = getEventContent(event, order, audience, extra);
   const actionUrl = buildFrontendUrl(content.path, { orderId: order?._id || order?.id || "" });
-  const supportEmail = process.env.SUPPORT_EMAIL || "support@acgc.com";
+  const supportEmail = process.env.SUPPORT_EMAIL || "acgc.services00@gmail.com";
   const fieldRows = content.fields.map(([label, value]) => `<tr><th align="left" style="padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#475569;font-size:13px">${escapeHtml(label)}</th><td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px">${String(value).split("; ").map(escapeHtml).join("<br>")}</td></tr>`).join("");
   const text = [
     `ACGC Glass & Aluminum Services | ${content.title}`,

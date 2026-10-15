@@ -144,6 +144,7 @@ function Transactions() {
   const [paymentActionLoading, setPaymentActionLoading] = useState(false);
   const [paymentDocumentPreview, setPaymentDocumentPreview] = useState(null);
   const [paymentDocumentLoading, setPaymentDocumentLoading] = useState(false);
+  const [discrepancyResolutionNotes, setDiscrepancyResolutionNotes] = useState({});
   const paymentActionSubmittingRef = useRef(false);
 
   useEffect(() => () => {
@@ -598,6 +599,7 @@ function Transactions() {
     setLowDownpaymentSellerApprovalParty("");
     setLowDownpaymentSellerApprovalConfirmed(false);
     setLowDownpaymentWarningError("");
+    setDiscrepancyResolutionNotes({});
   };
 
   const viewAdminPaymentSupportingDocument = async (orderId, recordId, document) => {
@@ -880,6 +882,33 @@ function Transactions() {
       closeEditPaymentModal();
     } catch (error) {
       toast.error(error?.data?.message || error?.message || "Unable to reject payment proof.");
+    } finally {
+      paymentActionSubmittingRef.current = false;
+      setPaymentActionLoading(false);
+    }
+  };
+
+  const handleUpdatePaymentDiscrepancyStatus = async (event) => {
+    const { orderId, recordId, discrepancyId, action } = event.currentTarget.dataset;
+    const reason = String(discrepancyResolutionNotes[discrepancyId] || "").trim();
+    if (!reason) {
+      toast.error("Add a note before updating the discrepancy status.");
+      return;
+    }
+    if (paymentActionSubmittingRef.current || paymentActionLoading) return;
+    paymentActionSubmittingRef.current = true;
+    setPaymentActionLoading(true);
+    try {
+      const response = await updateOrderStatus(orderId, {
+        payment_record_action: { action, record_id: recordId, discrepancy_id: discrepancyId, reason },
+      });
+      const updated = response?.order || editPaymentOrder;
+      updateOrderLocally(orderId, updated);
+      setEditPaymentOrder(updated);
+      setDiscrepancyResolutionNotes((previous) => ({ ...previous, [discrepancyId]: "" }));
+      toast.success(action === "resolve_discrepancy" ? "Payment discrepancy resolved." : "Discrepancy marked under review.");
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to update the payment discrepancy.");
     } finally {
       paymentActionSubmittingRef.current = false;
       setPaymentActionLoading(false);
@@ -1469,6 +1498,16 @@ function Transactions() {
                       <p className="font-medium leading-6">
                         Customer says they paid <span className={darkMode ? "font-bold text-white" : "font-bold text-slate-900"}>₱{Number(proof.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>. Confirm it matches what you received.
                       </p>
+                      {(() => {
+                        const customerAmount = Number(proof.amount || 0);
+                        const adminAmount = Number(editPaymentAmount || 0);
+                        const differs = Math.round(customerAmount * 100) !== Math.round(adminAmount * 100);
+                        return differs ? (
+                          <p role="alert" className="mt-2 font-semibold">
+                            Payment discrepancy: customer-reported {formatCurrency(customerAmount)}, admin amount to verify {formatCurrency(adminAmount)}, difference {formatCurrency(Math.abs(customerAmount - adminAmount))}. Add a reason and review any supporting evidence before saving.
+                          </p>
+                        ) : null;
+                      })()}
                       <button
                         type="button"
                         onClick={() => {
@@ -1604,8 +1643,8 @@ function Transactions() {
 
             <section className={`${panelClass} space-y-3 p-3`}>
               <div>
-                <h3 className={`text-[11px] font-extrabold uppercase tracking-[0.16em] ${labelClass}`}>Proof of Payment (Optional)</h3>
-                <p className={`mt-1 text-xs leading-5 ${tertiaryTextClass}`}>Uploading proof of payment is optional. You may attach a receipt or payment document for record-keeping.</p>
+                <h3 className={`text-[11px] font-extrabold uppercase tracking-[0.16em] ${labelClass}`}>Admin Proof of Payment (Optional)</h3>
+                <p className={`mt-1 text-xs leading-5 ${tertiaryTextClass}`}>Attach separate supporting evidence. This does not replace the customer proof or change the payment amount or status.</p>
               </div>
 
               {supportingDocuments.map((document) => (
@@ -1682,6 +1721,48 @@ function Transactions() {
                         {record.verified_amount != null && <>Verified {formatCurrency(Number(record.verified_amount))}</>}
                         {record.payment_method ? ` · ${record.payment_method}` : ""}
                       </p>
+                        {(record.discrepancies || []).map((discrepancy) => (
+                          <div key={discrepancy._id} className={`mt-3 rounded-lg border p-3 ${darkMode ? "border-amber-500/40 bg-amber-500/10" : "border-amber-200 bg-amber-50"}`}>
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <strong className={darkMode ? "text-amber-200" : "text-amber-900"}>Payment discrepancy · {discrepancy.status.replaceAll("_", " ")}</strong>
+                              <span className={`text-[11px] ${tertiaryTextClass}`}>{formatDateTimeToMMDDYYYY(discrepancy.detected_at)}</span>
+                            </div>
+                            <p className={`mt-1 text-xs ${secondaryTextClass}`}>
+                              Customer reported {formatCurrency(Number(discrepancy.customer_reported_amount))} · Admin recorded {formatCurrency(Number(discrepancy.admin_recorded_amount))} · Difference {formatCurrency(Number(discrepancy.difference))}
+                            </p>
+                            {discrepancy.reason && <p className={`mt-1 text-xs ${secondaryTextClass}`}>Admin reason: {discrepancy.reason}</p>}
+                            {(discrepancy.status_history || []).map((entry, historyIndex) => (
+                              <p key={`${entry.status}-${historyIndex}`} className={`mt-1 text-[11px] ${tertiaryTextClass}`}>
+                                {entry.status.replaceAll("_", " ")} · {formatDateTimeToMMDDYYYY(entry.changed_at)}{entry.changed_by_name ? ` · ${entry.changed_by_name} (${entry.changed_by_role || "admin"})` : ""}{entry.note ? ` · ${entry.note}` : ""}
+                              </p>
+                            ))}
+                            {discrepancy.status !== "resolved" ? (
+                              <div className="mt-3 space-y-2">
+                                <textarea
+                                  value={discrepancyResolutionNotes[discrepancy._id] || ""}
+                                  onChange={(event) => setDiscrepancyResolutionNotes((previous) => ({ ...previous, [discrepancy._id]: event.target.value }))}
+                                  rows={2}
+                                  maxLength={1000}
+                                  placeholder="Review or resolution note"
+                                  aria-label="Payment discrepancy review or resolution note"
+                                  className={`${inputClass} resize-y text-sm`}
+                                />
+                                <div className="flex flex-wrap justify-end gap-2">
+                                  {discrepancy.status === "pending_review" && (
+                                    <button type="button" data-order-id={orderId} data-record-id={record._id} data-discrepancy-id={discrepancy._id} data-action="review_discrepancy" disabled={paymentActionLoading} onClick={handleUpdatePaymentDiscrepancyStatus} className={`${footerCancelClass} px-3 py-2 text-xs`}>
+                                      Mark Under Review
+                                    </button>
+                                  )}
+                                  <button type="button" data-order-id={orderId} data-record-id={record._id} data-discrepancy-id={discrepancy._id} data-action="resolve_discrepancy" disabled={paymentActionLoading} onClick={handleUpdatePaymentDiscrepancyStatus} className={`${footerSaveClass} px-3 py-2 text-xs`}>
+                                    Resolve Discrepancy
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <p className={`mt-2 text-xs font-semibold ${secondaryTextClass}`}>Resolved {discrepancy.resolved_at ? `· ${formatDateTimeToMMDDYYYY(discrepancy.resolved_at)}` : ""}{discrepancy.resolved_by_name ? ` · ${discrepancy.resolved_by_name} (${discrepancy.resolved_by_role || "admin"})` : ""}{discrepancy.resolution_note ? ` · ${discrepancy.resolution_note}` : ""}</p>
+                            )}
+                          </div>
+                        ))}
                       {record.admin_reason && <p className={`mt-1 text-xs ${tertiaryTextClass}`}>Admin note: {record.admin_reason}</p>}
                       {record.downpayment_exception?.status === "approved" && <p className="mt-1 text-xs font-bold text-amber-600">Downpayment Exception Approved · shortfall {formatCurrency(Number(record.downpayment_exception.shortfall) || 0)} · {record.downpayment_exception.reason}</p>}
                       {record.proof_file_url && <a href={record.proof_file_url} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-xs font-semibold text-sky-600 underline">View payment proof{record.proof_file_name ? `: ${record.proof_file_name}` : ""}</a>}

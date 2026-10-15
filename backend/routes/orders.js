@@ -20,6 +20,7 @@ import {
   submitCustomerPaymentProof,
   addAdminPaymentSupportingDocument,
   viewAdminPaymentSupportingDocument,
+  viewCustomerPaymentSupportingDocument,
   respondToInstallationSchedule,
   sendWalkInApprovalEmail,
 } from "../controllers/orderController.js";
@@ -34,6 +35,12 @@ router.get("/track/:tracking", optionalAuthMiddleware, permissionMiddleware("can
 router.put("/:orderId/contract", authMiddleware, roleMiddleware("customer"), respondToContract);
 router.put("/:orderId/cancel", authMiddleware, roleMiddleware("customer"), cancelCustomerOrder);
 router.put("/:orderId/payment-proof", authMiddleware, roleMiddleware("customer"), submitCustomerPaymentProof);
+router.get(
+  "/:orderId/payment-records/:recordId/documents/:documentId",
+  authMiddleware,
+  roleMiddleware("customer"),
+  viewCustomerPaymentSupportingDocument,
+);
 router.put("/:orderId/installation-schedule", authMiddleware, respondToInstallationSchedule);
 router.put("/:orderId/review", authMiddleware, roleMiddleware("customer"), permissionMiddleware("can_upload_feedback"), submitOrderReview);
 router.get("/reviews/product/:productId/summary", getProductReviewSummary);

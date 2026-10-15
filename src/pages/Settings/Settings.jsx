@@ -5,10 +5,13 @@ import {
   CalendarDays,
   CalendarRange,
   ChevronDown,
+  Circle,
   CircleCheck,
   CloudUpload,
   Database,
   Download,
+  Eye,
+  EyeOff,
   FileArchive,
   History,
   Loader2,
@@ -38,12 +41,14 @@ import {
   getAdminUsers,
   getSystemSettings,
   restoreSystemBackup,
+  setBackupRecoveryPassword,
   uploadSystemBackup,
   updateAdminUserAccess,
   updateSystemSettings,
 } from "@/api/users";
 import { subscribeToRealtime } from "@/lib/realtimeEvents";
 import { normalizeGlobalCustomerPermissions } from "@/lib/customerPermissions";
+import { isPasswordPolicySatisfied, PASSWORD_POLICY_MESSAGE } from "@/lib/passwordStrength";
 
 const PERMISSIONS = [
   { key: "can_request_orders", label: "Can Request Orders", description: "Submit new glass/aluminum orders" },
@@ -140,6 +145,15 @@ function Settings() {
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [savingMaintenance, setSavingMaintenance] = useState(false);
   const [loadingBackupSettings, setLoadingBackupSettings] = useState(true);
+  const [backupRecoveryConfigured, setBackupRecoveryConfigured] = useState(false);
+  const [recoveryPassword, setRecoveryPassword] = useState("");
+  const [newRecoveryPassword, setNewRecoveryPassword] = useState("");
+  const [confirmRecoveryPassword, setConfirmRecoveryPassword] = useState("");
+  const [showCurrentRecoveryPassword, setShowCurrentRecoveryPassword] = useState(false);
+  const [showRecoveryPassword, setShowRecoveryPassword] = useState(false);
+  const [showRecoveryPasswordConfirmation, setShowRecoveryPasswordConfirmation] = useState(false);
+  const [savingRecoveryPassword, setSavingRecoveryPassword] = useState(false);
+  const [restoreRecoveryPassword, setRestoreRecoveryPassword] = useState("");
   const [creatingBackup, setCreatingBackup] = useState(false);
   const [backupImportFile, setBackupImportFile] = useState(null);
   const [isDraggingBackupFile, setIsDraggingBackupFile] = useState(false);
@@ -204,6 +218,7 @@ function Settings() {
           lastBackupAt: response.last_backup_at || null,
           backups: Array.isArray(response.backup_history) ? response.backup_history : [],
         });
+        setBackupRecoveryConfigured(response.backup_recovery_password_configured === true);
       } catch (error) {
         if (active) toast.error(error?.data?.message || error?.message || "Unable to load system settings.");
       } finally {
@@ -226,7 +241,10 @@ function Settings() {
 
     if (!restoringBackup) restoreDialogRef.current?.focus();
     const closeOnEscape = (event) => {
-      if (event.key === "Escape" && !restoringBackup) setRestoreConfirmation(null);
+      if (event.key === "Escape" && !restoringBackup) {
+        setRestoreRecoveryPassword("");
+        setRestoreConfirmation(null);
+      }
     };
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
@@ -384,6 +402,65 @@ function Settings() {
               </motion.article>
             </div>
 
+            <section className="rounded-2xl border border-border bg-card p-5 dark:border-slate-700 dark:bg-slate-900 max-[520px]:p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-[19px] font-medium text-foreground">Recovery Password</h3>
+                  <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">Set a private password required to authorize a full restore. It is stored as a one-way salted verifier and is never shown again.</p>
+                </div>
+                <span className={cn("inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium", backupRecoveryConfigured ? "bg-green-100 text-green-700 dark:bg-green-950/60 dark:text-green-300" : "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300")}>
+                  <ShieldCheck aria-hidden="true" className="size-4" />
+                  {backupRecoveryConfigured ? "Configured" : "Setup required"}
+                </span>
+              </div>
+              <form onSubmit={handleSaveBackupRecoveryPassword} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                  <span>Current password</span>
+                  <span className="relative block">
+                    <input type={showCurrentRecoveryPassword ? "text" : "password"} autoComplete="current-password" value={recoveryPassword} onChange={(event) => setRecoveryPassword(event.target.value)} placeholder={backupRecoveryConfigured ? "" : "Not set yet"} disabled={!backupRecoveryConfigured || savingRecoveryPassword} required={backupRecoveryConfigured} minLength={12} maxLength={128} className="h-10 w-full rounded-md border border-border bg-background px-3 pr-10 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-70 dark:border-slate-700 dark:bg-slate-950" />
+                    <button type="button" onClick={() => setShowCurrentRecoveryPassword((visible) => !visible)} disabled={!backupRecoveryConfigured || savingRecoveryPassword} aria-label={showCurrentRecoveryPassword ? "Hide current recovery password" : "Show current recovery password"} aria-pressed={showCurrentRecoveryPassword} className="absolute inset-y-0 right-0 inline-flex w-10 items-center justify-center text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50">
+                      {showCurrentRecoveryPassword ? <EyeOff aria-hidden="true" className="size-4" /> : <Eye aria-hidden="true" className="size-4" />}
+                    </button>
+                  </span>
+                </label>
+                <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                  <span>{backupRecoveryConfigured ? "New password" : "New recovery password"}</span>
+                  <span className="relative block">
+                    <input type={showRecoveryPassword ? "text" : "password"} autoComplete="new-password" value={newRecoveryPassword} onChange={(event) => setNewRecoveryPassword(event.target.value)} required minLength={12} maxLength={128} aria-describedby="recovery-password-requirements" className="h-10 w-full rounded-md border border-border bg-background px-3 pr-10 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-brand dark:border-slate-700 dark:bg-slate-950" />
+                    <button type="button" onClick={() => setShowRecoveryPassword((visible) => !visible)} aria-label={showRecoveryPassword ? "Hide new recovery password" : "Show new recovery password"} aria-pressed={showRecoveryPassword} className="absolute inset-y-0 right-0 inline-flex w-10 items-center justify-center text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand">
+                      {showRecoveryPassword ? <EyeOff aria-hidden="true" className="size-4" /> : <Eye aria-hidden="true" className="size-4" />}
+                    </button>
+                  </span>
+                </label>
+                <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                  <span>Confirm new password</span>
+                  <span className="relative block">
+                    <input type={showRecoveryPasswordConfirmation ? "text" : "password"} autoComplete="new-password" value={confirmRecoveryPassword} onChange={(event) => setConfirmRecoveryPassword(event.target.value)} required minLength={12} maxLength={128} aria-invalid={recoveryPasswordConfirmationMismatch} aria-describedby="recovery-password-requirements" className={cn("h-10 w-full rounded-md border bg-background px-3 pr-10 text-sm text-foreground outline-none focus-visible:ring-2 dark:bg-slate-950", recoveryPasswordConfirmationMismatch ? "border-red-500 focus-visible:ring-red-500" : recoveryPasswordsMatch ? "border-emerald-500 focus-visible:ring-emerald-500" : "border-border focus-visible:ring-brand", "dark:border-slate-700")} />
+                    <button type="button" onClick={() => setShowRecoveryPasswordConfirmation((visible) => !visible)} aria-label={showRecoveryPasswordConfirmation ? "Hide password confirmation" : "Show password confirmation"} aria-pressed={showRecoveryPasswordConfirmation} className="absolute inset-y-0 right-0 inline-flex w-10 items-center justify-center text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand">
+                      {showRecoveryPasswordConfirmation ? <EyeOff aria-hidden="true" className="size-4" /> : <Eye aria-hidden="true" className="size-4" />}
+                    </button>
+                  </span>
+                  {confirmRecoveryPassword.length > 0 && <span role="status" aria-live="polite" className={recoveryPasswordsMatch ? "text-xs font-medium text-emerald-700 dark:text-emerald-400" : "text-xs font-medium text-red-600 dark:text-red-400"}>{recoveryPasswordsMatch ? "Passwords match" : "Passwords do not match"}</span>}
+                </label>
+                <div className="flex items-end"><button type="submit" disabled={savingRecoveryPassword || loadingBackupSettings || recoveryPasswordConfirmationMismatch || !recoveryPasswordsMatch || !recoveryPasswordChecks.every(({ met }) => met)} className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-brand px-4 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-brand-dark-fill">{savingRecoveryPassword && <Loader2 aria-hidden="true" className="size-4 animate-spin" />}{savingRecoveryPassword ? "Saving..." : backupRecoveryConfigured ? "Change Password" : "Set Password"}</button></div>
+              </form>
+              <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950/60">
+                <p className="mb-2 text-xs font-medium leading-relaxed text-slate-700 dark:text-slate-200">Use 12+ characters with uppercase, lowercase, a number, and a symbol for a stronger password.</p>
+                <ul id="recovery-password-requirements" aria-label="Recovery password requirements" className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                  {recoveryPasswordChecks.map(({ label, met }) => {
+                    const unmetAfterTyping = newRecoveryPassword.length > 0 && !met;
+                    return (
+                      <li key={label} className={cn("inline-flex min-w-0 items-center gap-2 text-sm font-medium", met ? "text-emerald-800 dark:text-emerald-300" : unmetAfterTyping ? "text-red-700 dark:text-red-300" : "text-slate-700 dark:text-slate-300")}>
+                        {met ? <CircleCheck aria-hidden="true" className="size-4 shrink-0" /> : <Circle aria-hidden="true" className={cn("size-4 shrink-0", unmetAfterTyping ? "text-red-500" : "text-slate-400 dark:text-slate-500")} />}
+                        <span>{label}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            </section>
+            <p className="text-sm leading-relaxed text-muted-foreground">Full backups include all MongoDB collections and local upload files. Cloudinary-hosted media stays in Cloudinary and is not copied into the archive; existing database references remain unchanged.</p>
+
             <div className="grid grid-cols-1 items-stretch gap-4.5 lg:grid-cols-[minmax(300px,390px)_minmax(0,1fr)]">
               <section className="flex min-w-0 flex-col overflow-hidden rounded-[20px] border border-border bg-card dark:border-slate-700 dark:bg-slate-900">
                 <header className="px-6 pt-5.5 max-[520px]:px-4"><h3 id="backup-schedule-heading" className="text-[19px] font-medium text-foreground">Backup Schedule</h3></header>
@@ -408,9 +485,9 @@ function Settings() {
                   </RadioGroup.Root>
                 </div>
                 <footer className="flex min-h-[70px] items-center border-t border-border bg-muted/50 px-6 py-3.5 dark:border-slate-700 dark:bg-slate-800/50 max-[520px]:px-4">
-                  <button type="button" onClick={handleBackupNow} disabled={loadingBackupSettings || creatingBackup} className="inline-flex h-10.5 w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:bg-brand-dark-fill">
+                  <button type="button" onClick={handleBackupNow} disabled={loadingBackupSettings || creatingBackup || !backupRecoveryConfigured} className="inline-flex h-10.5 w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:bg-brand-dark-fill">
                     {creatingBackup ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <Database aria-hidden="true" className="size-4" />}
-                    {creatingBackup ? "Creating backup..." : "Back Up Now"}
+                    {creatingBackup ? "Creating full backup..." : "Create Full Backup"}
                   </button>
                 </footer>
               </section>
@@ -488,7 +565,7 @@ function Settings() {
                       <tbody>
                         {paginatedBackups.map((backup) => (
                           <tr key={backup.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/50 motion-reduce:transition-none">
-                            <td className={`px-4 py-3 font-mono text-[13px] ${darkMode ? "text-slate-200" : "text-slate-900"}`}>{backup.name}</td>
+                            <td className={`px-4 py-3 ${darkMode ? "text-slate-200" : "text-slate-900"}`}><span className="block break-all font-mono text-[13px]">{backup.name}</span>{Number.isFinite(backup.collectionCount) && <span className={`mt-1 block text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{backup.collectionCount} collections · {backup.documentCount || 0} records · {backup.localUploadCount || 0} local files</span>}</td>
                             <td className={`px-4 py-3 text-sm ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{formatBackupDateShort(backup.date)}</td>
                             <td className={`px-4 py-3 text-sm tabular-nums ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{formatBackupTime(backup.date)}</td>
                             <td className="px-4 py-3">
@@ -534,6 +611,7 @@ function Settings() {
                           <div className="min-w-0">
                             <p className={`break-all font-mono text-xs font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{backup.name}</p>
                             <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{formatBackupDateShort(backup.date)} · {formatBackupTime(backup.date)}</p>
+                            {Number.isFinite(backup.collectionCount) && <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{backup.collectionCount} collections · {backup.documentCount || 0} records · {backup.localUploadCount || 0} local files</p>}
                           </div>
                           <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-medium ${darkMode ? "bg-green-950/50 text-green-300" : "bg-green-500/10 text-green-700"}`}>{backup.status}</span>
                         </div>
@@ -879,6 +957,47 @@ function Settings() {
     }
   };
 
+  const handleSaveBackupRecoveryPassword = async (event) => {
+    event.preventDefault();
+    if (savingRecoveryPassword) return;
+    if (!isPasswordPolicySatisfied(newRecoveryPassword)) {
+      toast.error(PASSWORD_POLICY_MESSAGE);
+      return;
+    }
+    if (newRecoveryPassword !== confirmRecoveryPassword) {
+      toast.error("The new recovery passwords do not match.");
+      return;
+    }
+
+    setSavingRecoveryPassword(true);
+    try {
+      await setBackupRecoveryPassword({
+        current_password: backupRecoveryConfigured ? recoveryPassword : undefined,
+        new_password: newRecoveryPassword,
+      });
+      setBackupRecoveryConfigured(true);
+      setRecoveryPassword("");
+      setNewRecoveryPassword("");
+      setConfirmRecoveryPassword("");
+      toast.success("Backup recovery password saved.");
+    } catch (error) {
+      toast.error(error?.data?.message || error?.message || "Unable to save the recovery password.");
+    } finally {
+      setSavingRecoveryPassword(false);
+    }
+  };
+
+  const recoveryPasswordsMatch = newRecoveryPassword.length > 0 && newRecoveryPassword === confirmRecoveryPassword;
+  const recoveryPasswordConfirmationMismatch = confirmRecoveryPassword.length > 0 && !recoveryPasswordsMatch;
+  const recoveryPasswordChecks = [
+    { label: "12-128 characters", met: newRecoveryPassword.length >= 12 && newRecoveryPassword.length <= 128 },
+    { label: "Uppercase letter", met: /[A-Z]/.test(newRecoveryPassword) },
+    { label: "Lowercase letter", met: /[a-z]/.test(newRecoveryPassword) },
+    { label: "Number", met: /\d/.test(newRecoveryPassword) },
+    { label: "Symbol", met: /[^A-Za-z0-9]/.test(newRecoveryPassword) },
+    { label: "Not the default password", met: newRecoveryPassword.length > 0 && newRecoveryPassword.trim().toLowerCase() !== "acgc-2026" },
+  ];
+
   const handleBackupFileSelection = (file) => {
     if (!file) return;
     const filename = file.name.toLowerCase();
@@ -895,8 +1014,7 @@ function Settings() {
 
   const handleBackupNow = async () => {
     if (creatingBackup || loadingBackupSettings) return;
-    const backupType = backupOptions.find((option) => option.id === backupState.selectedSchedule)?.label;
-    if (!backupType) return;
+    const backupType = "Full System";
 
     setCreatingBackup(true);
     try {
@@ -913,6 +1031,7 @@ function Settings() {
       recordActivity(user, `Created an immediate ${backupType.toLowerCase()} backup.`, "Settings");
       toast.success(`${backupType} backup created successfully.`);
     } catch (error) {
+      setBackupState((current) => ({ ...current, status: "Failed" }));
       toast.error(error?.data?.message || error?.message || "Unable to create backup.");
     } finally {
       setCreatingBackup(false);
@@ -1011,10 +1130,14 @@ function Settings() {
 
   const confirmRestoreBackup = async () => {
     if (!restoreConfirmation || restoringBackup) return;
+    if (!restoreRecoveryPassword) {
+      toast.error("Enter the recovery password to continue.");
+      return;
+    }
     const backup = restoreConfirmation;
     setRestoringBackup(true);
     try {
-      const response = await restoreSystemBackup(backup.id);
+      const response = await restoreSystemBackup(backup.id, restoreRecoveryPassword);
       setBackupState({
         selectedSchedule: response.backup_schedule || backupState.selectedSchedule,
         status: response.backup_status || "Restored",
@@ -1029,6 +1152,7 @@ function Settings() {
     } finally {
       setRestoringBackup(false);
       setRestoreConfirmation(null);
+      setRestoreRecoveryPassword("");
     }
   };
 
@@ -1308,7 +1432,10 @@ function Settings() {
           {restoreConfirmation && <div
             className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm"
             onMouseDown={(event) => {
-              if (!restoringBackup && event.target === event.currentTarget) setRestoreConfirmation(null);
+              if (!restoringBackup && event.target === event.currentTarget) {
+                setRestoreRecoveryPassword("");
+                setRestoreConfirmation(null);
+              }
             }}
           >
             <section
@@ -1334,10 +1461,15 @@ function Settings() {
               <p id="restore-confirm-description" className={`mt-4 text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                 This will replace the current database records and uploaded files with the contents of this backup. This action cannot be undone from the system after it completes.
               </p>
+              <label className={`mt-4 grid gap-1.5 text-xs font-medium ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Recovery password<input type="password" autoComplete="current-password" value={restoreRecoveryPassword} onChange={(event) => setRestoreRecoveryPassword(event.target.value)} disabled={restoringBackup} required minLength={12} maxLength={128} className={`h-10 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand ${darkMode ? "border-slate-700 bg-slate-950 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`} /></label>
+              <p className={`mt-2 text-xs leading-relaxed ${darkMode ? "text-slate-400" : "text-slate-500"}`}>The pre-restore snapshot is created automatically. Users will be signed out after a successful restore.</p>
               <footer className={`mt-6 flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end ${darkMode ? "border-slate-800" : "border-slate-100"}`}>
                 <button
                   type="button"
-                  onClick={() => setRestoreConfirmation(null)}
+                  onClick={() => {
+                    setRestoreRecoveryPassword("");
+                    setRestoreConfirmation(null);
+                  }}
                   disabled={restoringBackup}
                   className={`rounded-md border px-4 py-2.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60 ${darkMode ? "border-slate-700 text-slate-200 hover:bg-slate-800" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
                 >
@@ -1346,7 +1478,7 @@ function Settings() {
                 <button
                   type="button"
                   onClick={confirmRestoreBackup}
-                  disabled={restoringBackup}
+                  disabled={restoringBackup || restoreRecoveryPassword.length < 12}
                   className="inline-flex items-center justify-center gap-2 rounded-md bg-red-800 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {restoringBackup && <Loader2 aria-hidden="true" className="size-4 animate-spin" />}

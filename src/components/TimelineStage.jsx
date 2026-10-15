@@ -112,7 +112,7 @@ export default function TimelineStage({
       <div className="min-w-0 pt-0.5">
         <p className={`break-words text-sm font-semibold leading-5 ${labelClass}`}>{stage?.label || stage?.name || "Project stage"}</p>
         <p className={`mt-0.5 break-words text-xs leading-5 ${statusTextClass}`}>{statusText}</p>
-                {status !== "done" && stage?.photoRequirement && (
+                {status !== "done" && stage?.photoRequirement && (stage.photoRequirement === "required" || onUploadProgressPhoto) && (
                   <div className={`mt-2 rounded-lg border p-2.5 text-xs ${darkMode ? "border-slate-700 bg-slate-900 text-slate-300" : "border-slate-200 bg-white text-slate-600"}`}>
                     {stage.photoRequirement === "required" && (
                       <p>A progress photo is required before this stage can be marked as completed.</p>
@@ -227,7 +227,7 @@ export default function TimelineStage({
                         ))}
                       </div>
                     )}
-                    {subStatus !== "done" && subStage?.photoRequirement && (
+                    {subStatus !== "done" && subStage?.photoRequirement && (subStage.photoRequirement === "required" || onUploadProgressPhoto) && (
                       <div className={`mt-2 rounded-lg border p-2.5 text-[11px] ${darkMode ? "border-slate-700 bg-slate-900 text-slate-300" : "border-slate-200 bg-white text-slate-600"}`}>
                         {subStage.photoRequirement === "required" && (
                           <p>A progress photo is required before this sub-stage can be marked as completed.</p>

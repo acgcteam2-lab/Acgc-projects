@@ -208,6 +208,44 @@ export const viewAdminPaymentSupportingDocument = async (req, res) => {
   }
 };
 
+export const viewCustomerPaymentSupportingDocument = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.orderId).select("customer payment_records");
+    if (!order) return res.status(404).json({ success: false, message: "Order not found." });
+    if (String(order.customer) !== String(req.user.id)) {
+      return res.status(403).json({ success: false, message: "Not authorized to view payment evidence for this order." });
+    }
+    const paymentRecord = order.payment_records.id(req.params.recordId);
+    const document = paymentRecord?.supporting_documents.id(req.params.documentId);
+    if (!document) return res.status(404).json({ success: false, message: "Payment document not found." });
+
+    if (document.storage === "cloudinary") {
+      const downloadUrl = getPrivatePaymentDocumentDownloadUrl(document.public_id, document.format, document.resource_type);
+      const cloudinaryResponse = await fetch(downloadUrl);
+      if (!cloudinaryResponse.ok) return res.status(502).json({ success: false, message: "Unable to retrieve the private payment document." });
+      const contentType = document.format === "pdf" ? "application/pdf" : `image/${document.format === "jpg" ? "jpeg" : document.format}`;
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(document.original_name)}`);
+      res.setHeader("Cache-Control", "private, no-store");
+      return res.end(Buffer.from(await cloudinaryResponse.arrayBuffer()));
+    }
+
+    const filePath = path.resolve(privatePaymentDocumentsDirectory, document.storage_key);
+    if (!filePath.startsWith(`${privatePaymentDocumentsDirectory}${path.sep}`)) {
+      return res.status(404).json({ success: false, message: "Payment document not found." });
+    }
+    await fs.promises.access(filePath);
+    res.setHeader("Content-Type", document.format === "pdf" ? "application/pdf" : `image/${document.format === "jpg" ? "jpeg" : document.format}`);
+    res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(document.original_name)}`);
+    res.setHeader("Cache-Control", "private, no-store");
+    return fs.createReadStream(filePath).pipe(res);
+  } catch (error) {
+    if (error.code === "ENOENT") return res.status(404).json({ success: false, message: "Payment document not found." });
+    console.error("View customer payment document error:", error);
+    return res.status(500).json({ success: false, message: "Unable to view the payment document." });
+  }
+};
+
 const getDelayEventKey = (stage, entry, index) => [
   stage.key || stage.name || index,
   entry.reportedAt ? new Date(entry.reportedAt).getTime() : "",
@@ -550,6 +588,18 @@ export const listOrders = async (req, res) => {
       .lean();
 
     if (req.user.role === "customer" && orders.length > 0) {
+      orders.forEach((order) => {
+        (order.payment_records || []).forEach((record) => {
+          record.supporting_documents = (record.supporting_documents || []).map((document) => ({
+            _id: document._id,
+            original_name: document.original_name,
+            format: document.format,
+            uploaded_by_role: document.uploaded_by_role,
+            uploaded_by_name: document.uploaded_by_name,
+            uploaded_at: document.uploaded_at,
+          }));
+        });
+      });
       const notifications = await CustomerNotification.find({
         customer: req.user.id,
         order: { $in: orders.map((order) => order._id) },
@@ -1183,7 +1233,48 @@ export const updateOrderStatus = async (req, res) => {
         ? order.payment_records.id(payment_record_action.record_id)
         : order.payment_records.find((entry) => entry.status === "pending");
 
-      if (action === "request_downpayment_exception") {
+      if (action === "review_discrepancy" || action === "resolve_discrepancy") {
+        const discrepancy = record?.discrepancies.id(payment_record_action.discrepancy_id);
+        if (!record || !discrepancy) {
+          return res.status(404).json({ success: false, message: "Payment discrepancy not found." });
+        }
+        if (discrepancy.status === "resolved") {
+          return res.status(409).json({ success: false, message: "This payment discrepancy is already resolved." });
+        }
+        const note = String(payment_record_action.reason || "").trim();
+        if (!note) return res.status(400).json({ success: false, message: "Provide a note before updating the discrepancy status." });
+        if (note.length > 1000) return res.status(400).json({ success: false, message: "Discrepancy notes must be 1000 characters or fewer." });
+        const nextStatus = action === "resolve_discrepancy" ? "resolved" : "under_review";
+        if (discrepancy.status === nextStatus) {
+          return res.json({ success: true, duplicate: true, order });
+        }
+        const changedAt = new Date();
+        discrepancy.status = nextStatus;
+        discrepancy.status_history.push({
+          status: nextStatus,
+          note,
+          changed_at: changedAt,
+          changed_by: req.user.id,
+          changed_by_name: getPaymentDocumentDisplayName(req.user),
+          changed_by_role: req.user.role,
+        });
+        if (nextStatus === "resolved") {
+          discrepancy.resolution_note = note;
+          discrepancy.resolved_at = changedAt;
+          discrepancy.resolved_by = req.user.id;
+          discrepancy.resolved_by_name = getPaymentDocumentDisplayName(req.user);
+          discrepancy.resolved_by_role = req.user.role;
+        }
+        paymentActionResult = {
+          action: nextStatus === "resolved" ? "discrepancy_resolved" : "discrepancy_reviewed",
+          recordId: record._id,
+          discrepancyId: discrepancy._id,
+          note,
+          customerReportedAmount: discrepancy.customer_reported_amount,
+          adminRecordedAmount: discrepancy.admin_recorded_amount,
+          difference: discrepancy.difference,
+        };
+      } else if (action === "request_downpayment_exception") {
         if (!record || record.status !== "pending") {
           return res.status(409).json({ success: false, message: "A customer payment awaiting verification is required to request an exception." });
         }
@@ -1275,6 +1366,8 @@ export const updateOrderStatus = async (req, res) => {
               reason,
               changed_at: new Date(),
               changed_by: req.user.id,
+              changed_by_name: getPaymentDocumentDisplayName(req.user),
+              changed_by_role: req.user.role,
             });
           }
           record.status = "verified";
@@ -1282,6 +1375,35 @@ export const updateOrderStatus = async (req, res) => {
           record.verified_at = new Date();
           record.verified_by = req.user.id;
           record.admin_reason = reason;
+          if (record.submitted_amount != null && isPaymentDiscrepancy(record.submitted_amount, verifiedAmount)) {
+            const latestDiscrepancy = record.discrepancies.at(-1);
+            const duplicateDiscrepancy = latestDiscrepancy
+              && latestDiscrepancy.status !== "resolved"
+              && Math.round(Number(latestDiscrepancy.customer_reported_amount) * 100) === Math.round(Number(record.submitted_amount) * 100)
+              && Math.round(Number(latestDiscrepancy.admin_recorded_amount) * 100) === Math.round(verifiedAmount * 100);
+            if (!duplicateDiscrepancy) {
+              const detectedAt = record.verified_at;
+              record.discrepancies.push({
+                customer_reported_amount: Number(record.submitted_amount),
+                admin_recorded_amount: verifiedAmount,
+                difference: Math.round(Math.abs(verifiedAmount - Number(record.submitted_amount)) * 100) / 100,
+                status: "pending_review",
+                reason,
+                detected_at: detectedAt,
+                detected_by: req.user.id,
+                detected_by_name: getPaymentDocumentDisplayName(req.user),
+                detected_by_role: req.user.role,
+                status_history: [{
+                  status: "pending_review",
+                  note: reason,
+                  changed_at: detectedAt,
+                  changed_by: req.user.id,
+                  changed_by_name: getPaymentDocumentDisplayName(req.user),
+                  changed_by_role: req.user.role,
+                }],
+              });
+            }
+          }
           if (action === "verify" && record.downpayment_exception?.status === "pending") {
             record.downpayment_exception.status = "cancelled";
             record.downpayment_exception.reason = "Payment accepted through the normal partial-payment workflow.";
@@ -1518,7 +1640,17 @@ export const updateOrderStatus = async (req, res) => {
     const currentPaidAmount = getOrderPaymentAmounts(order).paidAmount;
     const paymentProofJustConfirmed = Boolean(order.payment_proof_confirmed_at && !hadConfirmedPaymentProof);
     const confirmedPaymentAmount = Math.max(currentPaidAmount - previousPaidAmount, 0) || Number(order.payment_proof_amount) || 0;
-    if (paymentActionResult?.action === "reject") {
+    if (paymentActionResult?.action === "discrepancy_resolved") {
+      void sendOrderNotification("payment_discrepancy_resolved", order, {
+        customerEmail: order.customer_email || order.customer?.email,
+        paymentRecordId: String(paymentActionResult.recordId),
+        discrepancyId: String(paymentActionResult.discrepancyId),
+        reason: paymentActionResult.note,
+        customerReportedAmount: paymentActionResult.customerReportedAmount,
+        adminRecordedAmount: paymentActionResult.adminRecordedAmount,
+        difference: paymentActionResult.difference,
+      });
+    } else if (paymentActionResult?.action === "reject") {
       void sendOrderNotification("payment_proof_rejected", order, {
         customerEmail: order.customer_email || order.customer?.email,
         paymentRecordId: String(paymentActionResult.recordId),
@@ -2031,8 +2163,8 @@ export const submitCustomerPaymentProof = async (req, res) => {
       });
     }
 
-    const { remainingAmount } = getOrderPaymentAmounts(order);
-    const validation = validatePaymentAmount(amount, remainingAmount);
+    const { remainingAmount, downpaymentRemaining } = getOrderPaymentAmounts(order);
+    const validation = validatePaymentAmount(amount, remainingAmount, downpaymentRemaining);
     if (!validation.valid) return res.status(400).json({ success: false, message: validation.message });
     const normalizedAmount = validation.amount;
 

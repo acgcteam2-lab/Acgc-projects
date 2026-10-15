@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -5,8 +6,9 @@ function AdminCreationModal() {
   const navigate = useNavigate();
   const location = useLocation();
   const { adminExists, adminLoading, adminError, refreshAdminStatus } = useAuth();
+  const [dismissed, setDismissed] = useState(false);
 
-  if (location.pathname === "/admin-recovery" || adminLoading || adminExists !== false) {
+  if (dismissed || location.pathname !== "/login" || adminLoading || adminExists !== false) {
     return null;
   }
 
@@ -30,7 +32,7 @@ function AdminCreationModal() {
         <button type="button" onClick={() => navigate("/admin-recovery")} className="mt-4 w-full rounded-lg bg-red-700 px-6 py-3.5 font-semibold text-white hover:bg-red-800">
           Open administrator recovery
         </button>
-        <button type="button" onClick={() => navigate("/login")} className="mt-3 w-full rounded-lg border border-gray-300 px-6 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+        <button type="button" onClick={() => { setDismissed(true); navigate("/login", { replace: true }); }} className="mt-3 w-full rounded-lg border border-gray-300 px-6 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">
           Return to login
         </button>
       </div>

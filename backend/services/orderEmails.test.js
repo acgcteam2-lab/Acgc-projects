@@ -81,6 +81,26 @@ describe("order email templates", () => {
     assert.ok(email.text.includes("Confirmed payment amount: PHP 200.00"));
   });
 
+  it("includes both reported amounts and the resolution note in discrepancy emails", () => {
+    const email = buildOrderEmail("payment_discrepancy_resolved", {
+      _id: "mongo-id",
+      tracking: "TRK-123",
+      total_amount: 1500,
+      amount_paid: 500,
+      items: [{ name: "Window", quantity: 1 }],
+    }, {
+      customerReportedAmount: 1000,
+      adminRecordedAmount: 500,
+      difference: 500,
+      reason: "Reviewed the official receipt with the customer.",
+    });
+
+    assert.ok(email.subject.includes("Payment discrepancy resolved"));
+    assert.ok(email.text.includes("Customer-reported amount: PHP 1,000.00"));
+    assert.ok(email.text.includes("Admin-recorded amount: PHP 500.00"));
+    assert.ok(email.text.includes("Reviewed the official receipt with the customer."));
+  });
+
   it("renders each requested event with an order reference and primary action", () => {
     const order = {
       _id: "mongo-id",
@@ -106,6 +126,7 @@ describe("order email templates", () => {
       ["order_cancelled", {}],
       ["payment_proof_submitted", { audience: "admin" }],
       ["payment_proof_confirmed", { confirmedAmount: 200, previousStatus: "Pending Verification" }],
+      ["payment_discrepancy_resolved", { customerReportedAmount: 1000, adminRecordedAmount: 500, difference: 500, reason: "Reviewed." }],
       ["admin_payment_recorded", { confirmedAmount: 200, paymentRecordId: "record-1", reason: "Cash received in person" }],
       ["downpayment_exception_approved", { acceptedAmount: 200, shortfall: 200, reason: "Customer agreed to pay the balance later." }],
       ["downpayment_exception_requested", { acceptedAmount: 200, shortfall: 200 }],

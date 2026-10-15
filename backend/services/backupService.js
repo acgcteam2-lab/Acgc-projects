@@ -8,6 +8,7 @@ import { gzip, gunzip } from "node:zlib";
 import mongoose from "mongoose";
 import { deletePrivateRawAsset, getPrivateRawDownloadUrl, uploadPrivateRawBuffer } from "../config/cloudinary.js";
 import SystemSetting from "../models/SystemSetting.js";
+import BackupOperationAudit from "../models/BackupOperationAudit.js";
 import {
   decryptBackupBuffer,
   decryptZipBackupBuffer,
@@ -63,12 +64,19 @@ const createSnapshotBuffer = async () => {
   const database = mongoose.connection.db;
   if (!database) throw backupError("MongoDB is not connected.", 503);
 
-  const collectionInfo = await database.listCollections({}, { nameOnly: true }).toArray();
+  const collectionInfo = await database.listCollections({}, { nameOnly: false }).toArray();
   const collections = [];
-  for (const { name } of collectionInfo) {
+  for (const { name, type, options } of collectionInfo) {
     if (name.startsWith("system.")) continue;
+    if (type === "view") {
+      collections.push({ name, type, options, documents: [], indexes: [] });
+      continue;
+    }
     const documents = await database.collection(name).find({}).toArray();
-    collections.push({ name, documents });
+    const indexes = (await database.collection(name).indexes())
+      .filter((index) => index.name !== "_id_")
+      .map(({ key, name: indexName, ...indexOptions }) => ({ key, name: indexName, ...indexOptions }));
+    collections.push({ name, type: "collection", options, documents, indexes });
   }
 
   const snapshot = {
@@ -76,6 +84,10 @@ const createSnapshotBuffer = async () => {
     createdAt: new Date().toISOString(),
     collections,
     uploads: await readUploadFiles(getUploadsDirectory()),
+    assetScope: {
+      localUploadsIncluded: true,
+      cloudinaryAssetsIncluded: false,
+    },
   };
 
   const extendedJson = mongoose.mongo.BSON.EJSON.stringify(snapshot, { relaxed: false });
@@ -83,6 +95,9 @@ const createSnapshotBuffer = async () => {
     buffer: await gzipAsync(Buffer.from(extendedJson, "utf8")),
     orders: collections.find((collection) => collection.name === "orders")?.documents || [],
     users: collections.find((collection) => collection.name === "users")?.documents || [],
+    collectionCount: collections.length,
+    documentCount: collections.reduce((count, collection) => count + collection.documents.length, 0),
+    localUploadCount: snapshot.uploads.length,
   };
 };
 
@@ -109,7 +124,11 @@ const parseSnapshot = async (buffer) => {
       typeof collection?.name === "string" &&
       /^[A-Za-z0-9_.-]+$/.test(collection.name) &&
       !collection.name.startsWith("system.") &&
-      Array.isArray(collection.documents)
+      Array.isArray(collection.documents) &&
+      (collection.type === undefined || ["collection", "view"].includes(collection.type)) &&
+      (collection.indexes === undefined || Array.isArray(collection.indexes)) &&
+      (collection.options === undefined || (collection.options && typeof collection.options === "object" && !Array.isArray(collection.options))) &&
+      (collection.type !== "view" || (collection.options && typeof collection.options.viewOn === "string" && Array.isArray(collection.options.pipeline)))
     ) ||
     !snapshot.uploads.every((file) => typeof file?.path === "string" && typeof file?.content === "string")
   ) {
@@ -198,18 +217,55 @@ const restoreUploadFiles = async (files) => {
 
 const applySnapshot = async (snapshot) => {
   const database = mongoose.connection.db;
+  const activeRestoreLock = await database.collection("systemsettings").findOne(
+    { key: "global" },
+    {
+      projection: {
+        backup_restore_lock: 1,
+        backup_recovery_password_salt: 1,
+        backup_recovery_password_hash: 1,
+        backup_recovery_password_set_at: 1,
+      },
+    },
+  );
   const existingCollections = await database.listCollections({}, { nameOnly: true }).toArray();
   for (const { name } of existingCollections) {
-    if (!name.startsWith("system.")) {
-      await database.collection(name).deleteMany({});
-    }
+    if (!name.startsWith("system.")) await database.collection(name).drop();
   }
 
-  for (const { name, documents } of snapshot.collections) {
+  for (const { name, documents, type, indexes, options } of snapshot.collections) {
+    if (type === "view") continue;
+    await database.createCollection(name, options || {});
     const collection = database.collection(name);
     for (let offset = 0; offset < documents.length; offset += 500) {
       await collection.insertMany(documents.slice(offset, offset + 500), { ordered: true });
     }
+    if (Array.isArray(indexes) && indexes.length) {
+      await collection.createIndexes(indexes.map(({ key, name: indexName, ...options }) => {
+        delete options.ns;
+        delete options.v;
+        return { key, name: indexName, ...options };
+      }));
+    }
+  }
+
+  for (const { name, options } of snapshot.collections.filter((collection) => collection.type === "view")) {
+    await database.createCollection(name, options);
+  }
+
+  const protectedSettings = Object.fromEntries([
+    "backup_restore_lock",
+    "backup_recovery_password_salt",
+    "backup_recovery_password_hash",
+    "backup_recovery_password_set_at",
+  ].filter((key) => activeRestoreLock?.[key] !== undefined && activeRestoreLock[key] !== null)
+    .map((key) => [key, activeRestoreLock[key]]));
+  if (Object.keys(protectedSettings).length) {
+    await database.collection("systemsettings").updateOne(
+      { key: "global" },
+      { $set: protectedSettings },
+      { upsert: true },
+    );
   }
 
   await restoreUploadFiles(snapshot.uploads);
@@ -327,6 +383,10 @@ export const createSystemBackup = async (type) => {
     size: getBackupSizeInMB(backupBuffer.length),
     sizeBytes: backupBuffer.length,
     status: "Success",
+    collectionCount: snapshot.collectionCount,
+    documentCount: snapshot.documentCount,
+    localUploadCount: snapshot.localUploadCount,
+    cloudinaryAssetsIncluded: false,
   };
 
   try {
@@ -432,7 +492,7 @@ export const getSystemBackupDownload = async (backupId) => {
   return { buffer, filename: `${backup.name}.zip` };
 };
 
-export const restoreSystemBackup = async (backupId) => {
+const restoreSystemBackupLocked = async (backupId) => {
   const { settings, backup } = await findBackupRecord(backupId);
   let backupBuffer;
   try {
@@ -453,6 +513,17 @@ export const restoreSystemBackup = async (backupId) => {
     const database = mongoose.connection.db;
     await database.collection("users").updateMany({}, { $inc: { session_version: 1 } });
     await database.collection("admins").updateMany({}, { $inc: { session_version: 1 } });
+    const [activeAdminCount, activeAdminUserCount] = await Promise.all([
+      database.collection("admins").countDocuments({ is_active: { $ne: false } }),
+      database.collection("users").countDocuments({
+        role: { $in: ["admin", "super_admin"] },
+        is_active: { $ne: false },
+      }),
+    ]);
+    if (activeAdminCount + activeAdminUserCount === 0) {
+      throw backupError("Restored data has no active administrator account; the previous data will be recovered.", 500);
+    }
+    await database.command({ ping: 1 });
   } catch (restoreError) {
     try {
       await applySnapshot(rollbackSnapshot);
@@ -534,6 +605,42 @@ export const restoreSystemBackup = async (backupId) => {
   };
 };
 
+export const restoreSystemBackup = async (backupId) => {
+  const now = new Date();
+  const lockToken = randomUUID();
+  const lock = await SystemSetting.findOneAndUpdate(
+    {
+      key: "global",
+      $or: [
+        { backup_restore_lock: null },
+        { "backup_restore_lock.expiresAt": { $lt: now } },
+      ],
+    },
+    {
+      $set: {
+        backup_restore_lock: {
+          token: lockToken,
+          backupId,
+          startedAt: now,
+          expiresAt: new Date(now.getTime() + 30 * 60 * 1000),
+        },
+      },
+    },
+    { returnDocument: "after" },
+  ).lean();
+
+  if (!lock) throw backupError("Another restore is already in progress. Try again after it finishes.", 409);
+
+  try {
+    return await restoreSystemBackupLocked(backupId);
+  } finally {
+    await SystemSetting.updateOne(
+      { key: "global", "backup_restore_lock.token": lockToken },
+      { $unset: { backup_restore_lock: 1 } },
+    ).catch((error) => console.error("Unable to release the system restore lock:", error));
+  }
+};
+
 export const deleteSystemBackup = async (backupId) => {
   const { settings, backup } = await findBackupRecord(backupId);
   const backupHistory = (settings.backup_history || []).filter((item) => item.id !== backupId);
@@ -603,11 +710,25 @@ export const runScheduledBackup = async () => {
 
   try {
     const result = await createSystemBackup(SCHEDULED_BACKUP_TYPES[schedule]);
+    await BackupOperationAudit.create({
+      actor_role: "system",
+      action: "create",
+      outcome: "success",
+      backup_id: result.backup.id,
+      backup_name: result.backup.name,
+      details: `Scheduled ${schedule} backup created.`,
+    }).catch((error) => console.error("Unable to record scheduled backup audit:", error.message));
     console.info(`[backup] Scheduled ${schedule} snapshot created: ${result.backup.name}`);
   } catch (error) {
+    await BackupOperationAudit.create({
+      actor_role: "system",
+      action: "create",
+      outcome: "failed",
+      details: `Scheduled ${schedule} backup failed: ${error.message}`,
+    }).catch((auditError) => console.error("Unable to record scheduled backup failure:", auditError.message));
     await SystemSetting.updateOne(
       { _id: settings._id, last_scheduled_backup_key: scheduleKey },
-      { $unset: { last_scheduled_backup_key: 1 } }
+      { $unset: { last_scheduled_backup_key: 1 }, $set: { backup_status: "Failed" } }
     );
     throw error;
   }

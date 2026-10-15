@@ -87,15 +87,15 @@ function Login() {
   };
 
   return (
-    <div className="auth-light-canvas flex h-[100dvh] min-h-[100dvh] items-stretch justify-center lg:items-center lg:px-4 lg:py-5">
+    <div className="auth-light-canvas flex h-[100dvh] min-h-[100dvh] items-stretch justify-center overflow-hidden lg:items-center lg:px-4 lg:py-5">
 
       <div className="relative z-10 h-[100dvh] w-full max-w-none overflow-hidden bg-slate-900/90 lg:h-auto lg:max-w-5xl lg:rounded-[22px] lg:border lg:border-white/10 lg:shadow-[0_28px_90px_rgba(2,6,23,0.65)] lg:backdrop-blur-xl">
 
-        <div className="grid h-full grid-rows-[minmax(13rem,40dvh)_minmax(0,1fr)] lg:h-auto lg:grid-cols-2 lg:grid-rows-1">
+        <div className="grid h-full grid-rows-[minmax(10rem,30dvh)_minmax(0,1fr)] lg:h-auto lg:grid-cols-2 lg:grid-rows-1">
 
           {/* LEFT SIDE */}
 
-          <div className="relative flex min-h-0 flex-col items-center justify-center gap-2 overflow-hidden bg-gradient-to-br from-slate-950 via-[#111827] to-[#450a0a] p-4 text-white sm:gap-3 lg:min-h-[560px] lg:p-8">
+          <div className="relative flex min-h-0 flex-col items-center justify-center gap-2 overflow-hidden bg-gradient-to-br from-slate-950 via-[#111827] to-[#450a0a] p-4 text-white sm:gap-3 lg:p-8">
 
             <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(148,163,184,.08),transparent_42%,rgba(127,29,29,.28))]" />
             <div className="pointer-events-none absolute -right-28 -top-20 h-80 w-80 rounded-full border border-white/10" />
@@ -123,7 +123,7 @@ function Login() {
 
           {/* RIGHT SIDE */}
 
-          <div className="min-h-0 overflow-y-auto bg-white px-4 py-3 text-slate-900 sm:px-6 sm:py-4 lg:flex lg:items-center lg:p-8">
+          <div className="min-h-0 overflow-hidden bg-white px-4 py-2 text-slate-900 sm:px-6 sm:py-2 lg:flex lg:items-center lg:p-8">
 
             <div className="mx-auto flex min-h-full w-full max-w-md flex-col lg:min-h-0">
               
@@ -137,14 +137,14 @@ function Login() {
 
               <form
                 onSubmit={handleSubmit}
-                className="mt-4 flex flex-1 flex-col gap-3 sm:mt-5 lg:mt-6 lg:gap-4"
+                className="mt-3 flex flex-1 flex-col gap-2 sm:mt-3 lg:mt-4 lg:gap-3"
               >
 
                 {/* USERNAME */}
 
                 <div>
 
-                    <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+                    <label className="mb-1 block text-sm font-semibold text-slate-700">
                     Email or Username
                   </label>
 
@@ -161,7 +161,7 @@ function Login() {
                       value={formData.identifier}
                       onChange={handleChange}
                       placeholder="Email or username"
-                      className="h-12 w-full rounded-xl border border-slate-300 bg-slate-50 pl-11 pr-4 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-red-500 focus:bg-white focus:ring-4 focus:ring-red-500/10 sm:pl-12 sm:pr-5"
+                      className="h-11 w-full rounded-xl border border-slate-300 bg-slate-50 pl-11 pr-4 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-red-500 focus:bg-white focus:ring-4 focus:ring-red-500/10 sm:pl-12 sm:pr-5"
                     />
                   </div>
 
@@ -171,7 +171,7 @@ function Login() {
 
                 <div>
 
-                  <label className="mb-1.5 block text-sm font-semibold text-slate-700">
+                  <label className="mb-1 block text-sm font-semibold text-slate-700">
                     Password
                   </label>
 
@@ -194,7 +194,7 @@ function Login() {
                       value={formData.password}
                       onChange={handleChange}
                       placeholder="Password"
-                      className="h-12 w-full rounded-xl border border-slate-300 bg-slate-50 pl-11 pr-12 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-red-500 focus:bg-white focus:ring-4 focus:ring-red-500/10 sm:pl-12 sm:pr-14"
+                      className="h-11 w-full rounded-xl border border-slate-300 bg-slate-50 pl-11 pr-12 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-red-500 focus:bg-white focus:ring-4 focus:ring-red-500/10 sm:pl-12 sm:pr-14"
                     />
 
                     <button
@@ -245,7 +245,7 @@ function Login() {
                 <button
                   type="submit"
                   disabled={loginLoading || redirecting}
-                  className={`min-h-12 w-full rounded-xl bg-brand text-base font-bold text-white shadow-sm transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${loginLoading || redirecting ? "cursor-not-allowed opacity-60" : ""}`}
+                  className={`min-h-11 w-full rounded-xl bg-brand text-base font-bold text-white shadow-sm transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${loginLoading || redirecting ? "cursor-not-allowed opacity-60" : ""}`}
                 >
                   {loginLoading || redirecting ? (
                     <span className="flex items-center justify-center gap-2">
@@ -261,15 +261,13 @@ function Login() {
 
                 <Link
                   to="/"
-                  className="flex min-h-12 w-full items-center justify-center gap-3 rounded-xl border border-slate-300 bg-slate-100 text-sm font-bold text-slate-700 transition hover:border-slate-400 hover:bg-slate-200"
+                  className="flex min-h-11 w-full items-center justify-center gap-3 rounded-xl border border-slate-300 bg-slate-100 text-sm font-bold text-slate-700 transition hover:border-slate-400 hover:bg-slate-200"
                 >
                   <ChevronLeft size={22} />
                   Back to Browse
                 </Link>
 
-                {/* LINKS */}
-
-                <div className="mt-auto flex flex-wrap justify-center gap-x-2 gap-y-1 rounded-xl border border-red-100 bg-red-50 px-3 py-3 text-xs sm:gap-4 sm:py-4 sm:text-sm">
+                <div className="mt-auto flex flex-wrap justify-center gap-x-2 gap-y-1 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs sm:gap-4 sm:py-2 sm:text-sm">
                   <span className="text-slate-500">Don't have an account?</span>
                   <Link
                     to="/signup"

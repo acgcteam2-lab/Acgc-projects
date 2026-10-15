@@ -20,6 +20,7 @@ export const updateAdminUserAccess = (userId, payload) =>
 
 export const getSystemSettings = () => apiFetch("/auth/system-settings");
 export const getPublicCustomerPermissions = () => apiFetch("/auth/customer-permissions");
+export const getCustomerPaymentContact = () => apiFetch("/auth/customer-payment-contact", { cache: "no-store" });
 
 export const updateSystemSettings = (payload) =>
   apiFetch("/auth/system-settings", {
@@ -31,6 +32,12 @@ export const createSystemBackup = (type) =>
   apiFetch("/auth/system-settings/backups", {
     method: "POST",
     body: JSON.stringify({ type }),
+  });
+
+export const setBackupRecoveryPassword = (payload) =>
+  apiFetch("/auth/system-settings/backups/recovery-password", {
+    method: "PUT",
+    body: JSON.stringify(payload),
   });
 
 export const uploadSystemBackup = (file) => {
@@ -57,9 +64,10 @@ export const uploadSystemBackup = (file) => {
   });
 };
 
-export const restoreSystemBackup = (backupId) =>
+export const restoreSystemBackup = (backupId, recoveryPassword) =>
   apiFetch(`/auth/system-settings/backups/${encodeURIComponent(backupId)}/restore`, {
     method: "POST",
+    body: JSON.stringify({ recovery_password: recoveryPassword }),
   });
 
 export const deleteSystemBackup = (backupId) =>

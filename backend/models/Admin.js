@@ -10,6 +10,28 @@ const AdminSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
+    pending_email: {
+      type: String,
+      lowercase: true,
+      trim: true,
+      default: null,
+    },
+    pending_email_verification_code: {
+      type: String,
+      default: null,
+    },
+    pending_email_verification_expires: {
+      type: Date,
+      default: null,
+    },
+    pending_email_verification_attempts: {
+      type: Number,
+      default: 0,
+    },
+    pending_email_verification_sent_at: {
+      type: Date,
+      default: null,
+    },
     username: {
       type: String,
       required: true,
@@ -99,6 +121,11 @@ const AdminSchema = new mongoose.Schema(
   }
 );
 
+AdminSchema.index(
+  { pending_email: 1 },
+  { unique: true, partialFilterExpression: { pending_email: { $type: "string" } } },
+);
+
 AdminSchema.pre("save", async function () {
   if (!this.isModified("password")) return;
 
@@ -120,6 +147,11 @@ AdminSchema.methods.toJSON = function () {
   delete admin.password_reset_request_window_started_at;
   delete admin.password_reset_request_count;
   delete admin.password_reset_request_lock_until;
+  delete admin.pending_email;
+  delete admin.pending_email_verification_code;
+  delete admin.pending_email_verification_expires;
+  delete admin.pending_email_verification_attempts;
+  delete admin.pending_email_verification_sent_at;
   return admin;
 };
 

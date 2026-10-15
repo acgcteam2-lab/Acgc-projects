@@ -100,7 +100,23 @@ import { clearPendingProductAction, clearPendingProductWorkflowState, getPending
 import { getOptimizedProductImageUrl, getProductImageSource, getProductImageSrcSet, handleProductImageError, handleProductImageLoad } from "@/lib/productImageUtils";
 import { getFinalProjectCost } from "@/lib/orderPricing";
 import { getPhilippinePhoneError, isValidPhilippinePhone, normalizePhoneInput } from "@/lib/phoneValidation";
+import { getCustomerPaymentContact } from "@/api/users";
 import ProfileAvatar from "../../components/ui/ProfileAvatar";
+
+const getPaymentSupportPhone = (value) => {
+  const original = String(value || "").trim();
+  if (!original) return null;
+
+  const normalized = normalizePhoneInput(value);
+  if (!isValidPhilippinePhone(normalized)) {
+    const dialable = original.replace(/[^\d+]/g, "").replace(/(?!^)\+/g, "");
+    return dialable ? { display: original, href: `tel:${dialable}` } : null;
+  }
+  const digits = normalized.replace(/\D/g, "");
+  const international = digits.startsWith("0") ? `+63${digits.slice(1)}` : `+${digits}`;
+  const localDigits = digits.startsWith("0") ? digits.slice(1) : digits.slice(2);
+  return { display: `+63 ${localDigits.slice(0, 3)} ${localDigits.slice(3, 6)} ${localDigits.slice(6)}`, href: `tel:${international}` };
+};
 
 const PRODUCT_IMAGE_PLACEHOLDER =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'%3E%3Crect width='600' height='400' fill='%23e2e8f0'/%3E%3Cpath d='M248 148h104a28 28 0 0 1 28 28v48a28 28 0 0 1-28 28H248a28 28 0 0 1-28-28v-48a28 28 0 0 1 28-28Zm0 20a8 8 0 0 0-8 8v48a8 8 0 0 0 8 8h104a8 8 0 0 0 8-8v-48a8 8 0 0 0-8-8H248Zm18 22a16 16 0 1 1 0 32 16 16 0 0 1 0-32Zm50 35 17-21 31 40H244l34-42 25 30 13-7Z' fill='%2394a3b8'/%3E%3Ctext x='300' y='292' text-anchor='middle' font-family='Arial, sans-serif' font-size='24' font-weight='700' fill='%23475569'%3EProduct image%3C/text%3E%3C/svg%3E";
@@ -339,6 +355,7 @@ function CustomerDashboard() {
     counts: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
   });
   const [orders, setOrders] = useState([]);
+  const [customerPaymentContactPhone, setCustomerPaymentContactPhone] = useState("");
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [cartItems, setCartItems] = useState([]);
   const [cartPricingProducts, setCartPricingProducts] = useState([]);
@@ -436,7 +453,14 @@ function CustomerDashboard() {
   const [paymentProofLoading, setPaymentProofLoading] = useState(false);
   const [paymentProofSuccessByOrder, setPaymentProofSuccessByOrder] = useState({});
   const [customerPaymentProofPreview, setCustomerPaymentProofPreview] = useState(null);
+  const [adminPaymentDocumentLoadingId, setAdminPaymentDocumentLoadingId] = useState("");
   const paymentProofSubmittingRef = useRef(false);
+
+  useEffect(() => {
+    const previewUrl = customerPaymentProofPreview?.url;
+    if (!previewUrl?.startsWith("blob:")) return undefined;
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [customerPaymentProofPreview?.url]);
   const [showCustomerReviewModal, setShowCustomerReviewModal] = useState(false);
   const [reviewDetailsOrder, setReviewDetailsOrder] = useState(null);
   const [showProductReviewModal, setShowProductReviewModal] = useState(false);
@@ -698,6 +722,20 @@ function CustomerDashboard() {
       const unresolvedPaymentRecords = new Set(getUnresolvedPaymentProofRecords(order));
       order.payment_records.forEach((record) => {
         const recordId = record._id || `${new Date(record.submitted_at || record.createdAt || 0).getTime()}`;
+        (record.discrepancies || []).forEach((discrepancy) => {
+          const discrepancyId = discrepancy._id || `${recordId}-${new Date(discrepancy.detected_at || 0).getTime()}`;
+          const latestStatusChange = discrepancy.status_history?.at(-1);
+          notifications.unshift({
+            ...order,
+            paymentRecord: record,
+            paymentDiscrepancy: discrepancy,
+            notificationType: discrepancy.status === "resolved" ? "payment_discrepancy_resolved" : "payment_discrepancy",
+            notificationId: `${orderId}-payment-${recordId}-discrepancy-${discrepancyId}-${discrepancy.status}`,
+            notificationDate: discrepancy.status === "resolved"
+              ? discrepancy.resolved_at || latestStatusChange?.changed_at || discrepancy.detected_at
+              : latestStatusChange?.changed_at || discrepancy.detected_at,
+          });
+        });
         if (record.status === "pending") {
           if (!unresolvedPaymentRecords.has(record)) return;
           if (record.downpayment_exception?.status !== "pending") {
@@ -735,7 +773,7 @@ function CustomerDashboard() {
               notificationId: `${orderId}-payment-${recordId}-admin-recorded-${new Date(record.recorded_at || record.verified_at || 0).getTime()}`,
               notificationDate: record.recorded_at || record.verified_at || record.updatedAt,
             });
-          } else if (adjustments.length > 0) {
+          } else if (adjustments.length > 0 && !(record.discrepancies || []).length) {
             adjustments.forEach((adjustment, adjustmentIndex) => {
               notifications.unshift({
                 ...order,
@@ -1731,8 +1769,12 @@ function CustomerDashboard() {
       if (showLoading) setOrdersLoading(true);
 
       try {
-        const response = await getOrders();
+        const [response, paymentContact] = await Promise.all([
+          getOrders(),
+          getCustomerPaymentContact().catch(() => null),
+        ]);
         if (!active) return;
+        setCustomerPaymentContactPhone(paymentContact?.phone || "");
         const latestOrders = response.orders || [];
         setOrders(latestOrders);
         setSelectedOrderForModal((current) => {
@@ -1771,6 +1813,21 @@ function CustomerDashboard() {
       unsubscribeRealtime();
     };
   }, [orderOwnerId]);
+
+  useEffect(() => {
+    if (activeTab !== "orders" || !orderOwnerId) return undefined;
+    let active = true;
+    getCustomerPaymentContact()
+      .then((contact) => {
+        if (active) setCustomerPaymentContactPhone(contact?.phone || "");
+      })
+      .catch(() => {
+        if (active) setCustomerPaymentContactPhone("");
+      });
+    return () => {
+      active = false;
+    };
+  }, [activeTab, orderOwnerId]);
 
   useEffect(() => {
     const orderId = new URLSearchParams(location.search).get("orderId");
@@ -3087,6 +3144,7 @@ function CustomerDashboard() {
     const { name, value } = e.target;
     setProfileError("");
     setProfileMessage("");
+    setPasswordModalError("");
     setProfileForm((prev) => ({ ...prev, [name]: name === "phone" ? normalizePhoneInput(value) : value }));
   };
 
@@ -3139,35 +3197,37 @@ function CustomerDashboard() {
     resetCustomerProfileDraft();
   };
 
-  const performProfileSave = async () => {
+  const performProfileSave = async ({ showErrorInModal = false } = {}) => {
+    const setSaveError = showErrorInModal ? setPasswordModalError : setProfileError;
+
     if (profileForm.phone.trim() && !isValidPhilippinePhone(profileForm.phone)) {
-      setProfileError(getPhilippinePhoneError(profileForm.phone));
+      setSaveError(getPhilippinePhoneError(profileForm.phone));
       return false;
     }
 
     if (!profileForm.current_password) {
-      setProfileError("Please enter your current password to save profile changes.");
+      setSaveError("Please enter your current password to save profile changes.");
       return false;
     }
 
     if (!profileForm.first_name.trim() || !profileForm.last_name.trim()) {
-      setProfileError("Please enter both first name and last name.");
+      setSaveError("Please enter both first name and last name.");
       return false;
     }
 
     if (profileForm.new_password || profileForm.confirm_password) {
       if (!profileForm.new_password) {
-        setProfileError("Please enter a new password.");
+        setSaveError("Please enter a new password.");
         return false;
       }
 
       if (!isPasswordPolicySatisfied(profileForm.new_password)) {
-        setProfileError(PASSWORD_POLICY_MESSAGE);
+        setSaveError(PASSWORD_POLICY_MESSAGE);
         return false;
       }
 
       if (profileForm.new_password !== profileForm.confirm_password) {
-        setProfileError("New password and confirmation do not match.");
+        setSaveError("New password and confirmation do not match.");
         return false;
       }
     }
@@ -3215,7 +3275,7 @@ function CustomerDashboard() {
       setProfileMessage("Profile updated successfully.");
       return true;
     } catch (error) {
-      setProfileError(error.data?.message || error.message || "Failed to update profile.");
+      setSaveError(error.data?.message || error.message || "Failed to update profile.");
       return false;
     } finally {
       setProfileSaving(false);
@@ -3460,11 +3520,43 @@ function CustomerDashboard() {
     });
   };
 
+  const viewAdminPaymentSupportingDocument = async (orderId, recordId, document) => {
+    const documentKey = String(document._id || "");
+    if (!documentKey || adminPaymentDocumentLoadingId) return;
+    setAdminPaymentDocumentLoadingId(documentKey);
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(
+        `${API_BASE}/orders/${encodeURIComponent(orderId)}/payment-records/${encodeURIComponent(recordId)}/documents/${encodeURIComponent(documentKey)}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {}, cache: "no-store" },
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || "Unable to view the admin supporting document.");
+      }
+      const fileUrl = URL.createObjectURL(await response.blob());
+      setCustomerPaymentProofPreview({
+        url: fileUrl,
+        fileName: document.original_name || "Admin supporting document",
+        isPdf: document.format === "pdf",
+        isPrivateDocument: true,
+      });
+    } catch (error) {
+      toast.error(error.message || "Unable to view the admin supporting document.");
+    } finally {
+      setAdminPaymentDocumentLoadingId("");
+    }
+  };
+
   const submitPaymentProof = async (order) => {
     if (paymentProofSubmittingRef.current) return;
 
     const paymentSummary = getPaymentSummary(order);
-    const amountValidation = validateCustomerPaymentAmount(paymentProofForm.amount, paymentSummary.remainingAmount);
+    const amountValidation = validateCustomerPaymentAmount(
+      paymentProofForm.amount,
+      paymentSummary.remainingAmount,
+      paymentSummary.downpaymentRemaining,
+    );
     if (!amountValidation.valid) {
       setPaymentProofError(amountValidation.message);
       return;
@@ -4335,50 +4427,6 @@ function CustomerDashboard() {
     setActiveTab("orders");
   };
 
-  const handleUploadProgressPhoto = async (file, itemIndex, stageKey, subStageIndex) => {
-    const orderId = selectedOrderForModal?._id || selectedOrderForModal?.id;
-    if (!orderId) return;
-    try {
-      const response = await uploadFiles([file], undefined, {
-        purpose: "customer-progress-photo",
-        uploadPath: `/orders/${encodeURIComponent(orderId)}/progress-photo`,
-        fieldNames: ["file"],
-        formFields: {
-          itemIndex,
-          stageKey,
-          ...(Number.isInteger(subStageIndex) ? { subStageIndex } : {}),
-        },
-      });
-      const updatedOrder = response.order;
-      if (updatedOrder) {
-        const updatedId = String(updatedOrder._id || updatedOrder.id || orderId);
-        const mergeUpdatedOrder = (current) => {
-          if (!current) return current;
-          return {
-            ...current,
-            ...updatedOrder,
-            items: Array.isArray(updatedOrder.items)
-              ? updatedOrder.items.map((item, index) => ({
-                  ...(current.items?.[index] || {}),
-                  ...item,
-                  product_id: current.items?.[index]?.product_id || item.product_id,
-                }))
-              : current.items,
-          };
-        };
-        setOrders((current) => current.map((order) =>
-          String(order._id || order.id) === updatedId ? mergeUpdatedOrder(order) : order
-        ));
-        setSelectedOrderForModal((current) => (
-          current && String(current._id || current.id) === updatedId ? mergeUpdatedOrder(current) : current
-        ));
-      }
-      toast.success("Progress photo uploaded.");
-    } catch (error) {
-      toast.error(error?.data?.message || error?.message || "Unable to upload progress photo.");
-    }
-  };
-
   useEffect(() => {
     if (!highlightedOrderId) return undefined;
     if (activeTab !== "orders") {
@@ -4903,7 +4951,7 @@ function CustomerDashboard() {
                             const isRead = readNotificationIds.has(order.notificationId);
                             const status = normalizeOrderStatusKey(order?.status);
                             const contractStatus = normalizeOrderStatusKey(order?.contract_status);
-                            const isPaymentNotification = ["payment", "payment_confirmed", "payment_amount_updated", "payment_rejected", "admin_payment_recorded", "downpayment_exception_approved", "downpayment_exception_pending"].includes(order.notificationType);
+                            const isPaymentNotification = ["payment", "payment_confirmed", "payment_amount_updated", "payment_rejected", "admin_payment_recorded", "downpayment_exception_approved", "downpayment_exception_pending", "payment_discrepancy", "payment_discrepancy_resolved"].includes(order.notificationType);
                             const isPaymentConfirmationNotification = ["payment_confirmed", "payment_amount_updated", "admin_payment_recorded", "downpayment_exception_approved"].includes(order.notificationType);
                             const isDelayNotification = order.notificationType === "delay";
                             const isInstallationNotification = ["installation_up_next", "installation_completed"].includes(order.notificationType);
@@ -4941,6 +4989,15 @@ function CustomerDashboard() {
                                 };
                               }
                               if (isPaymentNotification) {
+                                if (["payment_discrepancy", "payment_discrepancy_resolved"].includes(order.notificationType)) {
+                                  const discrepancy = order.paymentDiscrepancy || {};
+                                  const resolved = order.notificationType === "payment_discrepancy_resolved";
+                                  return {
+                                    title: resolved ? "Payment Discrepancy Resolved" : "Payment Amount Discrepancy",
+                                    message: `Customer-reported ${formatCurrency(discrepancy.customer_reported_amount)}; admin-recorded ${formatCurrency(discrepancy.admin_recorded_amount)}; difference ${formatCurrency(discrepancy.difference)}. Status: ${resolved ? "resolved" : String(discrepancy.status || "pending review").replaceAll("_", " ")}.`,
+                                    color: resolved ? "text-emerald-600" : "text-amber-600",
+                                  };
+                                }
                                 if (order.notificationType === "admin_payment_recorded") {
                                   return {
                                     title: "Payment Recorded by Admin",
@@ -7578,6 +7635,11 @@ function CustomerDashboard() {
                   const downpaymentBalance = Math.max(requiredPaymentAmount - downpaymentAmount, 0);
                   const isDownpaymentCovered = Math.round(downpaymentBalance * 100) <= 0;
                   const isFullPaymentTerms = String(order.payment_terms || "").trim().toLowerCase() === "full_payment";
+                  const enteredPaymentAmount = Number(String(paymentProofForm.amount).replace(/,/g, "")) || 0;
+                  const isPaymentBelowRequired = paymentProofOpenOrderId === orderId
+                    && enteredPaymentAmount > 0
+                    && Math.round(enteredPaymentAmount * 100) < Math.round(downpaymentBalance * 100);
+                  const paymentSupportContact = getPaymentSupportPhone(customerPaymentContactPhone);
                   const paymentBalanceMessage = isDownpaymentCovered
                     ? `${isFullPaymentTerms ? "Full payment complete" : "Downpayment covered"}. Remaining balance: ${formatCurrency(balanceAmount)}.`
                     : `${isFullPaymentTerms ? "Full payment still due" : "Downpayment still due"}: ${formatCurrency(downpaymentBalance)}.`;
@@ -7885,10 +7947,39 @@ function CustomerDashboard() {
                             </div>
                           </div>
 
-                          <div role="note" className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs leading-5 ${darkMode ? "border-amber-700/60 bg-amber-950/30 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
-                            <Info size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
-                            <p>If the payment amount or payment information shown here looks incorrect, please contact us at 📞 <a className="font-bold underline underline-offset-2" href="tel:+63-917-123-4567">+63-912-456-7890</a>.</p>
-                          </div>
+                          {(() => {
+                            const discrepancyContact = getPaymentSupportPhone(customerPaymentContactPhone);
+                            const discrepancies = (order.payment_records || []).flatMap((record) => {
+                              const allDiscrepancies = record.discrepancies || [];
+                              const activeDiscrepancies = allDiscrepancies.filter((discrepancy) => discrepancy.status !== "resolved");
+                              if (allDiscrepancies.length) return activeDiscrepancies.map((discrepancy) => ({ record, discrepancy }));
+                              const submitted = Number(record.submitted_amount);
+                              const verified = Number(record.verified_amount);
+                              const legacyMismatch = record.status === "verified" && record.submitted_amount != null && record.verified_amount != null
+                                && Math.round(submitted * 100) !== Math.round(verified * 100);
+                              return legacyMismatch ? [{
+                                record,
+                                discrepancy: {
+                                  customer_reported_amount: submitted,
+                                  admin_recorded_amount: verified,
+                                  difference: Math.abs(verified - submitted),
+                                  status: "pending_review",
+                                },
+                              }] : [];
+                            });
+                            return discrepancies.map(({ record, discrepancy }) => (
+                              <div key={`${record._id}-${discrepancy._id || discrepancy.detected_at || "legacy"}`} role="alert" className={`mt-3 rounded-lg border px-3 py-2.5 text-xs leading-5 ${darkMode ? "border-amber-700/60 bg-amber-950/30 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                                <div className="flex items-start gap-2">
+                                  <Info size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
+                                  <div>
+                                    <p className="font-bold">Payment Amount Discrepancy · {String(discrepancy.status || "pending_review").replaceAll("_", " ")}</p>
+                                    <p className="mt-1">Customer-reported: <strong>{formatCurrency(Number(discrepancy.customer_reported_amount))}</strong> · Admin-recorded: <strong>{formatCurrency(Number(discrepancy.admin_recorded_amount))}</strong> · Difference: <strong>{formatCurrency(Number(discrepancy.difference))}</strong></p>
+                                    <p className="mt-1">The recorded amount differs from the amount you submitted. If you believe it is incorrect, contact us for clarification{discrepancyContact ? <> at 📞 <a className="inline-block whitespace-nowrap font-bold underline underline-offset-2" href={discrepancyContact.href}>{discrepancyContact.display}</a>.</> : ". Please contact the system administrator for assistance."}</p>
+                                  </div>
+                                </div>
+                              </div>
+                            ));
+                          })()}
 
                           {Array.isArray(order.payment_records) && order.payment_records.length > 0 && (
                             <section className={`mt-4 rounded-xl border p-3 ${darkMode ? "border-slate-700 bg-slate-800/70" : "border-slate-200 bg-white"}`}>
@@ -7913,6 +8004,13 @@ function CustomerDashboard() {
                                         {record.verified_amount != null && <> · Verified: <strong>{formatCurrency(record.verified_amount)}</strong></>}
                                       </p>
                                       {changed && record.status === "verified" && <p className="mt-1 font-bold text-amber-600">Amount changed by {formatCurrency(Math.abs(Number(record.verified_amount) - Number(record.submitted_amount)))} {Number(record.verified_amount) < Number(record.submitted_amount) ? "lower" : "higher"}.</p>}
+                                      {(record.discrepancies || []).map((discrepancy) => (
+                                        <div key={discrepancy._id || discrepancy.detected_at} className={`mt-2 rounded-md border px-2 py-1.5 ${discrepancy.status === "resolved" ? darkMode ? "border-emerald-700/50 bg-emerald-950/30 text-emerald-200" : "border-emerald-200 bg-emerald-50 text-emerald-800" : darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                                          <strong>Payment discrepancy · {String(discrepancy.status || "pending_review").replaceAll("_", " ")}</strong>
+                                          <p className="mt-1">Customer-reported {formatCurrency(discrepancy.customer_reported_amount)} · Admin-recorded {formatCurrency(discrepancy.admin_recorded_amount)} · Difference {formatCurrency(discrepancy.difference)}</p>
+                                          {discrepancy.resolution_note && <p className="mt-1">Resolution note: {discrepancy.resolution_note}</p>}
+                                        </div>
+                                      ))}
                                       {record.downpayment_exception?.status === "approved" && (
                                         <div className={`mt-2 rounded-md border px-2 py-1.5 ${darkMode ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
                                           <strong>Downpayment Exception Approved</strong>: {formatCurrency(record.downpayment_exception.accepted_amount)} accepted; original requirement {formatCurrency(record.downpayment_exception.required_amount)}; shortfall at approval {formatCurrency(record.downpayment_exception.shortfall)}.
@@ -7924,12 +8022,31 @@ function CustomerDashboard() {
                                           Awaiting Admin Approval. Proposed amount: {formatCurrency(record.downpayment_exception.accepted_amount)}; original requirement: {formatCurrency(record.downpayment_exception.required_amount)}; shortfall if accepted: {formatCurrency(record.downpayment_exception.shortfall)}. Payment remains unverified.
                                         </p>
                                       )}
-                                      {(record.admin_reason || record.status === "rejected") && <p className={`mt-1 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Admin note: {record.admin_reason || "No reason provided."}</p>}
                                       {record.proof_file_url && (
                                         <button type="button" onClick={() => openCustomerPaymentProofPreview(record.proof_file_url, record.proof_file_name || "Payment proof")} className="mt-2 inline-flex font-semibold text-sky-700 underline underline-offset-2">
                                           View payment proof{record.proof_file_name ? `: ${record.proof_file_name}` : ""}
                                         </button>
                                       )}
+                                      {(record.supporting_documents || []).map((document) => (
+                                        <div key={document._id} className={`mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md border px-2 py-2 ${darkMode ? "border-sky-800 bg-sky-950/30" : "border-sky-200 bg-sky-50"}`}>
+                                          <div className="min-w-0">
+                                            <p className={`truncate font-semibold ${darkMode ? "text-sky-200" : "text-sky-900"}`} title={document.original_name}>
+                                              Admin supporting document: {document.original_name}
+                                            </p>
+                                            <p className={`mt-0.5 text-[11px] ${darkMode ? "text-slate-400" : "text-slate-600"}`}>
+                                              Uploaded by {document.uploaded_by_name || "Administrator"} ({document.uploaded_by_role || "admin"}) · {formatDateTimeToMMMDDYYYY(document.uploaded_at)}
+                                            </p>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            disabled={Boolean(adminPaymentDocumentLoadingId)}
+                                            onClick={() => viewAdminPaymentSupportingDocument(orderId, record._id, document)}
+                                            className="shrink-0 font-semibold text-sky-700 underline underline-offset-2 disabled:cursor-wait disabled:opacity-60"
+                                          >
+                                            {adminPaymentDocumentLoadingId === String(document._id) ? "Loading..." : "View supporting document"}
+                                          </button>
+                                        </div>
+                                      ))}
                                     </div>
                                   );
                                 })}
@@ -7998,7 +8115,7 @@ function CustomerDashboard() {
                                     <p className={`mb-1.5 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
                                       {isDownpaymentCovered
                                         ? `${isFullPaymentTerms ? "Full payment complete" : "Downpayment covered"}. Remaining balance: ${formatRequiredPaymentAmount(balanceAmount)}. Enter any amount up to ${formatRequiredPaymentAmount(balanceAmount)}.`
-                                        : `${isFullPaymentTerms ? "Full payment still due" : "Downpayment still due"}: ${formatRequiredPaymentAmount(downpaymentBalance)}. Enter any amount up to ${formatRequiredPaymentAmount(balanceAmount)}.`}
+                                        : `${isFullPaymentTerms ? "Full payment still due" : "Downpayment still due"}: ${formatRequiredPaymentAmount(downpaymentBalance)}. Submit at least this amount and no more than ${formatRequiredPaymentAmount(balanceAmount)}.`}
                                     </p>
                                     <input
                                       id={`payment-amount-${orderId}`}
@@ -8009,6 +8126,11 @@ function CustomerDashboard() {
                                       placeholder="₱0.00"
                                       className={`w-full rounded-lg border px-3 py-2.5 text-sm font-semibold outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 ${darkMode ? "border-slate-600 bg-slate-800 text-white placeholder:text-slate-400" : "border-slate-300 bg-white text-slate-900 placeholder:text-slate-400"}`}
                                     />
+                                    {isPaymentBelowRequired && (
+                                      <p role="alert" className={`mt-2 rounded-lg border px-3 py-2 text-xs leading-5 ${darkMode ? "border-amber-700 bg-amber-950/40 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                                        This amount is below the required payment of {formatCurrency(downpaymentBalance)} and cannot be submitted. Please contact us{paymentSupportContact ? <> at<a href={paymentSupportContact.href} className="inline-block whitespace-nowrap font-bold underline underline-offset-2">📞{paymentSupportContact.display}</a></> : " to discuss payment options"}.
+                                      </p>
+                                    )}
                                   </div>
                                   <div className="w-full max-w-xs">
                                     <div className={`mb-1.5 text-xs font-bold ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
@@ -8052,7 +8174,7 @@ function CustomerDashboard() {
                                   <button
                                     type="button"
                                     onClick={() => submitPaymentProof(order)}
-                                    disabled={paymentProofLoading}
+                                    disabled={paymentProofLoading || isPaymentBelowRequired}
                                     className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70"
                                   >
                                     {paymentProofLoading ? "Submitting..." : "Submit Payment Info"}
@@ -8178,7 +8300,6 @@ function CustomerDashboard() {
             getItemImage={getOrderItemImage}
             getItemDimension={getConfirmationItemDimensionText}
             fallbackImage={PRODUCT_IMAGE_PLACEHOLDER}
-            onUploadProgressPhoto={handleUploadProgressPhoto}
             notificationTarget={timelineNotificationTarget}
           />
         )}
@@ -8950,7 +9071,7 @@ function CustomerDashboard() {
                     const isRead = readNotificationIds.has(order.notificationId);
                     const status = normalizeOrderStatusKey(order?.status);
                     const contractStatus = normalizeOrderStatusKey(order?.contract_status);
-                      const isPaymentNotification = ["payment", "payment_confirmed", "payment_amount_updated", "payment_rejected", "admin_payment_recorded", "downpayment_exception_approved", "downpayment_exception_pending"].includes(order.notificationType);
+                      const isPaymentNotification = ["payment", "payment_confirmed", "payment_amount_updated", "payment_rejected", "admin_payment_recorded", "downpayment_exception_approved", "downpayment_exception_pending", "payment_discrepancy", "payment_discrepancy_resolved"].includes(order.notificationType);
                       const isPaymentConfirmationNotification = ["payment_confirmed", "payment_amount_updated", "admin_payment_recorded", "downpayment_exception_approved"].includes(order.notificationType);
                     const isDelayNotification = order.notificationType === "delay";
                       const isInstallationNotification = ["installation_up_next", "installation_completed"].includes(order.notificationType);
@@ -8976,6 +9097,11 @@ function CustomerDashboard() {
                       }
                       if (isDelayNotification) return getDelayNotificationMessage(order);
                       if (isPaymentNotification) {
+                        if (["payment_discrepancy", "payment_discrepancy_resolved"].includes(order.notificationType)) {
+                          const discrepancy = order.paymentDiscrepancy || {};
+                          const resolved = order.notificationType === "payment_discrepancy_resolved";
+                          return `Customer-reported ${formatCurrency(discrepancy.customer_reported_amount)}; admin-recorded ${formatCurrency(discrepancy.admin_recorded_amount)}; difference ${formatCurrency(discrepancy.difference)}. Status: ${resolved ? "resolved" : String(discrepancy.status || "pending review").replaceAll("_", " ")}.`;
+                        }
                         if (order.notificationType === "admin_payment_recorded") {
                           return `Our team recorded ${formatCurrency(order.paymentRecord?.verified_amount)} for order ${order.tracking}. Payment status: ${getPaymentSummary(order).status.label}. Remaining project balance: ${formatCurrency(getPaymentSummary(order).remainingAmount)}.`;
                         }
@@ -9008,6 +9134,8 @@ function CustomerDashboard() {
                       payment: "Payment proof submitted",
                       payment_confirmed: "Payment confirmed",
                       payment_amount_updated: "Payment Amount Updated",
+                      payment_discrepancy: "Payment Amount Discrepancy",
+                      payment_discrepancy_resolved: "Payment Discrepancy Resolved",
                       payment_rejected: "Payment Proof Rejected",
                       admin_payment_recorded: "Payment Recorded by Admin",
                       downpayment_exception_approved: "Downpayment Exception Approved",
@@ -9020,6 +9148,8 @@ function CustomerDashboard() {
                     const notificationIcon = () => {
                       if (order.notificationType === "payment_rejected") return "text-red-600";
                       if (order.notificationType === "payment_amount_updated") return "text-amber-600";
+                      if (order.notificationType === "payment_discrepancy") return "text-amber-600";
+                      if (order.notificationType === "payment_discrepancy_resolved") return "text-emerald-600";
                       if (["downpayment_exception_approved", "downpayment_exception_pending"].includes(order.notificationType)) return "text-amber-600";
                       if (order.notificationType === "installation_up_next") return "text-blue-600";
                       if (order.notificationType === "installation_completed") return "text-emerald-600";
@@ -9713,54 +9843,64 @@ function CustomerDashboard() {
 
               {showPasswordModal && (
                 <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
-                  <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
-                    <h3 className="text-xl font-semibold mb-3">Confirm Profile Changes</h3>
+                  <form
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="customer-profile-confirm-title"
+                    onSubmit={async (event) => {
+                      event.preventDefault();
+                      setPasswordModalError("");
+                      if (!profileForm.current_password) {
+                        setPasswordModalError("Please enter your current password.");
+                        return;
+                      }
+                      const saved = await performProfileSave({ showErrorInModal: true });
+                      if (saved) setShowPasswordModal(false);
+                    }}
+                    className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl"
+                  >
+                    <h3 id="customer-profile-confirm-title" className="mb-3 text-xl font-semibold">Confirm Profile Changes</h3>
                     <p className="text-gray-600 mb-4">
                       Enter your current password to confirm saving profile changes.
                     </p>
                     {passwordModalError && (
-                      <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
+                      <div role="alert" className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
                         {passwordModalError}
                       </div>
                     )}
+                    <label htmlFor="customer-profile-current-password" className="mb-1.5 block text-sm font-medium text-gray-700">Current password</label>
                     <input
+                      id="customer-profile-current-password"
                       type="password"
                       name="current_password"
                       value={profileForm.current_password}
                       onChange={handleProfileChange}
                       placeholder="Current password"
+                      autoComplete="current-password"
                       className="w-full border rounded-2xl px-4 py-3 mb-4 focus:outline-none focus:ring-2 focus:ring-red-500"
                     />
                     <div className="flex justify-end gap-3">
                       <button
                         type="button"
+                        disabled={profileSaving}
                         onClick={() => {
                           setShowPasswordModal(false);
                           setPasswordModalError("");
                         }}
-                        className="px-4 py-3 rounded-2xl border border-gray-200 bg-white hover:bg-gray-50"
+                        className="px-4 py-3 rounded-2xl border border-gray-200 bg-white hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         Cancel
                       </button>
                       <button
-                        type="button"
-                        onClick={async () => {
-                          setPasswordModalError("");
-                          if (!profileForm.current_password) {
-                            setPasswordModalError("Please enter your current password.");
-                            return;
-                          }
-                          const success = await performProfileSave();
-                          if (success) {
-                            setShowPasswordModal(false);
-                          }
-                        }}
-                        className="px-4 py-3 rounded-2xl bg-red-600 text-white hover:bg-red-700"
+                        type="submit"
+                        disabled={profileSaving}
+                        aria-busy={profileSaving}
+                        className="px-4 py-3 rounded-2xl bg-red-600 text-white hover:bg-red-700 disabled:cursor-wait disabled:opacity-60"
                       >
-                        Confirm
+                        {profileSaving ? "Saving..." : "Confirm"}
                       </button>
                     </div>
-                  </div>
+                  </form>
                 </div>
               )}
             </div>
@@ -10067,7 +10207,7 @@ function CustomerDashboard() {
             >
               <header className={`flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                 <div className="min-w-0">
-                  <h2 id="customer-payment-proof-title" className="text-sm font-bold">Payment proof</h2>
+                  <h2 id="customer-payment-proof-title" className="text-sm font-bold">{customerPaymentProofPreview.isPrivateDocument ? "Admin supporting document" : "Customer payment proof"}</h2>
                   <p className={`truncate text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`} title={customerPaymentProofPreview.fileName}>{customerPaymentProofPreview.fileName}</p>
                 </div>
                 <button
@@ -10084,17 +10224,28 @@ function CustomerDashboard() {
                 {customerPaymentProofPreview.isPdf ? (
                   <iframe
                     src={customerPaymentProofPreview.url}
-                    title={`Payment proof: ${customerPaymentProofPreview.fileName}`}
+                    title={`Payment document: ${customerPaymentProofPreview.fileName}`}
                     className="h-full min-h-0 w-full rounded-lg border border-slate-500/20 bg-white"
                   />
                 ) : (
                   <img
                     src={customerPaymentProofPreview.url}
-                    alt={`Payment proof: ${customerPaymentProofPreview.fileName}`}
+                    alt={`Payment document: ${customerPaymentProofPreview.fileName}`}
                     className="max-h-full max-w-full rounded-lg object-contain"
                   />
                 )}
               </div>
+              {customerPaymentProofPreview.isPrivateDocument && (
+                <footer className={`flex shrink-0 justify-end border-t px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
+                  <a
+                    href={customerPaymentProofPreview.url}
+                    download={customerPaymentProofPreview.fileName}
+                    className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}
+                  >
+                    Download admin proof
+                  </a>
+                </footer>
+              )}
             </section>
           </div>
         )}
