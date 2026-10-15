@@ -1126,7 +1126,7 @@ function AdminProfile() {
                     <h3 id="discard-admin-profile-title" className="text-lg font-bold">Discard unsaved changes?</h3>
                     <p className="mt-2 text-sm text-slate-600">Your saved profile is unchanged. The edits in this form will be cleared.</p>
                     <div className="mt-5 flex justify-end gap-2">
-                      <button type="button" onClick={() => setShowDiscardConfirmation(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                      <button type="button" data-close-modal onClick={() => setShowDiscardConfirmation(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
                         Keep editing
                       </button>
                       <button type="button" onClick={discardProfileChanges} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800">

@@ -259,6 +259,9 @@ body:has(.mobile-fullscreen-overlay) .customer-mobile-navigation {
   body {
     @apply bg-background text-foreground;
     }
+  body:has(div[class*="fixed inset-0"]) {
+    overflow: hidden;
+    }
   html {
     @apply font-sans;
     }
@@ -1663,9 +1666,9 @@ body:has(.mobile-fullscreen-overlay) .customer-mobile-navigation {
 }
 
 .admin-theme-dark .settings-premium .access-control-dialog button[role="switch"][aria-checked="true"] {
-  border-color: #14b8a6 !important;
-  background-color: #0f766e !important;
-  box-shadow: 0 0 0 2px rgb(20 184 166 / 0.18);
+  border-color: #20a2ff !important;
+  background-color: #0f9bff !important;
+  box-shadow: 0 0 0 2px rgba(81, 255, 0, 0.22);
 }
 
 .admin-theme-dark .settings-premium .access-control-dialog button[class*="bg-red-950"] {

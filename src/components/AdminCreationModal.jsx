@@ -32,7 +32,7 @@ function AdminCreationModal() {
         <button type="button" onClick={() => navigate("/admin-recovery")} className="mt-4 w-full rounded-lg bg-red-700 px-6 py-3.5 font-semibold text-white hover:bg-red-800">
           Open administrator recovery
         </button>
-        <button type="button" onClick={() => { setDismissed(true); navigate("/login", { replace: true }); }} className="mt-3 w-full rounded-lg border border-gray-300 px-6 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+        <button type="button" data-close-modal onClick={() => { setDismissed(true); navigate("/login", { replace: true }); }} className="mt-3 w-full rounded-lg border border-gray-300 px-6 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">
           Return to login
         </button>
       </div>

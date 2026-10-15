@@ -7344,6 +7344,7 @@ function CustomerDashboard() {
                     </button>
                     <button
                       type="button"
+                      data-close-modal
                       onClick={() => {
                         setShowBatchSuccessModal(false);
                         setActiveTab("products");
@@ -7538,6 +7539,7 @@ function CustomerDashboard() {
                     </button>
                     <button
                       type="button"
+                      data-close-modal
                       onClick={() => {
                         setShowOrderSuccessModal(false);
                         setOrderSuccessData(null);
@@ -8269,6 +8271,7 @@ function CustomerDashboard() {
                   <div className="mt-6 flex gap-3">
                     <button
                       type="button"
+                      data-close-modal
                       onClick={() => setCancelRequestModal({ open: false, order: null })}
                       className={`flex-1 rounded-xl px-4 py-3 text-sm font-black transition ${darkMode ? "bg-slate-700 text-slate-100 hover:bg-slate-600" : "bg-slate-200 text-slate-700 hover:bg-slate-300"}`}
                     >
@@ -9421,6 +9424,7 @@ function CustomerDashboard() {
             <div className={`relative rounded-2xl shadow p-4 sm:p-5 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
               <button
                 type="button"
+                data-close-modal
                 onClick={closeProfileEditor}
                 className={`absolute right-4 top-4 rounded-lg border px-3 py-2 text-xs font-semibold xl:hidden ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
               >
@@ -9693,7 +9697,7 @@ function CustomerDashboard() {
                     <h3 id="discard-customer-profile-title" className="text-lg font-bold">Discard unsaved changes?</h3>
                     <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Your saved profile is unchanged. The edits in this form will be cleared.</p>
                     <div className="mt-5 flex justify-end gap-2">
-                      <button type="button" onClick={() => setShowDiscardProfileChanges(false)} className={`rounded-lg border px-4 py-2 text-sm font-semibold ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
+                      <button type="button" data-close-modal onClick={() => setShowDiscardProfileChanges(false)} className={`rounded-lg border px-4 py-2 text-sm font-semibold ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
                         Keep editing
                       </button>
                       <button type="button" onClick={resetCustomerProfileDraft} className="rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800">
