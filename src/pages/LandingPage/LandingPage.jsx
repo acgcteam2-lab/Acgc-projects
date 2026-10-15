@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   X,
   ArrowRight,
@@ -53,6 +53,7 @@ const createLandingCartId = () => globalThis.crypto?.randomUUID?.()
 function LandingPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const reduceMotion = useReducedMotion();
   const { user, loading: authLoading } = useAuth();
   const customerPermissions = useCustomerPermissions();
   const isMobile = useIsMobile();
@@ -1078,10 +1079,10 @@ function LandingPage() {
         <section id="featured-products" className="relative mx-auto max-w-7xl scroll-mt-24 px-6 py-8">
           <div className="rounded-[30px] border border-white/65 bg-white/[0.3] p-5 shadow-[0_22px_50px_rgba(15,23,42,0.12)] backdrop-blur-2xl sm:p-7">
             <motion.div
-              initial={{ opacity: 0, y: 36 }}
+              initial={reduceMotion ? false : { opacity: 0, y: 18 }}
               whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.7 }}
+              viewport={{ once: true, amount: 0.15 }}
+              transition={{ duration: reduceMotion ? 0 : 0.72, ease: [0.22, 1, 0.36, 1] }}
               className="mb-6"
             >
               <p className="text-sm font-black uppercase tracking-[0.24em] text-red-600">Curated collection</p>
@@ -1129,11 +1130,11 @@ function LandingPage() {
                           openProductDetails(product);
                         }
                       }}
-                      initial={{ opacity: 0, y: 44 }}
+                      initial={reduceMotion ? false : { opacity: 0, y: 22 }}
                       whileInView={{ opacity: 1, y: 0 }}
-                      viewport={{ once: true }}
-                      transition={{ delay: index * 0.12, duration: 0.6 }}
-                      whileHover={{ y: -4 }}
+                      viewport={{ once: true, amount: 0.12 }}
+                      transition={{ delay: reduceMotion ? 0 : index * 0.055, duration: reduceMotion ? 0 : 0.68, ease: [0.22, 1, 0.36, 1] }}
+                      whileHover={reduceMotion ? undefined : { y: -3, transition: { duration: 0.2, ease: "easeOut" } }}
                       className="group flex h-full min-w-0 cursor-pointer flex-col overflow-hidden rounded-[26px] border border-white/65 bg-white/[0.2] shadow-[0_18px_38px_rgba(15,23,42,0.08)] backdrop-blur-xl transition hover:shadow-[0_24px_48px_rgba(127,29,29,0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
                     >
                       <div className="relative aspect-[4/3] w-full overflow-hidden bg-slate-100/70">
@@ -1914,116 +1915,141 @@ function LandingPage() {
 )}
 
 {active === "track-order" && (
-<section id="track-order" className="scroll-mt-24 bg-white px-4 pb-14 pt-32 text-slate-900 sm:px-6">
-  <div className="mx-auto max-w-7xl rounded-[20px] border border-slate-200 bg-white p-6 text-slate-900 max-[560px]:p-4">
-    <div className="border-b border-slate-200 pb-4">
-      <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
-          <Truck size={20} aria-hidden="true" />
+<section id="track-order" className="relative isolate scroll-mt-24 overflow-hidden bg-gradient-to-b from-rose-50/70 via-white to-white px-4 pb-16 pt-32 text-slate-900 sm:px-6 sm:pb-20">
+  <div className="pointer-events-none absolute -right-32 top-20 size-96 rounded-full bg-red-100/50 blur-3xl" aria-hidden="true" />
+  <div className="pointer-events-none absolute -left-40 bottom-0 size-96 rounded-full bg-blue-50/70 blur-3xl" aria-hidden="true" />
+  <div className="relative mx-auto max-w-6xl">
+    <header className="mx-auto mb-8 max-w-3xl text-center sm:mb-10">
+      <span className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-white/80 px-3.5 py-1.5 text-[10px] font-extrabold uppercase tracking-[0.2em] text-red-800 shadow-sm">
+        <Truck size={14} aria-hidden="true" /> Project updates
+      </span>
+      <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-950 sm:text-5xl">Track your order</h2>
+      <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-600 sm:text-base sm:leading-7">Follow your project as it moves from inspection to fabrication and installation.</p>
+    </header>
+
+  <div className="overflow-hidden rounded-[28px] border border-slate-200/90 bg-white/95 p-5 shadow-[0_24px_70px_rgba(15,23,42,0.09)] backdrop-blur sm:p-8">
+    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(360px,1.15fr)] lg:items-end">
+      <div className="flex items-start gap-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-red-700 text-white shadow-lg shadow-red-900/15">
+          <Truck size={22} aria-hidden="true" />
         </div>
-        <div className="min-w-0">
-          <h2 className="text-[18px] font-medium leading-tight text-slate-900">Track an Order</h2>
-          <p className="mt-1 text-[13px] text-slate-500">Enter your tracking number to see current order status.</p>
+        <div className="min-w-0 pt-0.5">
+          <h3 className="text-lg font-extrabold leading-tight text-slate-900">Track an Order</h3>
+          <p className="mt-1.5 text-sm leading-6 text-slate-500">Enter your tracking number to see current order status.</p>
         </div>
       </div>
-      <form className="mt-3.5 flex w-full items-center gap-2" onSubmit={handleTrackOrder}>
-        <label className="min-w-0 flex-1">
+      <form className="flex w-full flex-col gap-2.5 sm:flex-row" onSubmit={handleTrackOrder}>
+        <label className="relative min-w-0 flex-1">
+          <span className="sr-only">Tracking ID</span>
+          <Search size={18} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden="true" />
           <input
             type="text"
             value={trackingNumber}
             onChange={(event) => setTrackingNumber(event.target.value)}
             placeholder="Enter tracking ID"
-            className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3 font-mono text-sm text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-red-500 motion-reduce:transition-none"
+            className="h-12 w-full rounded-xl border border-slate-300 bg-slate-50/70 pl-11 pr-4 font-mono text-sm text-slate-900 outline-none transition duration-200 placeholder:font-sans placeholder:text-slate-400 focus:border-red-400 focus:bg-white focus:ring-4 focus:ring-red-100 motion-reduce:transition-none sm:h-14"
           />
         </label>
-        <button type="submit" disabled={trackingLoading || !customerPermissions.can_track_products} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-red-600 px-5 text-sm font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none">
+        <button type="submit" disabled={trackingLoading || !customerPermissions.can_track_products} className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-red-700 px-7 text-sm font-bold text-white shadow-lg shadow-red-900/15 transition duration-200 hover:-translate-y-0.5 hover:bg-red-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-red-200 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 motion-reduce:transition-none sm:h-14">
           {trackingLoading && <LoaderCircle size={16} aria-hidden="true" className="animate-spin motion-reduce:animate-none" />}
           {trackingLoading ? "Searching..." : customerPermissions.can_track_products ? "Track" : "Tracking Disabled"}
         </button>
       </form>
-      {!customerPermissions.can_track_products && <p className="mt-2 text-sm text-slate-500" role="status">Order tracking is currently unavailable.</p>}
     </div>
-    {trackingError && <div className="mt-8 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800">{trackingError}</div>}
+    <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4">
+      <p className="text-xs leading-5 text-slate-500">Your tracking ID is provided with your order details.</p>
+      {!customerPermissions.can_track_products && <p className="text-xs font-semibold text-amber-700" role="status">Order tracking is currently unavailable.</p>}
+    </div>
+    {trackingError && <div role="alert" className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-800">{trackingError}</div>}
     {trackingResult && (
       <>
-        <div className="mt-5 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-medium tracking-[0.1em] text-red-700 uppercase">Order status</p>
-            <h3 className="mt-1 text-[21px] font-medium leading-tight text-slate-900">Tracking Details</h3>
+        <div className="mt-7 flex flex-col gap-4 rounded-2xl border border-red-100 bg-gradient-to-r from-red-50/80 via-white to-white p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+          <div className="flex items-center gap-3">
+            <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-white text-red-700 shadow-sm ring-1 ring-red-100"><Package size={20} aria-hidden="true" /></span>
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-red-700">Order status</p>
+              <h3 className="mt-1 text-xl font-black leading-tight text-slate-900 sm:text-2xl">Tracking Details</h3>
+            </div>
           </div>
           {(() => {
             const StatusIcon = getStatusBadgeIcon(trackingResult.status);
             return (
-              <span className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[13px] font-medium capitalize ${getStatusBadgeClass(trackingResult.status)}`}>
-                <span aria-hidden="true" className="h-[7px] w-[7px] shrink-0 rounded-full bg-current" />
-                <StatusIcon size={15} aria-hidden="true" />
+              <span className={`inline-flex w-fit items-center gap-2 rounded-full border px-4 py-2 text-xs font-extrabold capitalize shadow-sm ${getStatusBadgeClass(trackingResult.status)}`}>
+                <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-current" />
+                <StatusIcon size={16} aria-hidden="true" />
                 {statusLabel(trackingResult.status)}
               </span>
             );
           })()}
         </div>
 
-        <div className="mt-4 grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_330px]">
-          <section className="rounded-2xl border border-slate-200 bg-white p-[18px]">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-700">
-                <Truck size={19} aria-hidden="true" />
+        <div className="mt-5 grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-5">
+          <section className="rounded-[26px] border border-slate-200 bg-white p-4 shadow-[0_14px_40px_rgba(15,23,42,0.045)] sm:p-6">
+            <div className="mb-5 flex items-center gap-3 border-b border-slate-100 pb-4">
+              <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-red-50 text-red-700 ring-1 ring-red-100">
+                <Truck size={20} aria-hidden="true" />
               </div>
               <div>
-                <p className="text-[11px] font-medium tracking-[0.1em] text-red-700">Progress</p>
-                <h4 className="text-[19px] font-medium leading-tight text-slate-900">Order Timeline</h4>
+                <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-red-700">Progress</p>
+                <h4 className="mt-0.5 text-lg font-extrabold leading-tight text-slate-900">Order Timeline</h4>
               </div>
             </div>
             <OrderProgressTimeline order={trackingResult} />
-            <div className="mt-4 grid grid-cols-2 gap-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3.5 sm:gap-4 sm:py-4 xl:grid-cols-4">
-              <div className="min-w-0">
-                <p className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">GRAND TOTAL</p>
-                <p className="mt-1 text-[18px] font-medium text-red-700">{formatCurrency(trackingPaymentSummary.totalAmount)}</p>
+            <div className="mt-5 grid grid-cols-2 gap-2.5 rounded-2xl border border-slate-200 bg-slate-50/80 p-3 sm:grid-cols-4 sm:gap-3 sm:p-4">
+              <div className="min-w-0 rounded-xl border border-slate-200/80 bg-white p-3">
+                <p className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-slate-500">Grand Total</p>
+                <p className="mt-1.5 text-base font-black text-red-700 sm:text-lg">{formatCurrency(trackingPaymentSummary.totalAmount)}</p>
               </div>
-              <div className="min-w-0">
-                <p className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">AMOUNT PAID</p>
-                <p className="mt-1 text-[18px] font-medium text-emerald-600">{formatCurrency(trackingPaymentSummary.paidAmount)}</p>
-                <p className="mt-1 text-[10px] text-slate-500">Required downpayment: {formatCurrency(trackingPaymentSummary.requiredAmount)}</p>
+              <div className="min-w-0 rounded-xl border border-emerald-100 bg-white p-3">
+                <p className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-slate-500">Amount Paid</p>
+                <p className="mt-1.5 text-base font-black text-emerald-600 sm:text-lg">{formatCurrency(trackingPaymentSummary.paidAmount)}</p>
+                <p className="mt-1 text-[9px] leading-4 text-slate-500">Required downpayment: {formatCurrency(trackingPaymentSummary.requiredAmount)}</p>
               </div>
-              <div className="min-w-0">
-                <p className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">BALANCE</p>
-                <p className="mt-1 text-[18px] font-medium text-slate-900">{formatCurrency(trackingPaymentSummary.remainingAmount)}</p>
+              <div className="min-w-0 rounded-xl border border-slate-200/80 bg-white p-3">
+                <p className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-slate-500">Balance</p>
+                <p className="mt-1.5 text-base font-black text-slate-900 sm:text-lg">{formatCurrency(trackingPaymentSummary.remainingAmount)}</p>
               </div>
-              <div className="min-w-0">
-                <p className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">PAYMENT STATUS</p>
-                <span className={`mt-1 inline-flex min-h-8 w-full items-center justify-center rounded-full border px-3 text-xs font-medium ${trackingPaymentSummary.status.key === "paid" ? "border-emerald-300 bg-emerald-50 text-emerald-800" : trackingPaymentSummary.status.key === "pending" ? "border-amber-300 bg-amber-50 text-amber-900" : "border-sky-300 bg-sky-50 text-sky-800"}`}>
+              <div className="min-w-0 rounded-xl border border-slate-200/80 bg-white p-3">
+                <p className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-slate-500">Payment Status</p>
+                <span className={`mt-2 inline-flex min-h-8 w-full items-center justify-center rounded-full border px-2 text-[10px] font-extrabold ${trackingPaymentSummary.status.key === "paid" ? "border-emerald-300 bg-emerald-50 text-emerald-800" : trackingPaymentSummary.status.key === "pending" ? "border-amber-300 bg-amber-50 text-amber-900" : "border-sky-300 bg-sky-50 text-sky-800"}`}>
                   {trackingPaymentSummary.status.label.toUpperCase()}
                 </span>
               </div>
             </div>
           </section>
 
-          <aside className="rounded-2xl border border-slate-200 bg-slate-50 p-[18px] lg:sticky lg:top-4">
-            <h4 className="text-[17px] font-medium text-slate-900">Order Summary</h4>
-            <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3.5">
+          <aside className="rounded-[26px] border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-4 shadow-[0_14px_40px_rgba(15,23,42,0.045)] sm:p-5 lg:sticky lg:top-4">
+            <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
+              <span className="flex size-10 items-center justify-center rounded-xl bg-slate-900 text-white"><Package size={18} aria-hidden="true" /></span>
+              <div>
+                <h4 className="text-base font-extrabold text-slate-900">Order Summary</h4>
+                <p className="mt-0.5 text-xs text-slate-500">Customer and delivery details</p>
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-4">
               <div className="min-w-0">
-                <p className="text-xs text-slate-500">Tracking ID</p>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Tracking ID</p>
                 <p className="break-all font-mono text-[13px] font-medium text-slate-900">{trackingResult.tracking || trackingResult._id || "—"}</p>
               </div>
               <div className="min-w-0">
-                <p className="text-xs text-slate-500">Customer</p>
-                <p className="break-words text-sm font-medium text-slate-900">{getOrderCustomerName(trackingResult)}</p>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Customer</p>
+                <p className="mt-1 break-words text-sm font-bold text-slate-900">{getOrderCustomerName(trackingResult)}</p>
               </div>
               <div className="min-w-0">
-                <p className="text-xs text-slate-500">Phone</p>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Phone</p>
                 <p className="break-words text-sm font-medium text-slate-900">{trackingResult.customer_phone || trackingResult.customer?.phone || "—"}</p>
               </div>
               <div className="min-w-0">
-                <p className="text-xs text-slate-500">Order Date</p>
-                <p className="break-words text-sm font-medium text-slate-900">{formatDateText(trackingResult.createdAt || trackingResult.created_at)}</p>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Order Date</p>
+                <p className="mt-1 break-words text-sm font-semibold text-slate-900">{formatDateText(trackingResult.createdAt || trackingResult.created_at)}</p>
               </div>
               <div className="col-span-2 min-w-0">
-                <p className="text-xs text-slate-500">Address</p>
-                <p className="break-words text-sm font-medium text-slate-900">{getOrderShippingAddress(trackingResult)}</p>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Address</p>
+                <p className="mt-1 break-words text-sm font-semibold leading-5 text-slate-900">{getOrderShippingAddress(trackingResult)}</p>
               </div>
             </div>
 
-            <p className="mt-4.5 text-[11px] font-medium tracking-[0.1em] text-muted-foreground uppercase">Products ({trackingResult.items?.length || 0})</p>
+            <p className="mt-5 border-t border-slate-200 pt-4 text-[10px] font-extrabold uppercase tracking-[0.14em] text-slate-500">Products ({trackingResult.items?.length || 0})</p>
             <div>
               {trackingResult.items?.length > 3 && (
                 <button
@@ -2042,31 +2068,32 @@ function LandingPage() {
                 const itemTotal = getTrackedItemAmount(item);
 
                 return (
-                  <div key={`${item?.product_id || itemName}-${index}`} className="flex items-center justify-between gap-2.5 border-t border-slate-200 py-2.5 first:mt-2.5">
+                  <div key={`${item?.product_id || itemName}-${index}`} className="flex items-center justify-between gap-2.5 border-t border-slate-200 py-3 first:mt-2.5">
                     <div className="min-w-0">
-                      <p className="break-words text-sm font-medium text-slate-900">{itemName}</p>
-                      <p className="text-xs text-slate-500">Qty: {itemQty}</p>
+                      <p className="break-words text-sm font-bold text-slate-900">{itemName}</p>
+                      <p className="mt-0.5 text-xs text-slate-500">Qty: {itemQty}</p>
                     </div>
-                    <span className="shrink-0 text-sm font-medium text-slate-900">{formatCurrency(itemTotal)}</span>
+                    <span className="shrink-0 text-sm font-bold text-slate-900">{formatCurrency(itemTotal)}</span>
                   </div>
                 );
               })}
             </div>
 
-            <div className="mt-4 flex items-end justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3.5 py-3">
+            <div className="mt-4 flex items-end justify-between gap-3 rounded-2xl border border-red-100 bg-red-50/60 px-4 py-4">
               <div>
-                <p className="text-xs text-slate-500">Items</p>
-                <p className="text-[15px] font-medium text-slate-900">{Array.isArray(trackingResult.items) ? trackingResult.items.length : 0}</p>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Items</p>
+                <p className="mt-1 text-base font-black text-slate-900">{Array.isArray(trackingResult.items) ? trackingResult.items.length : 0}</p>
               </div>
               <div className="text-right">
-                <p className="text-xs text-slate-500">Total</p>
-                <p className="text-[22px] font-medium leading-tight text-red-700">{formatCurrency(getFinalProjectCost(trackingResult))}</p>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Total</p>
+                <p className="mt-1 text-2xl font-black leading-tight text-red-700">{formatCurrency(getFinalProjectCost(trackingResult))}</p>
               </div>
             </div>
           </aside>
         </div>
       </>
     )}
+  </div>
   </div>
 </section>
 )}

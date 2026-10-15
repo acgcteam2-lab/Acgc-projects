@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { BrowserRouter, Routes, Route, Outlet, useLocation } from "react-router-dom";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 const ForgotPassword = lazy(() => import("./pages/ForgotPassword/ForgotPassword"));
 const AdminRecovery = lazy(() => import("./pages/AdminRecovery/AdminRecovery"));
 const LandingPage = lazy(() => import("./pages/LandingPage/LandingPage"));
@@ -39,6 +40,88 @@ const ADMIN_ROUTE_PATHS = new Set([
   "/profile",
   "/settings",
 ]);
+
+const PUBLIC_TRANSITION_PATHS = new Set(["/", "/login", "/signup", "/forgot-password"]);
+const PUBLIC_PAGE_POSITIONS = {
+  "/": { x: 0, y: 0 },
+  "/signup": { x: 1, y: 0 },
+  "/login": { x: 1, y: 1 },
+  "/forgot-password": { x: 0, y: 1 },
+};
+
+const publicPageVariants = {
+  initial: (direction) => ({
+    opacity: 0,
+    x: direction.x * 24,
+    y: direction.y * 24,
+    scale: 0.998,
+  }),
+  enter: { opacity: 1, x: 0, y: 0, scale: 1 },
+  exit: (direction) => ({
+    opacity: 0,
+    x: direction.x * -14,
+    y: direction.y * -14,
+    scale: 0.999,
+  }),
+};
+
+function PublicPageRoutes() {
+  const location = useLocation();
+  const shouldReduceMotion = useReducedMotion();
+  const isPublicTransitionPage = PUBLIC_TRANSITION_PATHS.has(location.pathname);
+  const previousPathRef = useRef(location.pathname);
+  const directionRef = useRef({ x: 0, y: 0 });
+  const landingTransitionRef = useRef(false);
+
+  if (previousPathRef.current !== location.pathname) {
+    const previousPath = previousPathRef.current;
+    const previousPosition = PUBLIC_PAGE_POSITIONS[previousPath];
+    const nextPosition = PUBLIC_PAGE_POSITIONS[location.pathname];
+    landingTransitionRef.current = previousPath === "/" || location.pathname === "/";
+    if (previousPosition && nextPosition) {
+      directionRef.current = location.pathname === "/"
+        ? { x: -1, y: 0 }
+        : previousPath === "/" && location.pathname === "/login"
+          ? { x: 1, y: 0 }
+        : {
+          x: Math.sign(nextPosition.x - previousPosition.x),
+          y: Math.sign(nextPosition.y - previousPosition.y),
+        };
+    } else {
+      directionRef.current = { x: 0, y: 0 };
+    }
+    previousPathRef.current = location.pathname;
+  }
+
+  const direction = shouldReduceMotion ? { x: 0, y: 0 } : directionRef.current;
+
+  return (
+    <AnimatePresence mode="wait" initial={false} custom={direction}>
+      {isPublicTransitionPage && (
+        <motion.div
+          key={location.pathname}
+          className="public-page-transition"
+          custom={direction}
+          variants={publicPageVariants}
+          initial="initial"
+          animate="enter"
+          exit="exit"
+          transition={{
+            duration: shouldReduceMotion ? 0.1 : landingTransitionRef.current ? 0.42 : 0.3,
+            ease: [0.16, 1, 0.3, 1],
+          }}
+        >
+          <Routes location={location}>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/signup" element={<Signup />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+          </Routes>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
 
 function AdminLayout({ isSidebarOpen, onSidebarToggle }) {
   useEffect(() => {
@@ -279,12 +362,9 @@ function AppRoutes() {
       )}
       <AdminCreationModal />
       <Suspense fallback={null}>
+      <PublicPageRoutes />
       <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Signup />} />
           <Route path="/verify-email" element={<VerifyEmail />} />
-          <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/admin-recovery" element={<AdminRecovery />} />
           <Route path="/track-order" element={<TrackOrder />} />
           <Route element={<AdminLayout

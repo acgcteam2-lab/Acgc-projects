@@ -568,8 +568,10 @@ function Dashboard() {
             <AdminPageHeader
               title="Dashboard"
               description="Manage inspections, projects, warranties and products from one administrative workspace."
-              className="h-full min-h-[250px]"
-              statsClassName="grid-cols-2 gap-3 [&>*:last-child]:col-span-2"
+              className="h-full min-h-[280px]"
+              statsClassName="grid-cols-3 gap-2 sm:gap-3"
+              compactStats
+              statsBelow
               stats={[
                 { label: "Date", value: dashboardDate, color: "text-blue-100" },
                 { label: "Time", value: dashboardTime, color: "text-emerald-300" },

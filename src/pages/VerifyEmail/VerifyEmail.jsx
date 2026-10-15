@@ -23,7 +23,7 @@ function VerifyEmail() {
         setStatus("error");
         setMessage(error.data?.message || error.message || "Unable to verify your email.");
       });
-  }, [navigate, token]);
+  }, [token]);
 
   const visibleStatus = token ? status : "error";
   const visibleMessage = token ? message : "This verification link is missing its token.";
@@ -40,7 +40,9 @@ function VerifyEmail() {
   };
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 px-4 py-8">
+    <main className="verify-email-page relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10 sm:px-6">
+      <div className="verify-email-orb verify-email-orb-one" aria-hidden="true" />
+      <div className="verify-email-orb verify-email-orb-two" aria-hidden="true" />
       {isSuccess && (
         <div className="verify-confetti-layer" aria-hidden="true">
           {Array.from({ length: 36 }, (_, index) => (
@@ -52,34 +54,31 @@ function VerifyEmail() {
                 animationDelay: `${(index % 12) * 0.09}s`,
                 animationDuration: `${2.2 + (index % 7) * 0.22}s`,
                 backgroundColor: ["#dc2626", "#f59e0b", "#10b981", "#3b82f6", "#a855f7"][index % 5],
-                transform: `rotate(${(index * 53) % 180}deg)`,
               }}
             />
           ))}
         </div>
       )}
-      <section key={visibleStatus} className={`relative z-10 w-full max-w-md rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-2xl ${isSuccess ? "verify-success-card" : ""}`}>
-        {visibleStatus === "loading" ? (
-          <LoaderCircle size={48} className="mx-auto animate-spin text-red-600" aria-hidden="true" />
-        ) : isSuccess ? (
-          <span className="verify-success-icon mx-auto flex size-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-            <CheckCircle2 size={42} aria-hidden="true" />
-          </span>
-        ) : (
-          <XCircle size={48} className="mx-auto text-red-600" aria-hidden="true" />
-        )}
-        <h1 className="mt-5 text-2xl font-black text-slate-900">
-          {visibleStatus === "loading" ? "Verifying email" : isSuccess ? "Account Verified" : "Verification failed"}
-        </h1>
-        <p className={`mt-3 text-sm text-slate-600 ${isSuccess ? "text-base leading-7" : ""}`}>
-          {isSuccess ? <>Your account has been<br />successfully verified!</> : visibleMessage}
+      <section key={visibleStatus} aria-live="polite" className={`relative z-10 w-full max-w-lg overflow-hidden rounded-[28px] border border-slate-200/80 bg-white px-7 py-10 text-center shadow-[0_24px_80px_rgba(15,23,42,0.12)] sm:px-12 sm:py-12 ${isSuccess ? "verify-success-card" : "verify-loading-card"}`}>
+        <div className={`mx-auto flex size-[76px] items-center justify-center rounded-[25px] ${isSuccess ? "bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100" : "bg-red-50 text-red-600 ring-1 ring-red-100"}`}>
+          {visibleStatus === "loading" ? <LoaderCircle size={38} className="animate-spin" aria-hidden="true" /> : isSuccess ? <CheckCircle2 size={44} className="verify-success-icon" aria-hidden="true" /> : <XCircle size={42} aria-hidden="true" />}
+        </div>
+        <p className={`mt-7 text-[11px] font-extrabold uppercase tracking-[0.24em] ${isSuccess ? "text-emerald-700" : "text-red-700"}`}>
+          {isSuccess ? "Email confirmed" : visibleStatus === "error" ? "Verification issue" : "Account security"}
         </p>
+        <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950 sm:text-[34px]">
+          {visibleStatus === "loading" ? "Verifying your email" : isSuccess ? "Account Verified" : "Verification failed"}
+        </h1>
+        <p className="mx-auto mt-3 max-w-sm text-[15px] leading-7 text-slate-600 sm:text-base">
+          {isSuccess ? <><span className="block">Your account has been</span><span className="block">successfully verified!</span></> : visibleMessage}
+        </p>
+        {visibleStatus === "loading" && <div className="mx-auto mt-8 h-1.5 max-w-[220px] overflow-hidden rounded-full bg-slate-100"><div className="verify-loading-bar h-full rounded-full bg-red-600" /></div>}
         {isSuccess ? (
-          <button type="button" onClick={handleContinue} className="mt-7 inline-flex min-w-36 items-center justify-center rounded-2xl bg-red-700 px-6 py-3 font-bold text-white shadow-lg shadow-red-700/20 transition hover:-translate-y-0.5 hover:bg-red-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-red-200">
+          <button type="button" onClick={handleContinue} className="mt-8 inline-flex min-h-12 min-w-44 items-center justify-center rounded-xl bg-red-700 px-7 py-3 font-bold text-white shadow-lg shadow-red-700/20 transition hover:-translate-y-0.5 hover:bg-red-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-red-200">
             Continue
           </button>
         ) : visibleStatus !== "loading" ? (
-          <Link to="/login" className="mt-6 inline-flex rounded-2xl bg-red-700 px-6 py-3 font-bold text-white hover:bg-red-800">
+          <Link to="/login" className="mt-8 inline-flex min-h-12 items-center rounded-xl bg-red-700 px-7 py-3 font-bold text-white hover:bg-red-800">
             Go to login
           </Link>
         ) : null}

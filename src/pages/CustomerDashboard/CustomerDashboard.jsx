@@ -4812,9 +4812,8 @@ function CustomerDashboard() {
           <button
             type="button"
             onClick={() => setActiveTab("home")}
-            className={`flex min-w-0 items-center gap-2 rounded-xl px-1 py-0.5 text-left transition duration-200 sm:gap-3 sm:px-1.5 ${activeTab === "home" ? darkMode ? "bg-slate-800/70" : "bg-red-50/70" : "hover:bg-slate-500/10"}`}
+            className="flex min-w-0 items-center gap-2 px-1 py-0.5 text-left sm:gap-3 sm:px-1.5"
             aria-label="Go to ACGC Services home"
-            aria-current={activeTab === "home" ? "page" : undefined}
           >
             <img src={logo} alt="ACGC Aluminum Services" className={`h-8 w-8 shrink-0 object-contain sm:h-12 sm:w-12 lg:h-14 lg:w-14 ${darkMode ? "drop-shadow-[0_0_4px_rgba(255,255,255,0.7)]" : ""}`} />
             <div className="min-w-0">

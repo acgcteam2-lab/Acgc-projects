@@ -1,3 +1,5 @@
+import { buildFrontendUrl } from "./frontendUrl.js";
+
 const escapeHtml = (value) => String(value ?? "")
   .replace(/&/g, "&amp;")
   .replace(/</g, "&lt;")
@@ -18,7 +20,7 @@ export const buildCustomerEmailTemplate = ({
   actionLabel,
   supportEmail,
   supportPhone,
-  footerMessage = "This is an automated notification from ACGC Glass & Aluminum Services. Please do not reply directly to this email.",
+  footerMessage = "This is an automated notification from ACGC Services. Please do not reply directly to this email.",
 }) => {
   const safeTitle = escapeHtml(title || "ACGC notification");
   const safeOrderId = escapeHtml(orderId || "");
@@ -48,11 +50,12 @@ export const buildCustomerEmailTemplate = ({
     ? `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border:1px solid #e5e7eb">${fieldRows}</table>`
     : "";
   const safeFooter = escapeHtml(footerMessage);
+  const logoUrl = escapeHtml(buildFrontendUrl("/ACGCLOGO1.png"));
   const textFields = fields
     .filter(([, value]) => value !== undefined && value !== null && String(value).trim())
     .map(([label, value]) => `${label}: ${value}`);
   const text = [
-    `ACGC Glass & Aluminum Services | ${title || "ACGC notification"}`,
+    `ACGC Services | Aluminum & Glass Services | ${title || "ACGC notification"}`,
     orderId ? `Order ID: ${orderId}` : "",
     summary,
     ...textFields,
@@ -62,7 +65,7 @@ export const buildCustomerEmailTemplate = ({
     safeFooter,
     "Thank you for choosing ACGC.",
   ].filter(Boolean).join("\n\n");
-  const html = `<!doctype html><html><body style="margin:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f4f6;padding:28px 12px"><tr><td align="center"><table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;width:100%;background:#fff;border:1px solid #e5e7eb"><tr><td style="padding:24px 28px;background:#7f1d1d;color:#fff"><div style="font-size:13px;font-weight:bold;letter-spacing:1px">ACGC GLASS &amp; ALUMINUM SERVICES</div><div style="margin-top:18px;font-size:23px;font-weight:bold">${safeTitle}</div>${orderHeading}</td></tr><tr><td style="padding:24px 28px">${statusBadge}${summaryBlock}${table}${nextStepBlock}${actionButton}${supportLine}</td></tr><tr><td style="padding:18px 28px;background:#f9fafb;border-top:1px solid #e5e7eb;font-size:12px;line-height:1.6;color:#64748b">${safeFooter}<br>Thank you for choosing ACGC.</td></tr></table></td></tr></table></body></html>`;
+  const html = `<!doctype html><html><body style="margin:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;color:#111827"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f1f5f9;padding:28px 12px"><tr><td align="center"><table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;width:100%;background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden"><tr><td style="padding:24px 28px;background-color:#020617;background-image:radial-gradient(circle at 100% 0%,transparent 0 138px,rgba(255,255,255,.10) 139px 140px,transparent 141px 190px,rgba(255,255,255,.08) 191px 192px,transparent 193px),linear-gradient(135deg,#020617 0%,#111827 56%,#450a0a 100%);color:#fff"><table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 0 22px"><tr><td valign="middle" style="padding:0"><img src="${logoUrl}" width="64" height="64" alt="ACGC logo" style="display:block;width:64px;height:64px;border:0;object-fit:contain;filter:drop-shadow(0 0 5px rgba(255,255,255,.8))"></td><td valign="middle" style="padding-left:14px"><div style="font-size:17px;font-weight:bold;letter-spacing:.2px;color:#fff">ACGC Services</div><div style="margin-top:4px;font-size:13px;color:#dbe4f0">Aluminum &amp; Glass Services</div></td></tr></table><div style="font-size:23px;line-height:1.3;font-weight:bold;color:#fff">${safeTitle}</div>${orderHeading}</td></tr><tr><td style="padding:24px 28px">${statusBadge}${summaryBlock}${table}${nextStepBlock}${actionButton}${supportLine}</td></tr><tr><td style="padding:18px 28px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:12px;line-height:1.6;color:#64748b">${safeFooter}<br>Thank you for choosing ACGC.</td></tr></table></td></tr></table></body></html>`;
   return { html, text };
 };
 
