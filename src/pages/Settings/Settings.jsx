@@ -39,6 +39,7 @@ import {
   deleteSystemBackup,
   downloadSystemBackup,
   getAdminUsers,
+  getBackupRecoveryPassword,
   getSystemSettings,
   restoreSystemBackup,
   setBackupRecoveryPassword,
@@ -181,6 +182,7 @@ function Settings() {
     return {
       selectedSchedule: "weekly",
       lastBackupAt: null,
+      nextBackupAt: null,
       status: null,
       backups: [],
     };
@@ -216,6 +218,7 @@ function Settings() {
           selectedSchedule: ["weekly", "monthly", "yearly"].includes(response.backup_schedule) ? response.backup_schedule : "weekly",
           status: response.backup_status || null,
           lastBackupAt: response.last_backup_at || null,
+          nextBackupAt: response.next_backup_at || null,
           backups: Array.isArray(response.backup_history) ? response.backup_history : [],
         });
         setBackupRecoveryConfigured(response.backup_recovery_password_configured === true);
@@ -280,6 +283,24 @@ function Settings() {
 
     loadUsers();
   }, []);
+
+  useEffect(() => {
+    const canReveal = user?.role === "admin" || user?.role === "super_admin";
+    if (!backupRecoveryConfigured || !canReveal) return undefined;
+    let active = true;
+    const loadDisplayPassword = async () => {
+      try {
+        const response = await getBackupRecoveryPassword();
+        if (active && response?.backup_recovery_password) setRecoveryPassword(response.backup_recovery_password);
+      } catch {
+        // Passwords set before display support stay hidden until changed once.
+      }
+    };
+    loadDisplayPassword();
+    return () => {
+      active = false;
+    };
+  }, [backupRecoveryConfigured, user?.role]);
 
   const allDisplayUsers = useMemo(() => {
     const authAdmin = user && (user.role === "admin" || user.role === "super_admin")
@@ -406,7 +427,7 @@ function Settings() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <h3 className="text-[19px] font-medium text-foreground">Recovery Password</h3>
-                  <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">Set a private password required to authorize a full restore. It is stored as a one-way salted verifier and is never shown again.</p>
+                  <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">Set a private password required to authorize a full restore. The current password stays visible to admins here until it is changed.</p>
                 </div>
                 <span className={cn("inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium", backupRecoveryConfigured ? "bg-green-100 text-green-700 dark:bg-green-950/60 dark:text-green-300" : "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300")}>
                   <ShieldCheck aria-hidden="true" className="size-4" />
@@ -417,7 +438,7 @@ function Settings() {
                 <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
                   <span>Current password</span>
                   <span className="relative block">
-                    <input type={showCurrentRecoveryPassword ? "text" : "password"} autoComplete="current-password" value={recoveryPassword} onChange={(event) => setRecoveryPassword(event.target.value)} placeholder={backupRecoveryConfigured ? "" : "Not set yet"} disabled={!backupRecoveryConfigured || savingRecoveryPassword} required={backupRecoveryConfigured} minLength={12} maxLength={128} className="h-10 w-full rounded-md border border-border bg-background px-3 pr-10 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-70 dark:border-slate-700 dark:bg-slate-950" />
+                    <input type={showCurrentRecoveryPassword ? "text" : "password"} autoComplete="new-password" data-1p-ignore="true" data-lpignore="true" data-form-type="other" value={recoveryPassword} onChange={(event) => setRecoveryPassword(event.target.value)} placeholder={backupRecoveryConfigured ? "Enter current password" : "Not set yet"} disabled={!backupRecoveryConfigured || savingRecoveryPassword} required={backupRecoveryConfigured} minLength={12} maxLength={128} className="h-10 w-full rounded-md border border-border bg-background px-3 pr-10 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-70 dark:border-slate-700 dark:bg-slate-950" />
                     <button type="button" onClick={() => setShowCurrentRecoveryPassword((visible) => !visible)} disabled={!backupRecoveryConfigured || savingRecoveryPassword} aria-label={showCurrentRecoveryPassword ? "Hide current recovery password" : "Show current recovery password"} aria-pressed={showCurrentRecoveryPassword} className="absolute inset-y-0 right-0 inline-flex w-10 items-center justify-center text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50">
                       {showCurrentRecoveryPassword ? <EyeOff aria-hidden="true" className="size-4" /> : <Eye aria-hidden="true" className="size-4" />}
                     </button>
@@ -459,7 +480,7 @@ function Settings() {
                 </ul>
               </div>
             </section>
-            <p className="text-sm leading-relaxed text-muted-foreground">Full backups include all MongoDB collections and local upload files. Cloudinary-hosted media stays in Cloudinary and is not copied into the archive; existing database references remain unchanged.</p>
+            <p className="text-sm leading-relaxed text-muted-foreground">Full backups include every acgc_db collection, document, and index — database only, no files. Archives are protected with your recovery password and kept for 30 days (the latest backup is always protected). Cloudinary-hosted media stays in Cloudinary; existing database references remain unchanged.</p>
 
             <div className="grid grid-cols-1 items-stretch gap-4.5 lg:grid-cols-[minmax(300px,390px)_minmax(0,1fr)]">
               <section className="flex min-w-0 flex-col overflow-hidden rounded-[20px] border border-border bg-card dark:border-slate-700 dark:bg-slate-900">
@@ -483,6 +504,11 @@ function Settings() {
                       );
                     })}
                   </RadioGroup.Root>
+                  <p className="mt-3.5 text-xs leading-relaxed text-muted-foreground">
+                    {backupState.nextBackupAt
+                      ? `Next ${backupState.selectedSchedule} backup: ${new Date(backupState.nextBackupAt).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" })} · Asia/Manila`
+                      : "Scheduled backups run at midnight, Asia/Manila time."}
+                  </p>
                 </div>
                 <footer className="flex min-h-[70px] items-center border-t border-border bg-muted/50 px-6 py-3.5 dark:border-slate-700 dark:bg-slate-800/50 max-[520px]:px-4">
                   <button type="button" onClick={handleBackupNow} disabled={loadingBackupSettings || creatingBackup || !backupRecoveryConfigured} className="inline-flex h-10.5 w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none dark:bg-brand-dark-fill">
@@ -565,7 +591,7 @@ function Settings() {
                       <tbody>
                         {paginatedBackups.map((backup) => (
                           <tr key={backup.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-muted/50 motion-reduce:transition-none">
-                            <td className={`px-4 py-3 ${darkMode ? "text-slate-200" : "text-slate-900"}`}><span className="block break-all font-mono text-[13px]">{backup.name}</span>{Number.isFinite(backup.collectionCount) && <span className={`mt-1 block text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{backup.collectionCount} collections · {backup.documentCount || 0} records · {backup.localUploadCount || 0} local files</span>}</td>
+                            <td className={`px-4 py-3 ${darkMode ? "text-slate-200" : "text-slate-900"}`}><span className="block break-all font-mono text-[13px]">{backup.name}</span>{Number.isFinite(backup.collectionCount) && <span className={`mt-1 block text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{backup.collectionCount} collections · {backup.documentCount || 0} records · {backup.trigger || "Manual"}</span>}</td>
                             <td className={`px-4 py-3 text-sm ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{formatBackupDateShort(backup.date)}</td>
                             <td className={`px-4 py-3 text-sm tabular-nums ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{formatBackupTime(backup.date)}</td>
                             <td className="px-4 py-3">
@@ -577,6 +603,7 @@ function Settings() {
                                 <span className="size-1.5 rounded-full bg-green-500" />
                                 {backup.status}
                               </span>
+                              {backup.verified === true && <span className="mt-1 block text-[10px] font-medium text-muted-foreground">SHA-256 verified</span>}
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex justify-end gap-2">
@@ -611,7 +638,7 @@ function Settings() {
                           <div className="min-w-0">
                             <p className={`break-all font-mono text-xs font-semibold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{backup.name}</p>
                             <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-600"}`}>{formatBackupDateShort(backup.date)} · {formatBackupTime(backup.date)}</p>
-                            {Number.isFinite(backup.collectionCount) && <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{backup.collectionCount} collections · {backup.documentCount || 0} records · {backup.localUploadCount || 0} local files</p>}
+                            {Number.isFinite(backup.collectionCount) && <p className={`mt-1 text-xs ${darkMode ? "text-slate-400" : "text-slate-500"}`}>{backup.collectionCount} collections · {backup.documentCount || 0} records · {backup.trigger || "Manual"}{backup.verified === true ? " · SHA-256 verified" : ""}</p>}
                           </div>
                           <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-medium ${darkMode ? "bg-green-950/50 text-green-300" : "bg-green-500/10 text-green-700"}`}>{backup.status}</span>
                         </div>
@@ -935,12 +962,13 @@ function Settings() {
 
     const response = await updateSystemSettings(payload);
     if (response?.backup_history) {
-      setBackupState({
+      setBackupState((current) => ({
         selectedSchedule: response.backup_schedule || nextState.selectedSchedule || "weekly",
         status: response.backup_status || nextState.status || "Success",
         lastBackupAt: response.last_backup_at || nextState.lastBackupAt || null,
+        nextBackupAt: response.next_backup_at || current.nextBackupAt || null,
         backups: Array.isArray(response.backup_history) ? response.backup_history : nextState.backups || [],
-      });
+      }));
     }
     return response;
   };
@@ -976,7 +1004,7 @@ function Settings() {
         new_password: newRecoveryPassword,
       });
       setBackupRecoveryConfigured(true);
-      setRecoveryPassword("");
+      setRecoveryPassword(newRecoveryPassword);
       setNewRecoveryPassword("");
       setConfirmRecoveryPassword("");
       toast.success("Backup recovery password saved.");
@@ -1461,7 +1489,7 @@ function Settings() {
               <p id="restore-confirm-description" className={`mt-4 text-sm leading-6 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
                 This will replace the current database records and uploaded files with the contents of this backup. This action cannot be undone from the system after it completes.
               </p>
-              <label className={`mt-4 grid gap-1.5 text-xs font-medium ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Recovery password<input type="password" autoComplete="current-password" value={restoreRecoveryPassword} onChange={(event) => setRestoreRecoveryPassword(event.target.value)} disabled={restoringBackup} required minLength={12} maxLength={128} className={`h-10 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand ${darkMode ? "border-slate-700 bg-slate-950 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`} /></label>
+              <label className={`mt-4 grid gap-1.5 text-xs font-medium ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Recovery password<input type="password" autoComplete="new-password" data-1p-ignore="true" data-lpignore="true" data-form-type="other" value={restoreRecoveryPassword} onChange={(event) => setRestoreRecoveryPassword(event.target.value)} disabled={restoringBackup} required minLength={12} maxLength={128} className={`h-10 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand ${darkMode ? "border-slate-700 bg-slate-950 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`} /></label>
               <p className={`mt-2 text-xs leading-relaxed ${darkMode ? "text-slate-400" : "text-slate-500"}`}>The pre-restore snapshot is created automatically. Users will be signed out after a successful restore.</p>
               <footer className={`mt-6 flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end ${darkMode ? "border-slate-800" : "border-slate-100"}`}>
                 <button

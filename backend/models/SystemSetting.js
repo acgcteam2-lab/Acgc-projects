@@ -12,8 +12,10 @@ const SystemSettingSchema = new mongoose.Schema(
     backup_history: { type: [mongoose.Schema.Types.Mixed], default: [] },
     backup_recovery_password_salt: { type: String, default: null, select: false },
     backup_recovery_password_hash: { type: String, default: null, select: false },
+    backup_recovery_password_display: { type: String, default: null, select: false },
     backup_recovery_password_set_at: { type: Date, default: null },
     backup_restore_lock: { type: mongoose.Schema.Types.Mixed, default: null, select: false },
+    backup_create_lock: { type: mongoose.Schema.Types.Mixed, default: null, select: false },
   },
   { timestamps: true }
 );

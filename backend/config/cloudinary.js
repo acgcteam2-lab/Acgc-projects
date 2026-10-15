@@ -40,6 +40,15 @@ export const getCloudinaryConfig = (env = process.env) => {
   throw error;
 };
 
+export const hasCloudinaryConfig = (env = process.env) => {
+  try {
+    const config = getCloudinaryConfig(env);
+    return !Object.values(config).some((value) => /your_|replace_with|sample-/i.test(value));
+  } catch {
+    return false;
+  }
+};
+
 export const createCloudinaryUploadSignature = ({ folder, publicId, resourceType = "auto", type = "upload" }) => {
   const config = getCloudinaryConfig();
   const timestamp = Math.floor(Date.now() / 1000);

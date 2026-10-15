@@ -1,24 +1,15 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { ZipReader, ZipWriter, Uint8ArrayReader, Uint8ArrayWriter } from "@zip.js/zip.js";
 
 const ENCRYPTED_BACKUP_PREFIX = Buffer.from("ACGCENC1");
-const IV_LENGTH = 12;
-const AUTH_TAG_LENGTH = 16;
 
 const getEncryptionPassword = (password) => {
   if (typeof password === "string" && password.length > 0) return password;
-
-  const configuredKey = process.env.BACKUP_ENCRYPTION_KEY?.trim() || "";
-  if (!/^[\da-f]{64}$/i.test(configuredKey)) {
-    throw Object.assign(
-      new Error("Set BACKUP_ENCRYPTION_KEY to a securely generated 64-character hexadecimal key before creating or importing backups."),
-      { status: 500 },
-    );
-  }
-  return configuredKey;
+  throw Object.assign(
+    new Error("Set a backup recovery password in Settings before creating backups."),
+    { status: 500 },
+  );
 };
-
-const getEncryptionKey = () => Buffer.from(getEncryptionPassword(), "hex");
 
 export const isZipBackup = (buffer) =>
   buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b;
@@ -46,7 +37,7 @@ export const encryptZipBackupBuffer = async (buffer, transactionWorkbookBuffer, 
 
 export const decryptZipBackupBuffer = async (buffer, password) => {
   const reader = new ZipReader(new Uint8ArrayReader(buffer), {
-    password: getEncryptionPassword(password),
+    password: typeof password === "string" && password.length > 0 ? password : undefined,
     checkAuthenticationCode: true,
     useWebWorkers: false,
   });
@@ -80,10 +71,7 @@ export const decryptZipBackupBuffer = async (buffer, password) => {
     return snapshotBuffer;
   } catch (error) {
     if (error.status) throw error;
-    const credentialLabel = typeof password === "string" && password.length > 0
-      ? "recovery password"
-      : "BACKUP_ENCRYPTION_KEY";
-    throw Object.assign(new Error(`Encrypted ZIP is invalid, corrupted, or was encrypted with a different ${credentialLabel}.`), { status: 400 });
+    throw Object.assign(new Error("Encrypted ZIP is invalid, corrupted, or was encrypted with a different recovery password."), { status: 400 });
   } finally {
     await reader.close();
   }
@@ -93,43 +81,10 @@ export const isEncryptedBackup = (buffer) =>
   buffer.length >= ENCRYPTED_BACKUP_PREFIX.length &&
   buffer.subarray(0, ENCRYPTED_BACKUP_PREFIX.length).equals(ENCRYPTED_BACKUP_PREFIX);
 
-export const encryptBackupBuffer = (buffer) => {
-  const key = getEncryptionKey();
-  const initializationVector = randomBytes(IV_LENGTH);
-  const cipher = createCipheriv("aes-256-gcm", key, initializationVector);
-  const ciphertext = Buffer.concat([cipher.update(buffer), cipher.final()]);
-  return Buffer.concat([
-    ENCRYPTED_BACKUP_PREFIX,
-    initializationVector,
-    cipher.getAuthTag(),
-    ciphertext,
-  ]);
-};
-
 export const decryptBackupBuffer = (buffer) => {
   if (!isEncryptedBackup(buffer)) return buffer;
-
-  const minimumLength = ENCRYPTED_BACKUP_PREFIX.length + IV_LENGTH + AUTH_TAG_LENGTH + 1;
-  if (buffer.length < minimumLength) {
-    throw Object.assign(new Error("Encrypted backup is invalid or corrupted."), { status: 400 });
-  }
-
-  const key = getEncryptionKey();
-  const ivStart = ENCRYPTED_BACKUP_PREFIX.length;
-  const tagStart = ivStart + IV_LENGTH;
-  const ciphertextStart = tagStart + AUTH_TAG_LENGTH;
-  const decipher = createDecipheriv("aes-256-gcm", key, buffer.subarray(ivStart, tagStart));
-  decipher.setAuthTag(buffer.subarray(tagStart, ciphertextStart));
-
-  try {
-    return Buffer.concat([
-      decipher.update(buffer.subarray(ciphertextStart)),
-      decipher.final(),
-    ]);
-  } catch {
-    throw Object.assign(
-      new Error("Encrypted backup is corrupted or was encrypted with a different BACKUP_ENCRYPTION_KEY."),
-      { status: 400 },
-    );
-  }
+  throw Object.assign(
+    new Error("Legacy AES-encrypted backups are no longer supported. Upload a ZIP backup protected with your recovery password."),
+    { status: 400 },
+  );
 };

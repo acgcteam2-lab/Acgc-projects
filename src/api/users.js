@@ -40,6 +40,9 @@ export const setBackupRecoveryPassword = (payload) =>
     body: JSON.stringify(payload),
   });
 
+export const getBackupRecoveryPassword = () =>
+  apiFetch("/auth/system-settings/backups/recovery-password", { cache: "no-store" });
+
 export const uploadSystemBackup = (file) => {
   if (import.meta.env.PROD) {
     return uploadFiles([file], undefined, {

@@ -26,6 +26,7 @@ import {
   createSystemBackup,
   deleteSystemBackup,
   getSystemBackupDownload,
+  getNextScheduledBackupAt,
   hydrateBackupHistorySizes,
   importSystemBackup,
   importSystemBackupFromCloudinary,
@@ -643,6 +644,7 @@ router.get("/system-settings", authMiddleware, async (req, res) => {
       last_backup_at: settings?.last_backup_at || null,
       backup_history: backupHistory,
       backup_recovery_password_configured: Boolean(settings?.backup_recovery_password_salt && settings?.backup_recovery_password_hash),
+      next_backup_at: getNextScheduledBackupAt(settings?.backup_schedule || "weekly"),
     });
   } catch (error) {
     console.error("Get system settings error:", error);
@@ -675,6 +677,7 @@ router.put("/system-settings/backups/recovery-password", authMiddleware, roleMid
         $set: {
           backup_recovery_password_salt: verifier.salt,
           backup_recovery_password_hash: verifier.hash,
+          backup_recovery_password_display: req.body?.new_password,
           backup_recovery_password_set_at: new Date(),
         },
       },
@@ -686,6 +689,23 @@ router.put("/system-settings/backups/recovery-password", authMiddleware, roleMid
       success: false,
       message: error.status ? error.message : "Unable to update the recovery password.",
     });
+  }
+});
+
+router.get("/system-settings/backups/recovery-password", authMiddleware, roleMiddleware(["admin", "super_admin"]), async (req, res) => {
+  try {
+    const settings = await SystemSetting.findOne({ key: "global" })
+      .select("+backup_recovery_password_display")
+      .lean();
+    const password = settings?.backup_recovery_password_display;
+    if (typeof password !== "string" || password.length === 0) {
+      return res.status(404).json({ success: false, message: "The recovery password was set before display support. Change it once to make it viewable." });
+    }
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ success: true, backup_recovery_password: password });
+  } catch (error) {
+    console.error("Reveal recovery password error:", error);
+    res.status(500).json({ success: false, message: "Unable to load the recovery password." });
   }
 });
 
@@ -782,7 +802,7 @@ router.post("/system-settings/backups", authMiddleware, roleMiddleware(["admin",
     if (!recoverySettings?.backup_recovery_password_salt || !recoverySettings?.backup_recovery_password_hash) {
       return res.status(428).json({ success: false, message: "Set a backup recovery password before creating a manual backup." });
     }
-    const result = await createSystemBackup(req.body?.type);
+    const result = await createSystemBackup(req.body?.type, "Manual");
     await recordBackupOperation(req, "create", "success", result.backup, "Manual backup created.");
     res.status(201).json({ success: true, ...result });
   } catch (error) {
@@ -890,7 +910,7 @@ router.post("/system-settings/backups/:backupId/restore", authMiddleware, roleMi
     const backupRecord = await SystemSetting.findOne({ key: "global" }).select("backup_history").lean();
     backup = backupRecord?.backup_history?.find((item) => item.id === req.params.backupId) || { id: req.params.backupId };
     await recordBackupOperation(req, "restore", "started", backup, "Restore started.");
-    const result = await restoreSystemBackup(req.params.backupId);
+    const result = await restoreSystemBackup(req.params.backupId, req.body?.recovery_password);
     await recordBackupOperation(req, "restore", "success", backup, "Restore completed; all sessions revoked.");
     res.json({ success: true, ...result });
   } catch (error) {

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
 import process from "node:process";
 import { promises as fs } from "node:fs";
@@ -6,7 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { gzip, gunzip } from "node:zlib";
 import mongoose from "mongoose";
-import { deletePrivateRawAsset, getPrivateRawDownloadUrl, uploadPrivateRawBuffer } from "../config/cloudinary.js";
+import { deletePrivateRawAsset, getPrivateRawDownloadUrl, hasCloudinaryConfig, uploadPrivateRawBuffer } from "../config/cloudinary.js";
 import SystemSetting from "../models/SystemSetting.js";
 import BackupOperationAudit from "../models/BackupOperationAudit.js";
 import {
@@ -26,7 +26,8 @@ let scheduledBackupTimer;
 const getBackupDirectory = () => path.join(process.cwd(), "backups");
 const getUploadsDirectory = () => path.resolve(process.cwd(), "uploads");
 const isVercelRuntime = () => process.env.VERCEL === "1";
-const usesCloudinaryStorage = () => isVercelRuntime();
+const usesCloudinaryStorage = () => isVercelRuntime() || hasCloudinaryConfig();
+const isCloudinaryBackup = (backup) => backup?.storage === "cloudinary" || (!backup?.storage && isVercelRuntime());
 
 const backupError = (message, status = 400) => Object.assign(new Error(message), { status });
 
@@ -83,9 +84,9 @@ const createSnapshotBuffer = async () => {
     format: BACKUP_FORMAT,
     createdAt: new Date().toISOString(),
     collections,
-    uploads: await readUploadFiles(getUploadsDirectory()),
+    uploads: [],
     assetScope: {
-      localUploadsIncluded: true,
+      localUploadsIncluded: false,
       cloudinaryAssetsIncluded: false,
     },
   };
@@ -101,15 +102,33 @@ const createSnapshotBuffer = async () => {
   };
 };
 
-const getCompressedSnapshotBuffer = async (buffer) => {
-  if (isZipBackup(buffer)) return decryptZipBackupBuffer(buffer);
-  return decryptBackupBuffer(buffer);
+const getBackupFilePassword = async () => {
+  const settings = await SystemSetting.findOne({ key: "global" })
+    .select("+backup_recovery_password_display")
+    .lean();
+  const password = settings?.backup_recovery_password_display;
+  return typeof password === "string" && password.length > 0 ? password : null;
 };
 
-const parseSnapshot = async (buffer) => {
+const requireBackupFilePassword = async () => {
+  const password = await getBackupFilePassword();
+  if (!password) {
+    throw backupError("Set a backup recovery password before creating backups.", 428);
+  }
+  return password;
+};
+
+const getCompressedSnapshotBuffer = async (buffer, password) => {
+  if (!isZipBackup(buffer)) return decryptBackupBuffer(buffer);
+  const explicitPassword = typeof password === "string" && password.length > 0 ? password : null;
+  const filePassword = explicitPassword || (await getBackupFilePassword()) || undefined;
+  return decryptZipBackupBuffer(buffer, filePassword);
+};
+
+const parseSnapshot = async (buffer, password) => {
   let snapshot;
   try {
-    const compressedBuffer = await getCompressedSnapshotBuffer(buffer);
+    const compressedBuffer = await getCompressedSnapshotBuffer(buffer, password);
     snapshot = mongoose.mongo.BSON.EJSON.parse((await gunzipAsync(compressedBuffer)).toString("utf8"), { relaxed: false });
   } catch (error) {
     if (error.status === 500) throw error;
@@ -268,7 +287,7 @@ const applySnapshot = async (snapshot) => {
     );
   }
 
-  await restoreUploadFiles(snapshot.uploads);
+  if (snapshot.uploads.length) await restoreUploadFiles(snapshot.uploads);
 };
 
 const findBackupRecord = async (backupId) => {
@@ -283,10 +302,11 @@ const getBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backu
 const getLegacyEncryptedBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backupId}.json.gz.enc`);
 const getLegacyBackupFilePath = (backupId) => path.join(getBackupDirectory(), `${backupId}.json.gz`);
 const getBackupCloudinaryPublicId = (backupId) => `acgc/backups/${backupId}.zip`;
+const getBackupManifestCloudinaryPublicId = (backupId) => `acgc/backups/${backupId}.sha256.json`;
 const getBackupSizeInMB = (byteLength) => Number((byteLength / (1024 * 1024)).toFixed(3));
 
-const getStoredBackupBuffer = async (backupId) => {
-  if (usesCloudinaryStorage()) {
+const getStoredBackupBuffer = async (backupId, backup) => {
+  if (isCloudinaryBackup(backup)) {
     const downloadUrl = getPrivateRawDownloadUrl(getBackupCloudinaryPublicId(backupId), "zip");
     const response = await fetch(downloadUrl);
     if (!response.ok) throw backupError("Backup file is not available.", 404);
@@ -307,8 +327,9 @@ const getStoredBackupBuffer = async (backupId) => {
   throw backupError("Backup file is not available.", 404);
 };
 
-const getStoredBackupSizeBytes = async (backupId) => {
-  if (usesCloudinaryStorage()) return null;
+const getStoredBackupSizeBytes = async (backup) => {
+  if (isCloudinaryBackup(backup)) return null;
+  const backupId = backup.id;
 
   for (const filePath of [
     getBackupFilePath(backupId),
@@ -331,7 +352,7 @@ export const hydrateBackupHistorySizes = async (backupHistory = []) => {
     if (!backup || typeof backup !== "object") return backup;
     if (Number.isFinite(Number(backup.sizeBytes)) && Number(backup.sizeBytes) > 0) return backup;
 
-    const sizeBytes = await getStoredBackupSizeBytes(backup.id);
+    const sizeBytes = await getStoredBackupSizeBytes(backup);
     if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return backup;
 
     return {
@@ -342,10 +363,26 @@ export const hydrateBackupHistorySizes = async (backupHistory = []) => {
   }));
 };
 
-const storeBackupBuffer = async (backupId, buffer) => {
+const storeBackupBuffer = async (backupId, buffer, metadata = {}) => {
+  const checksum = createHash("sha256").update(buffer).digest("hex");
   if (usesCloudinaryStorage()) {
-    await uploadPrivateRawBuffer(buffer, getBackupCloudinaryPublicId(backupId));
-    return;
+    const publicId = getBackupCloudinaryPublicId(backupId);
+    await uploadPrivateRawBuffer(buffer, publicId);
+    await uploadPrivateRawBuffer(
+      Buffer.from(JSON.stringify({
+        filename: `${backupId}.zip`,
+        sha256: checksum,
+        createdAt: new Date().toISOString(),
+        ...metadata,
+      }), "utf8"),
+      getBackupManifestCloudinaryPublicId(backupId),
+    );
+    const downloadUrl = getPrivateRawDownloadUrl(publicId, "zip");
+    const response = await fetch(downloadUrl);
+    if (!response.ok) throw backupError("Backup upload verification failed: the archive could not be downloaded for verification.", 500);
+    const downloadedChecksum = createHash("sha256").update(Buffer.from(await response.arrayBuffer())).digest("hex");
+    if (downloadedChecksum !== checksum) throw backupError("Backup upload verification failed: checksum mismatch.", 500);
+    return { checksum, verified: true, storage: "cloudinary" };
   }
 
   const backupDirectory = getBackupDirectory();
@@ -354,11 +391,15 @@ const storeBackupBuffer = async (backupId, buffer) => {
   await fs.mkdir(backupDirectory, { recursive: true });
   await fs.writeFile(temporaryPath, buffer, { flag: "wx" });
   await fs.rename(temporaryPath, filePath);
+  return { checksum, verified: true, storage: "local" };
 };
 
-const deleteStoredBackup = async (backupId) => {
-  if (usesCloudinaryStorage()) {
-    await deletePrivateRawAsset(getBackupCloudinaryPublicId(backupId));
+const deleteStoredBackup = async (backupId, backup) => {
+  if (backup ? isCloudinaryBackup(backup) : usesCloudinaryStorage()) {
+    await Promise.all([
+      deletePrivateRawAsset(getBackupCloudinaryPublicId(backupId)),
+      deletePrivateRawAsset(getBackupManifestCloudinaryPublicId(backupId)).catch(() => {}),
+    ]);
     return;
   }
   await Promise.all([
@@ -368,29 +409,109 @@ const deleteStoredBackup = async (backupId) => {
   ]);
 };
 
-export const createSystemBackup = async (type) => {
+const acquireBackupCreateLock = async () => {
+  const now = new Date();
+  const lockToken = randomUUID();
+  const lock = await SystemSetting.findOneAndUpdate(
+    {
+      key: "global",
+      $or: [
+        { backup_create_lock: null },
+        { "backup_create_lock.expiresAt": { $lt: now } },
+      ],
+    },
+    {
+      $set: {
+        backup_create_lock: {
+          token: lockToken,
+          startedAt: now,
+          expiresAt: new Date(now.getTime() + 20 * 60 * 1000),
+        },
+      },
+    },
+    { returnDocument: "after", upsert: true },
+  ).lean();
+  return lock ? lockToken : null;
+};
+
+const releaseBackupCreateLock = async (lockToken) => {
+  await SystemSetting.updateOne(
+    { key: "global", "backup_create_lock.token": lockToken },
+    { $unset: { backup_create_lock: 1 } },
+  ).catch((error) => console.error("Unable to release the backup creation lock:", error));
+};
+
+const BACKUP_RETENTION_DAYS = 30;
+
+export const runBackupRetentionCleanup = async () => {
+  const settings = await SystemSetting.findOne({ key: "global" }).select("backup_history").lean();
+  const backups = Array.isArray(settings?.backup_history) ? settings.backup_history : [];
+  if (backups.length === 0) return { deleted: 0 };
+
+  const cutoffTime = Date.now() - BACKUP_RETENTION_DAYS * 86_400_000;
+  const sortedByNewest = [...backups].sort((a, b) => new Date(b?.date).getTime() - new Date(a?.date).getTime());
+  const latestBackupId = sortedByNewest[0]?.id;
+  const expired = backups.filter((backup) => {
+    if (backup?.id === latestBackupId) return false;
+    const createdAt = new Date(backup?.date).getTime();
+    return Number.isFinite(createdAt) && createdAt < cutoffTime;
+  });
+  if (expired.length === 0) return { deleted: 0 };
+
+  const deletedIds = [];
+  for (const backup of expired) {
+    try {
+      await deleteStoredBackup(backup.id, backup);
+      deletedIds.push(backup.id);
+    } catch (error) {
+      console.error(`[backup] Retention could not delete ${backup?.name || backup?.id}:`, error.message);
+    }
+  }
+  if (deletedIds.length === 0) return { deleted: 0 };
+
+  await SystemSetting.findOneAndUpdate(
+    { key: "global" },
+    { $pull: { backup_history: { id: { $in: deletedIds } } } },
+  );
+  await BackupOperationAudit.create({
+    actor_role: "system",
+    action: "retention",
+    outcome: "success",
+    details: `Retention removed ${deletedIds.length} backup(s) older than ${BACKUP_RETENTION_DAYS} days.`,
+  }).catch((error) => console.error("Unable to record retention audit:", error.message));
+  return { deleted: deletedIds.length };
+};
+
+export const createSystemBackup = async (type, trigger = "Manual") => {
   if (!VALID_TYPES.has(type)) throw backupError("Invalid backup type.", 400);
+
+  const lockToken = await acquireBackupCreateLock();
+  if (!lockToken) throw backupError("A backup is already in progress. Try again after it finishes.", 409);
 
   const id = randomUUID();
   const now = new Date();
-  const snapshot = await createSnapshotBuffer();
-  const backupBuffer = await encryptZipBackupBuffer(snapshot.buffer);
-  const backup = {
-    id,
-    name: `${type.toUpperCase().replace(/\s+/g, "_")}_BACKUP_${now.toISOString().slice(0, 10)}`,
-    type,
-    date: now.toISOString(),
-    size: getBackupSizeInMB(backupBuffer.length),
-    sizeBytes: backupBuffer.length,
-    status: "Success",
-    collectionCount: snapshot.collectionCount,
-    documentCount: snapshot.documentCount,
-    localUploadCount: snapshot.localUploadCount,
-    cloudinaryAssetsIncluded: false,
-  };
-
   try {
-    await storeBackupBuffer(id, backupBuffer);
+    const snapshot = await createSnapshotBuffer();
+    const backupBuffer = await encryptZipBackupBuffer(snapshot.buffer, undefined, await requireBackupFilePassword());
+    const { checksum, verified, storage } = await storeBackupBuffer(id, backupBuffer, { type, trigger });
+    const backup = {
+      id,
+      name: `${type.toUpperCase().replace(/\s+/g, "_")}_BACKUP_${now.toISOString().slice(0, 10)}`,
+      type,
+      trigger,
+      date: now.toISOString(),
+      size: getBackupSizeInMB(backupBuffer.length),
+      sizeBytes: backupBuffer.length,
+      status: "Success",
+      collectionCount: snapshot.collectionCount,
+      documentCount: snapshot.documentCount,
+      localUploadCount: snapshot.localUploadCount,
+      cloudinaryAssetsIncluded: false,
+      sha256: checksum,
+      verified,
+      storage,
+    };
+
     const settings = await SystemSetting.findOneAndUpdate(
       { key: "global" },
       {
@@ -399,16 +520,20 @@ export const createSystemBackup = async (type) => {
       },
       { returnDocument: "after", upsert: true, setDefaultsOnInsert: true }
     ).lean();
+    await runBackupRetentionCleanup().catch((error) => console.error("[backup] Retention cleanup failed:", error.message));
+    const refreshed = await SystemSetting.findOne({ key: "global" }).lean();
     return {
       backup,
-      backup_schedule: settings.backup_schedule || "weekly",
-      backup_status: settings.backup_status || "Success",
-      last_backup_at: settings.last_backup_at || now,
-      backup_history: settings.backup_history || [backup],
+      backup_schedule: refreshed?.backup_schedule || settings.backup_schedule || "weekly",
+      backup_status: refreshed?.backup_status || "Success",
+      last_backup_at: refreshed?.last_backup_at || now,
+      backup_history: refreshed?.backup_history || settings.backup_history || [backup],
     };
   } catch (error) {
     await deleteStoredBackup(id).catch(() => {});
     throw error;
+  } finally {
+    await releaseBackupCreateLock(lockToken);
   }
 };
 
@@ -417,7 +542,7 @@ export const importSystemBackup = async (source) => {
   await parseSnapshot(uploadedBuffer);
   const backupBuffer = isZipBackup(uploadedBuffer)
     ? uploadedBuffer
-    : await encryptZipBackupBuffer(await getCompressedSnapshotBuffer(uploadedBuffer));
+    : await encryptZipBackupBuffer(await getCompressedSnapshotBuffer(uploadedBuffer), undefined, await requireBackupFilePassword());
 
   const id = randomUUID();
   const now = new Date();
@@ -426,6 +551,7 @@ export const importSystemBackup = async (source) => {
     id,
     name: `IMPORTED_BACKUP_${now.toISOString().slice(0, 10)}`,
     type,
+    trigger: "Manual",
     date: now.toISOString(),
     size: getBackupSizeInMB(backupBuffer.length),
     sizeBytes: backupBuffer.length,
@@ -433,7 +559,10 @@ export const importSystemBackup = async (source) => {
   };
 
   try {
-    await storeBackupBuffer(id, backupBuffer);
+    const { checksum, verified, storage } = await storeBackupBuffer(id, backupBuffer, { type, trigger: "Manual" });
+    backup.sha256 = checksum;
+    backup.verified = verified;
+    backup.storage = storage;
     const settings = await SystemSetting.findOneAndUpdate(
       { key: "global" },
       {
@@ -476,7 +605,7 @@ export const importSystemBackupFromCloudinary = async (publicId, format) => {
 
 export const getSystemBackupDownload = async (backupId) => {
   const { backup } = await findBackupRecord(backupId);
-  if (usesCloudinaryStorage()) {
+  if (isCloudinaryBackup(backup)) {
     return {
       redirectUrl: getPrivateRawDownloadUrl(getBackupCloudinaryPublicId(backupId), "zip"),
       filename: `${backup.name}.zip`,
@@ -485,29 +614,29 @@ export const getSystemBackupDownload = async (backupId) => {
 
   let buffer;
   try {
-    buffer = await getStoredBackupBuffer(backupId);
+    buffer = await getStoredBackupBuffer(backupId, backup);
   } catch {
     throw backupError("Backup file is not available for download.", 404);
   }
   return { buffer, filename: `${backup.name}.zip` };
 };
 
-const restoreSystemBackupLocked = async (backupId) => {
+const restoreSystemBackupLocked = async (backupId, recoveryPassword) => {
   const { settings, backup } = await findBackupRecord(backupId);
   let backupBuffer;
   try {
-    backupBuffer = await getStoredBackupBuffer(backupId);
+    backupBuffer = await getStoredBackupBuffer(backupId, backup);
   } catch {
     throw backupError("Backup file is not available for restore.", 404);
   }
 
-  const snapshot = await parseSnapshot(backupBuffer);
-  const recoveryBackupResult = await createSystemBackup("Pre-Restore");
-  const recoveryBackupPath = usesCloudinaryStorage()
+  const snapshot = await parseSnapshot(backupBuffer, recoveryPassword);
+  const recoveryBackupResult = await createSystemBackup("Pre-Restore", "System");
+  const recoveryBackupPath = isCloudinaryBackup(recoveryBackupResult.backup)
     ? getBackupCloudinaryPublicId(recoveryBackupResult.backup.id)
     : getBackupFilePath(recoveryBackupResult.backup.id);
-  const recoveryBuffer = await getStoredBackupBuffer(recoveryBackupResult.backup.id);
-  const rollbackSnapshot = await parseSnapshot(recoveryBuffer);
+  const recoveryBuffer = await getStoredBackupBuffer(recoveryBackupResult.backup.id, recoveryBackupResult.backup);
+  const rollbackSnapshot = await parseSnapshot(recoveryBuffer, recoveryPassword);
   try {
     await applySnapshot(snapshot);
     const database = mongoose.connection.db;
@@ -605,7 +734,7 @@ const restoreSystemBackupLocked = async (backupId) => {
   };
 };
 
-export const restoreSystemBackup = async (backupId) => {
+export const restoreSystemBackup = async (backupId, recoveryPassword) => {
   const now = new Date();
   const lockToken = randomUUID();
   const lock = await SystemSetting.findOneAndUpdate(
@@ -632,7 +761,7 @@ export const restoreSystemBackup = async (backupId) => {
   if (!lock) throw backupError("Another restore is already in progress. Try again after it finishes.", 409);
 
   try {
-    return await restoreSystemBackupLocked(backupId);
+    return await restoreSystemBackupLocked(backupId, recoveryPassword);
   } finally {
     await SystemSetting.updateOne(
       { key: "global", "backup_restore_lock.token": lockToken },
@@ -645,7 +774,7 @@ export const deleteSystemBackup = async (backupId) => {
   const { settings, backup } = await findBackupRecord(backupId);
   const backupHistory = (settings.backup_history || []).filter((item) => item.id !== backupId);
   const remainingLatestDate = backupHistory[0]?.date || null;
-  await deleteStoredBackup(backupId);
+  await deleteStoredBackup(backupId, backup);
 
   const updatedSettings = await SystemSetting.findOneAndUpdate(
     { key: "global" },
@@ -668,16 +797,34 @@ export const deleteSystemBackup = async (backupId) => {
   };
 };
 
+const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+const getManilaWallDate = (date) => new Date(date.getTime() + MANILA_OFFSET_MS);
+
 const getScheduledBackupKey = (schedule, date) => {
-  const dateKey = [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
+  const manila = getManilaWallDate(date);
+  const dateKey = [manila.getUTCFullYear(), String(manila.getUTCMonth() + 1).padStart(2, "0"), String(manila.getUTCDate()).padStart(2, "0")].join("-");
   return `${schedule}:${dateKey}`;
 };
 
 const isScheduledBackupDue = (schedule, date) => {
-  if (schedule === "weekly") return date.getDay() === 0;
-  if (schedule === "monthly") return date.getDate() === 1;
-  if (schedule === "yearly") return date.getMonth() === 11 && date.getDate() === 31;
+  const manila = getManilaWallDate(date);
+  if (schedule === "weekly") return manila.getUTCDay() === 0;
+  if (schedule === "monthly") return manila.getUTCDate() === 1;
+  if (schedule === "yearly") return manila.getUTCMonth() === 11 && manila.getUTCDate() === 31;
   return false;
+};
+
+export const getNextScheduledBackupAt = (schedule, from = new Date()) => {
+  if (!SCHEDULED_BACKUP_TYPES[schedule]) return null;
+  const manilaNow = getManilaWallDate(from);
+  const startOfTodayManila = Date.UTC(manilaNow.getUTCFullYear(), manilaNow.getUTCMonth(), manilaNow.getUTCDate());
+  for (let addDays = 0; addDays <= 370; addDays += 1) {
+    const runAt = new Date(startOfTodayManila + addDays * 86_400_000 - MANILA_OFFSET_MS);
+    if (runAt.getTime() <= from.getTime()) continue;
+    if (isScheduledBackupDue(schedule, runAt)) return runAt.toISOString();
+  }
+  return null;
 };
 
 export const runScheduledBackup = async () => {
@@ -709,7 +856,7 @@ export const runScheduledBackup = async () => {
   if (!claim) return;
 
   try {
-    const result = await createSystemBackup(SCHEDULED_BACKUP_TYPES[schedule]);
+    const result = await createSystemBackup(SCHEDULED_BACKUP_TYPES[schedule], "Scheduled");
     await BackupOperationAudit.create({
       actor_role: "system",
       action: "create",
