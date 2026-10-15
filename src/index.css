@@ -1689,3 +1689,56 @@ body:has(.mobile-fullscreen-overlay) .customer-mobile-navigation {
   backdrop-filter: blur(8px) !important;
   -webkit-backdrop-filter: blur(8px) !important;
 }
+
+.verify-success-card {
+  animation: verify-card-enter 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.verify-success-icon {
+  animation: verify-icon-pop 600ms cubic-bezier(0.18, 0.9, 0.25, 1.35) 120ms both;
+}
+
+.verify-confetti-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.verify-confetti-piece {
+  position: absolute;
+  top: -16px;
+  width: 9px;
+  height: 14px;
+  border-radius: 2px;
+  opacity: 0;
+  animation-name: verify-confetti-fall;
+  animation-timing-function: cubic-bezier(0.3, 0.65, 0.45, 1);
+  animation-fill-mode: both;
+}
+
+@keyframes verify-card-enter {
+  from { opacity: 0; transform: translateY(18px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes verify-icon-pop {
+  0% { opacity: 0; transform: scale(0.45) rotate(-20deg); }
+  70% { opacity: 1; transform: scale(1.12) rotate(5deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0); }
+}
+
+@keyframes verify-confetti-fall {
+  0% { opacity: 0; transform: translate3d(0, -5vh, 0) rotate(0); }
+  12% { opacity: 1; }
+  100% { opacity: 0; transform: translate3d(24px, 105vh, 0) rotate(720deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .verify-success-card,
+  .verify-success-icon,
+  .verify-confetti-piece {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+  }
+}
