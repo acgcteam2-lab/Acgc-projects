@@ -1,4 +1,4 @@
-import { startTransition, useContext, useState } from "react";
+import { startTransition, useContext, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import logo from "../../assets/images/ACGCLOGO1.png";
@@ -20,6 +20,9 @@ import {
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import AdminNavigationContext from "@/contexts/AdminNavigationContext";
 import { prefetchAdminRoute } from "@/lib/adminRoutePrefetch";
+import { getAdminOrders } from "@/api/orders";
+import { subscribeToRealtime } from "@/lib/realtimeEvents";
+import { getAdminNotificationId, getAdminReadNotificationIds, markAdminNotificationsRead, ADMIN_READ_NOTIFICATIONS_KEY } from "@/lib/notificationState";
 
 const handleSpaNavigation = (event, to, navigate) => {
   if (
@@ -44,10 +47,95 @@ function Sidebar({ isOpen, onToggle, forceRender = false }) {
   const navigate = useNavigate();
   const { logout, user } = useAuth();
   const { darkMode } = useAdminTheme();
+  const [badges, setBadges] = useState({ dashboard: 0, siteInspection: 0, transactions: 0, progressMonitor: 0 });
   const canViewStaffModule = (moduleKey) => user?.role !== "skilled_worker" || (
     user.staff_access?.modules?.[moduleKey]?.enabled === true &&
     user.staff_access?.modules?.[moduleKey]?.actions?.view === true
   );
+
+  useEffect(() => {
+    let active = true;
+    let timeout;
+    const refresh = async (markVisitedPageRead = false) => {
+      const modules = user?.staff_access?.modules || {};
+      const canRead = (key) => user?.role !== "skilled_worker" || (modules[key]?.enabled === true && modules[key]?.actions?.view === true);
+      const fetchOrders = async (params, key, view = "notifications") => {
+        if (!canRead(key)) return [];
+        const allOrders = [];
+        let page = 1;
+        let totalPages = 1;
+        do {
+          const response = await getAdminOrders({ ...params, module: key, view, limit: 500, page });
+          allOrders.push(...(response.orders || []));
+          totalPages = response.pagination?.totalPages || 1;
+          page += 1;
+        } while (page <= totalPages);
+        return allOrders;
+      };
+      try {
+        const [newOrders, inspections, accepted, declined, sent, payments, progressOrders] = await Promise.all([
+          fetchOrders({ status: "order_submitted" }, "dashboard"),
+          fetchOrders({ status: "site_inspection" }, "site_inspection"),
+          fetchOrders({ contract_status: "accepted" }, "site_inspection"),
+          fetchOrders({ contract_status: "declined" }, "site_inspection"),
+          fetchOrders({ contract_status: "sent" }, "site_inspection"),
+          fetchOrders({ payment_proof_submitted: "true" }, "transactions"),
+          fetchOrders({}, "progress_monitoring", "progress_monitoring"),
+        ]);
+        const read = getAdminReadNotificationIds();
+        const pendingInspections = inspections.filter((order) => !["sent", "declined"].includes(String(order.contract_status || "").toLowerCase()));
+        const delayedProgressOrders = progressOrders.filter((order) => (order.progress_stages || []).some((stage) => {
+          const stageDelayed = !stage.completed && String(stage.status || "").toLowerCase().replace(/[ _]/g, "-") === "delayed";
+          const subStageDelayed = (stage.subStages || []).some((subStage) => !subStage.completed && String(subStage.status || "").toLowerCase().replace(/[ _]/g, "-") === "delayed");
+          return stageDelayed || subStageDelayed;
+        }));
+        const visitedPath = location.pathname;
+        const visitedIds = visitedPath === "/dashboard"
+          ? newOrders.map((order) => getAdminNotificationId("new-order", order))
+          : visitedPath === "/site-inspection"
+            ? [
+                ...pendingInspections.map((order) => getAdminNotificationId("inspection", order)),
+                ...accepted.map((order) => getAdminNotificationId("accepted", order)),
+                ...declined.map((order) => getAdminNotificationId("declined", order)),
+                ...sent.map((order) => getAdminNotificationId("sent", order)),
+              ]
+            : visitedPath === "/transactions"
+              ? payments.map((order) => getAdminNotificationId("payment", order))
+              : visitedPath === "/progress-monitor"
+                ? delayedProgressOrders.map((order) => getAdminNotificationId("progress-delay", order))
+                : [];
+        if (markVisitedPageRead && visitedIds.length) markAdminNotificationsRead(visitedIds);
+        const readIds = markVisitedPageRead ? new Set([...read, ...visitedIds]) : read;
+        const countUnread = (orders, type) => orders.filter((order) => !readIds.has(getAdminNotificationId(type, order))).length;
+        if (active) setBadges({
+          dashboard: countUnread(newOrders, "new-order"),
+          siteInspection: countUnread(pendingInspections, "inspection") + countUnread(accepted, "accepted") + countUnread(declined, "declined") + countUnread(sent, "sent"),
+          transactions: countUnread(payments, "payment"),
+          progressMonitor: countUnread(delayedProgressOrders, "progress-delay"),
+        });
+      } catch (error) {
+        console.error("Failed to refresh admin sidebar badges:", error);
+      }
+    };
+    const scheduleRefresh = () => {
+      window.clearTimeout(timeout);
+      timeout = window.setTimeout(refresh, 100);
+    };
+    refresh(true);
+    const unsubscribe = subscribeToRealtime(["orders", "reviews"], scheduleRefresh);
+    window.addEventListener("focus", scheduleRefresh);
+    window.addEventListener("admin-notifications-updated", scheduleRefresh);
+    const onStorage = (event) => { if (event.key === ADMIN_READ_NOTIFICATIONS_KEY) scheduleRefresh(); };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+      unsubscribe();
+      window.removeEventListener("focus", scheduleRefresh);
+      window.removeEventListener("admin-notifications-updated", scheduleRefresh);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [user, location.pathname]);
 
   if (isProvidedByAppShell && !forceRender) return null;
 
@@ -61,10 +149,10 @@ function Sidebar({ isOpen, onToggle, forceRender = false }) {
   };
 
   const mobileNavItems = [
-    canViewStaffModule("dashboard") && { to: "/dashboard", label: "Dashboard", icon: <Gauge size={20} />, active: location.pathname === "/dashboard" },
-    canViewStaffModule("site_inspection") && { to: "/site-inspection", label: "Inspection", icon: <ClipboardCheck size={20} />, active: location.pathname === "/site-inspection" },
-    canViewStaffModule("transactions") && { to: "/transactions", label: "Transactions", compactLabel: "Trans.", icon: <ReceiptText size={20} />, active: location.pathname === "/transactions" },
-    canViewStaffModule("progress_monitoring") && { to: "/progress-monitor", label: "Monitor", icon: <ChartNoAxesCombined size={20} />, active: location.pathname === "/progress-monitor" },
+    canViewStaffModule("dashboard") && { to: "/dashboard", label: "Dashboard", icon: <Gauge size={20} />, badge: badges.dashboard, active: location.pathname === "/dashboard" },
+    canViewStaffModule("site_inspection") && { to: "/site-inspection", label: "Inspection", icon: <ClipboardCheck size={20} />, badge: badges.siteInspection, active: location.pathname === "/site-inspection" },
+    canViewStaffModule("transactions") && { to: "/transactions", label: "Transactions", compactLabel: "Trans.", icon: <ReceiptText size={20} />, badge: badges.transactions, active: location.pathname === "/transactions" },
+    canViewStaffModule("progress_monitoring") && { to: "/progress-monitor", label: "Monitor", icon: <ChartNoAxesCombined size={20} />, badge: badges.progressMonitor, active: location.pathname === "/progress-monitor" },
     canViewStaffModule("product_management") && { to: "/product", label: "Products", icon: <Package size={20} />, active: location.pathname === "/product" },
     canViewStaffModule("profile") && { to: "/profile", label: user?.role === "skilled_worker" ? "Profile" : "Profile", icon: <UserCog size={20} />, active: location.pathname === "/profile" },
     canViewStaffModule("settings") && { to: "/settings", label: "Settings", icon: <Settings size={20} />, active: location.pathname === "/settings" },
@@ -115,6 +203,7 @@ function Sidebar({ isOpen, onToggle, forceRender = false }) {
             to="/dashboard"
             icon={<Gauge size={20} />}
             label="Dashboard"
+            badge={badges.dashboard}
             isOpen={isOpen}
             active={location.pathname === "/dashboard"}
             darkMode={darkMode}
@@ -125,6 +214,7 @@ function Sidebar({ isOpen, onToggle, forceRender = false }) {
             to="/site-inspection"
             icon={<ClipboardCheck size={20} />}
             label="Site Inspection"
+            badge={badges.siteInspection}
             isOpen={isOpen}
             active={location.pathname === "/site-inspection"}
             darkMode={darkMode}
@@ -135,6 +225,7 @@ function Sidebar({ isOpen, onToggle, forceRender = false }) {
             to="/transactions"
             icon={<ReceiptText size={20} />}
             label="Transactions"
+            badge={badges.transactions}
             isOpen={isOpen}
             active={location.pathname === "/transactions"}
             darkMode={darkMode}
@@ -145,6 +236,7 @@ function Sidebar({ isOpen, onToggle, forceRender = false }) {
             to="/progress-monitor"
             icon={<ChartNoAxesCombined size={20} />}
             label="Progress Monitor"
+            badge={badges.progressMonitor}
             isOpen={isOpen}
             active={location.pathname === "/progress-monitor"}
             darkMode={darkMode}
@@ -211,7 +303,7 @@ function Sidebar({ isOpen, onToggle, forceRender = false }) {
         aria-label="Admin navigation"
         className={`admin-mobile-navigation fixed inset-x-0 bottom-0 z-[60] flex w-full items-center justify-around gap-0 border-t px-1 pt-1.5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-xl lg:hidden ${darkMode ? "border-slate-800 bg-slate-950/95" : "border-slate-200 bg-white/95"}`}
       >
-        {mobileNavItems.map(({ to, label, compactLabel, icon, active }) => (
+        {mobileNavItems.map(({ to, label, compactLabel, icon, active, badge }) => (
           <Link
             key={to}
             to={to}
@@ -239,6 +331,7 @@ function Sidebar({ isOpen, onToggle, forceRender = false }) {
               aria-hidden="true"
             >
               {icon}
+              {badge > 0 && <span className="absolute -right-1.5 -top-1.5 inline-flex min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[9px] font-bold leading-4 text-white ring-2 ring-white" aria-label={`${badge} unread notifications`}>{badge > 99 ? "99+" : badge}</span>}
             </span>
             <span className={`mt-0.5 max-w-full truncate leading-[10px] transition-opacity duration-150 motion-reduce:transition-none ${active ? "text-[9px] font-bold opacity-100 max-[360px]:text-[8px]" : "text-[8px] font-medium opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 max-[360px]:text-[7px]"} ${compactLabel ? "max-[360px]:hidden" : ""}`} aria-hidden="true">{label}</span>
             {compactLabel && <span className={`mt-0.5 hidden max-w-full truncate leading-[10px] transition-opacity duration-150 motion-reduce:transition-none max-[360px]:inline ${active ? "text-[9px] font-bold opacity-100 max-[360px]:text-[8px]" : "text-[8px] font-medium opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 max-[360px]:text-[7px]"}`} aria-hidden="true">{compactLabel}</span>}
@@ -292,6 +385,7 @@ function MenuItem({
   nested = false,
   darkMode = false,
   onIntent,
+  badge = 0,
 }) {
   const navigate = useNavigate();
 
@@ -321,8 +415,10 @@ function MenuItem({
       }`}>
         <span className="flex items-center justify-between gap-2">
           <span className="truncate">{label}</span>
+          {badge > 0 && <span className="inline-flex min-w-5 shrink-0 items-center justify-center rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white" aria-label={`${badge} unread notifications`}>{badge > 99 ? "99+" : badge}</span>}
         </span>
       </span>
+      {badge > 0 && !isOpen && <span className="absolute right-2 top-1.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white" aria-label={`${badge} unread notifications`} />}
     </Link>
   );
 }
