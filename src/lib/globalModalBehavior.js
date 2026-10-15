@@ -7,15 +7,41 @@
  *      blocked here, while scrolling inside scrollable modal content (or
  *      portaled dropdowns) keeps working.
  *
- * 2. Backdrop click-to-close: a direct press on the backdrop (outside the
- *    dialog content) activates the modal's own close control
- *    ([aria-label*="close"] / [data-close-modal]), so existing close logic
- *    and disabled-state guards are preserved.
+ * 2. Backdrop clicks do not close customer modals. Modal close controls remain
+ *    available inside the dialog. Admin routes also keep their existing
+ *    backdrop behavior.
  */
 
 const BACKDROP_SELECTOR = 'div[class*="fixed inset-0"]';
 const CLOSE_CONTROL_SELECTOR = '[aria-label*="close" i], [data-close-modal]';
 const CLOSE_TEXT_PATTERN = /^(cancel|close|keep backup|got it|ok|done)$/i;
+
+// Keep in sync with ADMIN_ROUTE_PATHS in App.jsx. On these routes, pressing a
+// modal backdrop must not close the modal.
+const ADMIN_MODAL_ROUTE_PATHS = new Set([
+  "/dashboard",
+  "/site-inspection",
+  "/notifications",
+  "/transactions",
+  "/progress-monitor",
+  "/product",
+  "/profile",
+  "/settings",
+]);
+
+const CUSTOMER_MODAL_ROUTE_PATHS = new Set(["/", "/track-order"]);
+
+export const isAdminModalRoute = () => {
+  if (typeof window === "undefined") return false;
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  return ADMIN_MODAL_ROUTE_PATHS.has(path);
+};
+
+const isCustomerModalRoute = () => {
+  if (typeof window === "undefined") return false;
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  return CUSTOMER_MODAL_ROUTE_PATHS.has(path) || path === "/customer-dashboard" || path.startsWith("/customer-dashboard/");
+};
 
 const findCloseControl = (backdrop) => {
   const labeled = backdrop.querySelector(CLOSE_CONTROL_SELECTOR);
@@ -67,6 +93,8 @@ const guardBackgroundScroll = (event) => {
 
 const closeOnBackdropPress = (event) => {
   if (event.button !== 0) return;
+  // Customer and admin modals stay open when the backdrop is pressed.
+  if (isAdminModalRoute() || isCustomerModalRoute()) return;
   // Only react when the backdrop element itself was pressed (outside the dialog).
   if (!isModalBackdrop(event.target)) return;
 

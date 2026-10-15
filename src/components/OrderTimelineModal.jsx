@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Clipboard, Copy, X } from "lucide-react";
 import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
+import { isAdminModalRoute } from "@/lib/globalModalBehavior";
 import ItemCard from "./ItemCard";
 import { formatOrderItemMeasurements } from "./OrderProgressTimeline";
 import {
@@ -282,9 +283,8 @@ export default function OrderTimelineModal({
 
   return (
     <div
-      className="mobile-fullscreen-overlay fixed inset-0 z-[70] flex items-stretch justify-center bg-black/45 p-0 lg:items-center lg:p-4"
+      className={`${isAdminModalRoute() ? "" : "customer-modal-overlay"} mobile-fullscreen-overlay fixed inset-0 z-[70] flex items-stretch justify-center bg-black/45 p-0 lg:items-center lg:p-4`}
       role="presentation"
-      onClick={(event) => event.target === event.currentTarget && onClose()}
     >
       <section
         ref={dialogRef}
@@ -409,11 +409,10 @@ export default function OrderTimelineModal({
 
         {photoGallery && (
           <div
-            className="fixed inset-0 z-[80] flex items-center justify-center bg-black/75 p-4"
+            className={`${isAdminModalRoute() ? "" : "customer-modal-overlay"} fixed inset-0 z-[80] flex items-center justify-center bg-black/75 p-4`}
             role="dialog"
             aria-modal="true"
             aria-label={`${photoGallery.title} photos`}
-            onClick={(event) => event.target === event.currentTarget && setPhotoGallery(null)}
           >
             <div className="flex max-h-[90vh] w-full max-w-3xl flex-col items-center gap-3">
               <div className="flex w-full items-center justify-between text-sm text-white">

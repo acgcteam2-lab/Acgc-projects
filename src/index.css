@@ -1678,3 +1678,14 @@ body:has(.mobile-fullscreen-overlay) .customer-mobile-navigation {
 .admin-theme-dark .settings-premium .access-control-dialog button[class*="bg-red-950"]:hover {
   background-color: #0d9488 !important;
 }
+.customer-modal-overlay {
+  background: rgba(15, 23, 42, 0.14) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}
+
+.customer-modal-backdrop {
+  background: rgba(15, 23, 42, 0.14) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+}

@@ -2584,7 +2584,6 @@ function Transactions() {
             <div
               className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
               role="presentation"
-              onClick={(event) => event.target === event.currentTarget && setFeedbackPreviewOrder(null)}
             >
               <section
                 role="dialog"
@@ -2715,7 +2714,6 @@ function Transactions() {
             <div
               className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 p-4"
               role="presentation"
-              onClick={(event) => event.target === event.currentTarget && !feedbackDeleting && setFeedbackDeleteOrder(null)}
             >
               <section
                 role="alertdialog"

@@ -5,7 +5,7 @@ import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { getFinalProjectCost, getRequiredDownpayment } from "@/lib/orderPricing";
 import { getContractBladeDetails } from "@/pages/SiteInspection/contractState";
 
-function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, onRegenerate, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false, notificationRecordId = null, darkMode = false }) {
+function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, onRegenerate, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false, notificationRecordId = null, darkMode = false, transparentBackdrop = false }) {
   if (!isOpen || !inspection || !contractData) return null;
 
   const formatCurrency = (value) => new Intl.NumberFormat("en-PH", {
@@ -100,7 +100,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
   const agreedPaymentDate = contractData.agreedPaymentDate || formatDate(inspection.agreed_payment_date, null);
 
   return (
-    <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-1.5">
+    <div className={`${transparentBackdrop ? "customer-modal-overlay" : ""} mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-1.5`}>
       <div
         role="dialog"
         aria-modal="true"

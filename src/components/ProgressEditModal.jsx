@@ -1711,9 +1711,6 @@ export default function ProgressEditModal({ project, onClose, onSave, canUploadP
         {showSubStageModal && subStageModalParentIndex !== null && (
           <div
             className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) closeAddSubStageModal();
-            }}
             role="presentation"
           >
             <div
@@ -1850,9 +1847,6 @@ export default function ProgressEditModal({ project, onClose, onSave, canUploadP
         {showDelayModal && delayStageIndex !== null && (
           <div
             className="fixed inset-0 bg-black/40 flex items-center justify-center z-[70] p-4"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) closeDelayModal();
-            }}
             role="presentation"
           >
             <div
@@ -1931,9 +1925,6 @@ export default function ProgressEditModal({ project, onClose, onSave, canUploadP
         {showRemoveSubStageModal && removeStageIndex !== null && removeSubStageIndex !== null && (
           <div
             className="fixed inset-0 bg-black/40 flex items-center justify-center z-[80] p-4"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) closeRemoveSubStageModal();
-            }}
             role="presentation"
           >
             <div
@@ -1989,9 +1980,6 @@ export default function ProgressEditModal({ project, onClose, onSave, canUploadP
         {showRemoveMainStageModal && removeMainStageIndex !== null && stages[removeMainStageIndex] && (
           <div
             className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4"
-            onClick={(event) => {
-              if (event.target === event.currentTarget) closeRemoveMainStageConfirmation();
-            }}
             role="presentation"
           >
             <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-lg" role="alertdialog" aria-modal="true" aria-labelledby="remove-main-stage-title">

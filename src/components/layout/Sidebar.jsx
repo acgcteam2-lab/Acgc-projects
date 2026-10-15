@@ -1,4 +1,4 @@
-import { useContext, useState } from "react";
+import { startTransition, useContext, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import logo from "../../assets/images/ACGCLOGO1.png";
@@ -21,6 +21,21 @@ import { useAdminTheme } from "@/contexts/AdminThemeContext";
 import AdminNavigationContext from "@/contexts/AdminNavigationContext";
 import { prefetchAdminRoute } from "@/lib/adminRoutePrefetch";
 
+const handleSpaNavigation = (event, to, navigate) => {
+  if (
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey ||
+    (event.currentTarget.getAttribute("target") && event.currentTarget.getAttribute("target") !== "_self")
+  ) return;
+
+  event.preventDefault();
+  startTransition(() => navigate(to));
+};
+
 function Sidebar({ isOpen, onToggle, forceRender = false }) {
   const isProvidedByAppShell = useContext(AdminNavigationContext);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -42,7 +57,7 @@ function Sidebar({ isOpen, onToggle, forceRender = false }) {
   };
 
   const handleLogoClick = () => {
-    navigate("/dashboard");
+    startTransition(() => navigate("/dashboard"));
   };
 
   const mobileNavItems = [
@@ -203,10 +218,11 @@ function Sidebar({ isOpen, onToggle, forceRender = false }) {
             aria-label={label}
             aria-current={active ? "page" : undefined}
             title={label}
+            onClick={(event) => handleSpaNavigation(event, to, navigate)}
             onPointerEnter={() => prefetchAdminRoute(to)}
             onPointerDown={() => prefetchAdminRoute(to)}
             onFocus={() => prefetchAdminRoute(to)}
-            className={`group flex h-[58px] min-w-0 flex-1 flex-col items-center justify-center rounded-lg px-0.5 text-center transition-[transform,background-color,color] duration-200 ease-out hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.94] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand motion-reduce:transform-none motion-reduce:transition-none ${active ? darkMode ? "text-white" : "text-slate-900" : darkMode ? "text-slate-400 hover:bg-slate-800 hover:text-slate-100" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}
+          className={`group relative flex h-[58px] min-w-0 flex-1 flex-col items-center justify-center rounded-lg px-0.5 text-center transition-[transform,background-color,color] duration-200 ease-out hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.94] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand motion-reduce:transform-none motion-reduce:transition-none ${active ? darkMode ? "text-white" : "text-slate-900" : darkMode ? "text-slate-400 hover:bg-slate-800 hover:text-slate-100" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"}`}
           >
             <span
               className={[
@@ -277,10 +293,13 @@ function MenuItem({
   darkMode = false,
   onIntent,
 }) {
+  const navigate = useNavigate();
+
   return (
     <Link
       to={to}
       title={label}
+      onClick={(event) => handleSpaNavigation(event, to, navigate)}
       onPointerEnter={onIntent}
       onPointerDown={onIntent}
       onFocus={onIntent}
@@ -300,7 +319,9 @@ function MenuItem({
       <span className={`min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-200 ease-in-out motion-reduce:transition-none ${
         isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"
       }`}>
-        {label}
+        <span className="flex items-center justify-between gap-2">
+          <span className="truncate">{label}</span>
+        </span>
       </span>
     </Link>
   );

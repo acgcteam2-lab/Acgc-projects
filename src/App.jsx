@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Outlet, useLocation } from "react-router-dom";
 const ForgotPassword = lazy(() => import("./pages/ForgotPassword/ForgotPassword"));
 const AdminRecovery = lazy(() => import("./pages/AdminRecovery/AdminRecovery"));
 const LandingPage = lazy(() => import("./pages/LandingPage/LandingPage"));
@@ -25,6 +25,7 @@ import ProtectedRoute from "@/components/layout/ProtectedRoute";
 import Sidebar from "@/components/layout/Sidebar";
 import KeepAliveOutlet from "@/components/layout/KeepAliveOutlet";
 import AdminNavigationContext from "@/contexts/AdminNavigationContext";
+import { prefetchAdminRoute } from "@/lib/adminRoutePrefetch";
 import { LoaderCircle, RefreshCw } from "lucide-react";
 import logo from "./assets/images/ACGCLOGO1.png";
 
@@ -38,6 +39,32 @@ const ADMIN_ROUTE_PATHS = new Set([
   "/profile",
   "/settings",
 ]);
+
+function AdminLayout({ isSidebarOpen, onSidebarToggle }) {
+  useEffect(() => {
+    ["/site-inspection", "/transactions", "/progress-monitor"].forEach((path) => {
+      void prefetchAdminRoute(path);
+    });
+  }, []);
+
+  return (
+    <AdminNavigationContext.Provider value>
+      <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden">
+        <Sidebar
+          key="shared-admin-sidebar"
+          forceRender
+          isOpen={isSidebarOpen}
+          onToggle={onSidebarToggle}
+        />
+        <main className="min-h-0 min-w-0 flex-1">
+          <Suspense fallback={null}>
+            <Outlet />
+          </Suspense>
+        </main>
+      </div>
+    </AdminNavigationContext.Provider>
+  );
+}
 
 
 function LogoutLoadingScreen() {
@@ -251,10 +278,7 @@ function AppRoutes() {
         </div>
       )}
       <AdminCreationModal />
-      <AdminNavigationContext.Provider value={isAdminRoute}>
-      {isAdminRoute && <Sidebar key="shared-admin-sidebar" forceRender isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((open) => !open)} />}
-      <div key="admin-route-content" className={isAdminRoute ? "min-h-0 min-w-0 flex-1" : ""}>
-      <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-slate-50"><LoaderCircle className="animate-spin text-red-600" size={40} aria-label="Loading page" /></div>}>
+      <Suspense fallback={null}>
       <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<Login />} />
@@ -262,6 +286,11 @@ function AppRoutes() {
           <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/admin-recovery" element={<AdminRecovery />} />
+          <Route path="/track-order" element={<TrackOrder />} />
+          <Route element={<AdminLayout
+            isSidebarOpen={isSidebarOpen}
+            onSidebarToggle={() => setIsSidebarOpen((open) => !open)}
+          />}>
           <Route element={<KeepAliveOutlet key={`${user?._id || user?.id || "anonymous"}:${user?.role || ""}:${JSON.stringify(user?.staff_access?.modules || {})}`} />}>
           <Route
             path="/dashboard"
@@ -270,10 +299,6 @@ function AppRoutes() {
                 <Dashboard />
               </ProtectedRoute>
             }
-          />
-          <Route
-            path="/track-order"
-            element={<TrackOrder />}
           />
           <Route
             path="/site-inspection"
@@ -332,6 +357,7 @@ function AppRoutes() {
             }
           />
           </Route>
+          </Route>
           <Route
             path="/customer-dashboard/*"
             element={
@@ -342,8 +368,6 @@ function AppRoutes() {
           />
       </Routes>
       </Suspense>
-      </div>
-      </AdminNavigationContext.Provider>
     </div>
   );
 }

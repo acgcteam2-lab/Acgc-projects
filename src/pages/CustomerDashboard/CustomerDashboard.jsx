@@ -4766,7 +4766,7 @@ function CustomerDashboard() {
         }}
       />
       {permissionNotice && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-[2px]">
+        <div className="customer-modal-overlay fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-[2px]">
           <div
             className={`w-full max-w-md rounded-3xl border p-6 text-center shadow-2xl transition-all duration-300 ${darkMode ? "border-amber-800 bg-slate-800 text-slate-100" : "border-amber-200 bg-white text-slate-900"} ${
               permissionNotice.closing ? "translate-y-2 scale-95 opacity-0" : "translate-y-0 scale-100 opacity-100"
@@ -5166,8 +5166,8 @@ function CustomerDashboard() {
               </button>
 
               {confirmOpen && createPortal(
-                <div className="fixed inset-0 z-[100] flex min-h-screen items-center justify-center p-4">
-                  <div className="logout-modal-backdrop-in absolute inset-0 bg-black/45 backdrop-blur-md" onClick={() => setConfirmOpen(false)} />
+                <div className="customer-modal-overlay fixed inset-0 z-[100] flex min-h-screen items-center justify-center p-4">
+                  <div className="customer-modal-backdrop logout-modal-backdrop-in absolute inset-0 bg-black/45 backdrop-blur-md" />
                   <div className={`logout-modal-in relative z-40 w-full max-w-sm rounded-2xl p-6 text-center shadow-2xl ${darkMode ? "bg-slate-800 text-white" : "bg-white text-slate-900"}`}>
                     <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600">
                       <LogOut size={22} />
@@ -5787,7 +5787,7 @@ function CustomerDashboard() {
             </div>
 
             {selectedProduct && (
-              <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 sm:p-4">
+              <div className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 sm:p-4">
                 <div className={`mobile-fullscreen-dialog order-flow-modal relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   {/* Header with cleaner elevated styling */}
                   {!isProductModalReadOnly && (
@@ -6275,7 +6275,7 @@ function CustomerDashboard() {
             )}
 
             {showCartDecisionModal && canRequestOrders && cartDecisionProduct && (
-              <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4">
+              <div className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4">
                 <div className={`mobile-fullscreen-dialog order-flow-modal w-full max-h-[95vh] max-w-4xl rounded-3xl bg-white shadow-2xl overflow-hidden flex flex-col ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   {/* Sticky Header with Gradient */}
                   <div className="flex-shrink-0 bg-gradient-to-r from-red-600 to-red-700 px-6 py-5">
@@ -6591,7 +6591,7 @@ function CustomerDashboard() {
             )}
 
             {showDeliveryConfirmModal && canRequestOrders && (
-              <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 backdrop-blur-sm sm:p-4">
+              <div className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 backdrop-blur-sm sm:p-4">
                 <div className={`mobile-fullscreen-dialog order-flow-modal flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-3xl shadow-2xl sm:max-h-[88vh] ${darkMode ? "order-flow-modal-dark bg-slate-900" : "bg-white"}`}>
                   <div className={`flex-shrink-0 border-b px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
                     <div className="flex items-center justify-between gap-4">
@@ -6864,7 +6864,7 @@ function CustomerDashboard() {
             )}
 
             {showOrderNowModal && canRequestOrders && orderNowProduct && (
-              <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+              <div className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
                 <div className={`mobile-fullscreen-dialog order-flow-modal flex w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl ${darkMode ? "order-flow-modal-dark" : ""}`}>
                   <div className="border-b px-6 py-5 bg-red-600 text-white">
                     <div className="flex flex-col gap-1">
@@ -7029,7 +7029,7 @@ function CustomerDashboard() {
             )}
 
             {showBatchOrderModal && canRequestOrders && (
-              <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 backdrop-blur-sm sm:p-4">
+              <div className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-2 backdrop-blur-sm sm:p-4">
                 <div className={`mobile-fullscreen-dialog order-flow-modal flex max-h-[calc(100dvh-1rem)] w-full max-w-4xl flex-col overflow-hidden rounded-3xl shadow-2xl sm:max-h-[88vh] ${darkMode ? "order-flow-modal-dark bg-slate-900" : "bg-white"}`}>
                   <div className={`flex-shrink-0 border-b px-4 py-3 sm:px-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}>
                     <div className="flex items-center justify-between gap-4">
@@ -7210,7 +7210,7 @@ function CustomerDashboard() {
             )}
 
             {showBatchOrderConfirmModal && canRequestOrders && (
-              <div className="mobile-fullscreen-overlay fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto overscroll-contain bg-black/60 px-3 py-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))] backdrop-blur-sm sm:items-center sm:p-4">
+              <div className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto overscroll-contain bg-black/60 px-3 py-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))] backdrop-blur-sm sm:items-center sm:p-4">
                 <div className={`mobile-fullscreen-dialog flex max-h-[calc(100dvh-1rem)] min-h-0 w-full max-w-xl flex-col overflow-hidden rounded-2xl shadow-2xl ${darkMode ? "bg-slate-900" : "bg-white"}`}>
                   <div className={`flex items-center gap-3 border-b px-5 py-4 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                     <CheckCircle size={20} className="text-red-600" />
@@ -7312,7 +7312,7 @@ function CustomerDashboard() {
             )}
 
             {showBatchSuccessModal && (
-              <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+              <div className="customer-modal-overlay fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
                 <div className={`w-full max-w-md rounded-[26px] border p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)] ${darkMode ? "border-slate-700 bg-slate-900" : "border-transparent bg-white"}`}>
                   <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-full border-2 ${darkMode ? "border-green-800 bg-green-950/50" : "border-green-200 bg-green-50"}`}>
                     <CheckCircle className={`h-8 w-8 ${darkMode ? "text-green-400" : "text-green-700"}`} />
@@ -7359,7 +7359,7 @@ function CustomerDashboard() {
             )}
 
             {showOrderReviewModal && canRequestOrders && (cartDecisionProduct || orderNowProduct) && (
-              <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/60 px-3 py-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))] backdrop-blur-sm sm:items-center sm:p-4">
+              <div className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/60 px-3 py-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))] backdrop-blur-sm sm:items-center sm:p-4">
                 <div className={`mobile-fullscreen-dialog flex max-h-[calc(100dvh-1rem)] min-h-0 w-full max-w-xl flex-col overflow-hidden rounded-2xl shadow-2xl ${darkMode ? "bg-slate-900" : "bg-white"}`}>
                   <div className={`flex items-center gap-3 border-b px-5 py-4 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
                     <CheckCircle size={20} className="text-red-600" />
@@ -7508,7 +7508,7 @@ function CustomerDashboard() {
             )}
 
             {showOrderSuccessModal && orderSuccessData && (
-              <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+              <div className="customer-modal-overlay fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
                 <div className={`w-full max-w-md rounded-[26px] border p-6 shadow-[0_24px_80px_rgba(15,23,42,0.18)] ${darkMode ? "border-slate-700 bg-slate-900" : "border-transparent bg-white"}`}>
                   <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-full border-2 ${darkMode ? "border-emerald-700 bg-emerald-950/40" : "border-emerald-200 bg-emerald-50"}`}>
                     <CheckCircle className={`h-8 w-8 ${darkMode ? "text-emerald-400" : "text-emerald-600"}`} />
@@ -8258,7 +8258,7 @@ function CustomerDashboard() {
             )}
 
             {cancelRequestModal.open && (
-              <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+              <div className="customer-modal-overlay fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
                 <div className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}>
                   <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600">
                     <AlertTriangle size={22} />
@@ -8308,7 +8308,7 @@ function CustomerDashboard() {
         )}
 
         {reviewDetailsOrder && (
-          <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+          <div className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
             <section
               role="dialog"
               aria-modal="true"
@@ -8398,7 +8398,7 @@ function CustomerDashboard() {
         )}
 
         {showCustomerReviewModal && canUploadFeedback && selectedReviewOrder && (
-          <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 backdrop-blur-sm">
+          <div className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 backdrop-blur-sm">
             <div
               key={`${selectedReviewOrder._id || selectedReviewOrder.id}-${selectedReviewOrder.reviewItemIndex ?? "order"}`}
               role="dialog"
@@ -8570,7 +8570,7 @@ function CustomerDashboard() {
         )}
 
         {showProductReviewModal && canUploadFeedback && (
-          <div className="mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+          <div className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
             <div
               role="dialog"
               aria-modal="true"
@@ -9418,7 +9418,7 @@ function CustomerDashboard() {
 
           {profileEditing && (
           createPortal(
-          <div className="mobile-fullscreen-overlay fixed inset-0 z-[90] overflow-y-auto bg-slate-950/55 px-3 py-4 backdrop-blur-sm sm:px-6 sm:py-8">
+          <div className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-[90] overflow-y-auto bg-slate-950/55 px-3 py-4 backdrop-blur-sm sm:px-6 sm:py-8">
           <div role="dialog" aria-modal="true" aria-labelledby="customer-profile-settings-title" className="mobile-fullscreen-dialog mx-auto max-h-[calc(100dvh-1.5rem)] w-full max-w-5xl overflow-y-auto overscroll-contain xl:h-[min(88dvh,52rem)] xl:max-h-[calc(100dvh-4rem)] xl:overflow-hidden">
           <div className="grid grid-cols-1 gap-4 xl:h-full xl:min-h-0 xl:grid-cols-3">
             <div className={`relative rounded-2xl shadow p-4 sm:p-5 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
@@ -9692,7 +9692,7 @@ function CustomerDashboard() {
               </div>
 
               {showDiscardProfileChanges && (
-                <div className="fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/55 p-4" role="presentation">
+                <div className="customer-modal-overlay fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/55 p-4" role="presentation">
                   <section role="alertdialog" aria-modal="true" aria-labelledby="discard-customer-profile-title" className={`w-full max-w-md rounded-2xl border p-5 shadow-2xl ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}>
                     <h3 id="discard-customer-profile-title" className="text-lg font-bold">Discard unsaved changes?</h3>
                     <p className={`mt-2 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Your saved profile is unchanged. The edits in this form will be cleared.</p>
@@ -9709,7 +9709,7 @@ function CustomerDashboard() {
               )}
 
               {emailChangeOpen && (
-                <div className="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto bg-slate-950/65 p-3 backdrop-blur-sm sm:p-6">
+                <div className="customer-modal-overlay fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto bg-slate-950/65 p-3 backdrop-blur-sm sm:p-6">
                   <form
                     role="dialog"
                     aria-modal="true"
@@ -9788,7 +9788,7 @@ function CustomerDashboard() {
               )}
 
               {emailVerifyOpen && (
-                <div className="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto bg-slate-950/65 p-3 backdrop-blur-sm sm:p-6">
+                <div className="customer-modal-overlay fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto bg-slate-950/65 p-3 backdrop-blur-sm sm:p-6">
                   <form
                     role="dialog"
                     aria-modal="true"
@@ -9846,7 +9846,7 @@ function CustomerDashboard() {
               )}
 
               {showPasswordModal && (
-                <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
+                <div className="customer-modal-overlay fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
                   <form
                     role="dialog"
                     aria-modal="true"
@@ -10199,9 +10199,8 @@ function CustomerDashboard() {
 
         {customerPaymentProofPreview && (
           <div
-            className="mobile-fullscreen-overlay fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/75 p-0 backdrop-blur-sm sm:p-4"
+            className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/75 p-0 backdrop-blur-sm sm:p-4"
             role="presentation"
-            onClick={(event) => event.target === event.currentTarget && setCustomerPaymentProofPreview(null)}
           >
             <section
               role="dialog"
@@ -10256,6 +10255,7 @@ function CustomerDashboard() {
 
         <ContractModal
           isOpen={showContractModal}
+          transparentBackdrop
           onClose={closeContractModal}
           inspection={contractPreviewOrder}
           contractData={contractPreviewData}
@@ -10272,7 +10272,7 @@ function CustomerDashboard() {
         {/* CONTRACT CONFIRMATION MODAL */}
         {contractConfirmModal.open && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="absolute inset-0 bg-black/40" onClick={closeContractConfirmModal} />
+            <div className="customer-modal-backdrop absolute inset-0 bg-black/40" />
             <div className="relative bg-white rounded-3xl shadow-lg p-6 w-full max-w-md">
               <h2 className="text-2xl font-bold mb-4">
                 {contractConfirmModal.action === "accept"

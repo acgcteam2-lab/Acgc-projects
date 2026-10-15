@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   ArrowRight,
@@ -694,7 +694,9 @@ function Dashboard() {
           <section className="mt-6 rounded-3xl border border-gray-200 bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h2 className="text-2xl font-bold text-gray-900">Recent Transactions</h2>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-2xl font-bold text-gray-900">Recent Transactions</h2>
+                </div>
                 <p className="mt-1 text-sm text-gray-500">Recent activity in the Customer Website</p>
               </div>
               <button
@@ -1083,7 +1085,7 @@ function Dashboard() {
 
       {confirmModal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={closeConfirmModal} />
+          <div className="absolute inset-0 bg-black/40" />
           <div className="relative bg-white rounded-3xl shadow-lg p-6 w-full max-w-md">
             <h2 className="text-2xl font-bold mb-4">
               {confirmModal.action === "approve"

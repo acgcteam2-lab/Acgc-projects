@@ -1054,7 +1054,7 @@ function ProgressMonitor() {
 
           {cancelConfirm.open && (
             <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-              <div className="absolute inset-0" onClick={closeCancelModal} />
+              <div className="absolute inset-0" />
               <div className={`relative w-full max-w-md rounded-3xl p-6 shadow-lg ${darkMode ? "bg-[#132238] text-slate-100" : "bg-white text-slate-900"}`}>
                 <h2 className="text-2xl font-bold mb-2">Confirm Cancel</h2>
                 <p className={`mb-6 text-sm ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Are you sure you want to cancel this project/order? This action will mark the order as cancelled.</p>

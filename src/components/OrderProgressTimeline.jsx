@@ -376,8 +376,7 @@ export default function OrderProgressTimeline({
       })}
       {photoGallery && (
         <div
-          className="mobile-fullscreen-overlay fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4"
-          onClick={() => setPhotoGallery(null)}
+          className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4"
           role="presentation"
         >
           <div
