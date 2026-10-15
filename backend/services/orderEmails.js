@@ -3,13 +3,7 @@ import { sendMail } from "../config/mailer.js";
 import User from "../models/User.js";
 import { getOrderPaymentAmounts } from "./paymentLedger.js";
 import { buildFrontendUrl } from "./frontendUrl.js";
-
-const escapeHtml = (value) => String(value ?? "")
-  .replace(/&/g, "&amp;")
-  .replace(/</g, "&lt;")
-  .replace(/>/g, "&gt;")
-  .replace(/"/g, "&quot;")
-  .replace(/'/g, "&#039;");
+import { buildCustomerEmailTemplate } from "./customerEmailTemplate.js";
 
 const orderIdOf = (order) => String(order?.tracking || order?._id || order?.id || "Order");
 const asNumber = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -358,18 +352,18 @@ export const buildOrderEmail = (event, order, { audience = "customer", ...extra 
   const content = getEventContent(event, order, audience, extra);
   const actionUrl = buildFrontendUrl(content.path, { orderId: order?._id || order?.id || "" });
   const supportEmail = process.env.SUPPORT_EMAIL || "acgc.services00@gmail.com";
-  const fieldRows = content.fields.map(([label, value]) => `<tr><th align="left" style="padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#475569;font-size:13px">${escapeHtml(label)}</th><td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:14px">${String(value).split("; ").map(escapeHtml).join("<br>")}</td></tr>`).join("");
-  const text = [
-    `ACGC Glass & Aluminum Services | ${content.title}`,
-    `Order ID: ${orderIdOf(order)}`,
-    content.summary,
-    ...content.fields.map(([label, value]) => `${label}: ${value}`),
-    `Next steps: ${content.next}`,
-    `${content.action}: ${actionUrl}`,
-    `Support: ${supportEmail}`,
-    "ACGC Glass & Aluminum Services",
-  ].join("\n\n");
-  const html = `<!doctype html><html><body style="margin:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f4f6;padding:28px 12px"><tr><td align="center"><table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;width:100%;background:#fff;border:1px solid #e5e7eb"><tr><td style="padding:24px 28px;background:#7f1d1d;color:#fff"><div style="font-size:13px;font-weight:bold;letter-spacing:1px">ACGC GLASS &amp; ALUMINUM SERVICES</div><div style="margin-top:18px;font-size:23px;font-weight:bold">${escapeHtml(content.title)}</div><div style="margin-top:14px;font-size:13px">ORDER ID <strong style="font-size:16px">${escapeHtml(orderIdOf(order))}</strong></div></td></tr><tr><td style="padding:24px 28px"><span style="display:inline-block;padding:6px 10px;background:#fef2f2;color:#991b1b;font-size:12px;font-weight:bold;text-transform:uppercase">${escapeHtml(content.status)}</span><p style="font-size:15px;line-height:1.6;margin:16px 0 20px">${escapeHtml(content.summary)}</p><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border:1px solid #e5e7eb">${fieldRows}</table><div style="margin:22px 0 8px;font-weight:bold">Next steps</div><p style="margin:0 0 22px;font-size:14px;line-height:1.6;color:#374151">${escapeHtml(content.next)}</p><a href="${escapeHtml(actionUrl)}" style="display:inline-block;background:#991b1b;color:#fff;padding:12px 18px;text-decoration:none;font-weight:bold">${escapeHtml(content.action)}</a><p style="margin:24px 0 0;font-size:13px;color:#475569">Questions? Contact <a href="mailto:${escapeHtml(supportEmail)}" style="color:#991b1b">${escapeHtml(supportEmail)}</a>${process.env.SUPPORT_PHONE ? ` or ${escapeHtml(process.env.SUPPORT_PHONE)}` : ""}.</p></td></tr><tr><td style="padding:18px 28px;background:#f9fafb;border-top:1px solid #e5e7eb;font-size:12px;line-height:1.6;color:#64748b">This is an automated notification from ACGC Glass &amp; Aluminum Services. Please do not reply directly to this email.<br>Thank you for choosing ACGC.</td></tr></table></td></tr></table></body></html>`;
+  const { text, html } = buildCustomerEmailTemplate({
+    title: content.title,
+    summary: content.summary,
+    status: content.status,
+    orderId: orderIdOf(order),
+    fields: content.fields,
+    nextSteps: content.next,
+    actionUrl,
+    actionLabel: content.action,
+    supportEmail,
+    supportPhone: process.env.SUPPORT_PHONE,
+  });
   return { subject: content.subject, text, html };
 };
 

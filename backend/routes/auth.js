@@ -38,6 +38,7 @@ import {
   verifyBackupRecoveryPassword,
 } from "../services/backupRecoverySecurity.js";
 import { buildFrontendUrl } from "../services/frontendUrl.js";
+import { buildCustomerEmailTemplate } from "../services/customerEmailTemplate.js";
 import { isPasswordPolicySatisfied, PASSWORD_POLICY_MESSAGE } from "../services/passwordPolicy.js";
 
 const backupImportUpload = multer({
@@ -553,28 +554,37 @@ router.post("/admin-recovery/restore", async (req, res) => {
 
 const sendVerificationEmail = async (user, token) => {
   const verificationUrl = buildFrontendUrl("/verify-email", { token });
+  const email = buildCustomerEmailTemplate({
+    title: "Verify your ACGC email address",
+    summary: `Hello ${user.first_name || ""}, verify your ACGC account using the button below.`,
+    status: "Email Verification",
+    fields: [["Email address", user.email]],
+    nextSteps: "This verification link expires in 24 hours.",
+    actionUrl: verificationUrl,
+    actionLabel: "Verify email address",
+  });
 
   await sendMail({
     from: process.env.EMAIL_FROM || "ACGC <no-reply@acgc.local>",
     to: user.email,
     subject: "Verify your ACGC email address",
-    text: `Hello ${user.first_name}, verify your ACGC account here: ${verificationUrl}`,
-    html: `
-      <p>Hello ${user.first_name},</p>
-      <p>Verify your ACGC account by clicking the link below:</p>
-      <p><a href="${verificationUrl}">Verify my email address</a></p>
-      <p>This link expires in 24 hours.</p>
-    `,
+    ...email,
   });
 };
 
 const sendPendingEmailVerificationCode = async (user, pendingEmail, code) => {
+  const email = buildCustomerEmailTemplate({
+    title: "Your ACGC email verification code",
+    summary: `Hello ${user.first_name || ""}, enter this code to verify your new email address.`,
+    status: "Email Verification",
+    fields: [["Verification code", code], ["New email address", pendingEmail]],
+    nextSteps: "This code expires in 10 minutes. Your current email remains active until the new address is verified.",
+  });
   await sendMail({
     from: process.env.EMAIL_FROM || "ACGC <no-reply@acgc.local>",
     to: pendingEmail,
     subject: "Your ACGC email verification code",
-    text: `Hello ${user.first_name}, your ACGC email verification code is ${code}. It expires in 10 minutes.`,
-    html: `<p>Hello ${user.first_name},</p><p>Your ACGC email verification code is:</p><p style="font-size:28px;font-weight:700;letter-spacing:8px">${code}</p><p>This code expires in 10 minutes. Your current email remains active until verification.</p>`,
+    ...email,
   });
 };
 
@@ -615,17 +625,18 @@ const hasEmailChangeConflict = async (email, account, AccountModel) => {
 };
 
 const sendPasswordResetCode = async (account, code) => {
+  const email = buildCustomerEmailTemplate({
+    title: "Your ACGC password reset code",
+    summary: `Hello ${account.first_name || ""}, use this code to reset your password.`,
+    status: "Account Security",
+    fields: [["Password reset code", code]],
+    nextSteps: "This code expires in 15 minutes. If you did not request this, you can ignore this email.",
+  });
   await sendMail({
     from: process.env.EMAIL_FROM || "ACGC <no-reply@acgc.local>",
     to: account.email,
     subject: "Your ACGC password reset code",
-    text: `Your ACGC password reset code is ${code}. It expires in 15 minutes.`,
-    html: `
-      <p>Hello ${account.first_name},</p>
-      <p>Your ACGC password reset code is:</p>
-      <p style="font-size: 28px; font-weight: 700; letter-spacing: 8px;">${code}</p>
-      <p>This code expires in 15 minutes. If you did not request this, you can ignore this email.</p>
-    `,
+    ...email,
   });
 };
 

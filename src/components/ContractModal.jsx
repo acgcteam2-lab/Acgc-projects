@@ -5,7 +5,7 @@ import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { getFinalProjectCost, getRequiredDownpayment } from "@/lib/orderPricing";
 import { getContractBladeDetails } from "@/pages/SiteInspection/contractState";
 
-function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, onRegenerate, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false, notificationRecordId = null, darkMode = false, transparentBackdrop = false }) {
+function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, onRegenerate, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false, notificationRecordId = null, darkMode = false, transparentBackdrop = false, acceptedOverride, awaitingResponseOverride }) {
   if (!isOpen || !inspection || !contractData) return null;
 
   const formatCurrency = (value) => new Intl.NumberFormat("en-PH", {
@@ -41,8 +41,8 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
 
   const orderStatus = String(contractData.orderStatus || inspection.status || contractData.status || "").toLowerCase();
   const contractStatus = String(contractData.rawContractStatus || contractData.contractStatus || inspection.contract_status || "").toLowerCase();
-  const isAccepted = orderStatus === "contract_accepted" || contractStatus === "accepted";
-  const isAwaitingCustomerResponse = orderStatus === "contract_sent" || (orderStatus === "site_inspection" && contractStatus === "sent") || contractStatus === "sent";
+  const isAccepted = acceptedOverride ?? (orderStatus === "contract_accepted" || contractStatus === "accepted");
+  const isAwaitingCustomerResponse = awaitingResponseOverride ?? (orderStatus === "contract_sent" || (orderStatus === "site_inspection" && contractStatus === "sent") || contractStatus === "sent");
   const isWalkInCustomer = inspection.order_type === "walk_in_customer" || inspection.acceptance_method === "walk_in_signed_contract";
   const actionsAllowed = Boolean(onAccept || onDecline) && isAwaitingCustomerResponse && !isAccepted && !isWalkInCustomer;
   const totalAmount = getFinalProjectCost({ ...inspection, ...contractData, final_project_cost: inspection.final_project_cost });

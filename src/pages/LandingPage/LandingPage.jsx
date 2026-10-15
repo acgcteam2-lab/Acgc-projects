@@ -22,9 +22,13 @@ import {
   CircleAlert,
   CircleCheck,
   CircleX,
+  Mail,
+  Phone,
+  MapPin,
 } from "lucide-react";
 import toast, { Toaster } from "react-hot-toast";
 import OrderProgressTimeline from "@/components/OrderProgressTimeline";
+import AboutBusinessContent from "@/components/AboutBusinessContent";
 import ProductPriceEstimator from "@/components/ProductPriceEstimator";
 import { getProductEstimatorState } from "@/components/ProductPriceEstimator";
 import { useAuth } from "@/contexts/AuthContext";
@@ -1156,7 +1160,7 @@ function LandingPage() {
                           <Star size={12} fill="currentColor" aria-hidden="true" />
                           Featured
                         </span>
-                        {customerPermissions.can_request_orders && <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3">
+                        {customerPermissions.can_request_orders && <div className="absolute inset-x-0 bottom-0 flex items-end justify-end gap-3 p-3">
                           <div className="flex gap-1.5">
                             <button
                               type="button"
@@ -1383,7 +1387,7 @@ function LandingPage() {
                       </span>
                     )}
                   </div>
-                  {customerPermissions.can_request_orders && <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3 max-md:p-1.5">
+                  {customerPermissions.can_request_orders && <div className="absolute inset-x-0 bottom-0 flex items-end justify-end gap-3 p-3 max-md:p-1.5">
                     <div className="flex gap-1.5 max-md:gap-1">
                       <button
                         type="button"
@@ -2072,115 +2076,9 @@ function LandingPage() {
 
 {active === "about" && (
 <section id="about" className="mx-auto max-w-7xl scroll-mt-24 px-6 py-28">
-
-  <div className="rounded-[28px] border border-slate-200 bg-white p-8 shadow-sm sm:p-10">
-    <motion.div
-      initial={{ opacity: 0, y: -18 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true }}
-      transition={{ duration: 0.55 }}
-      className="flex items-center justify-between gap-4 border-b border-slate-100 pb-4"
-    >
-      <div className="flex items-center gap-3">
-        <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-red-50 text-red-600"><BriefcaseBusiness size={17} /></span>
-        <h2 className="text-3xl font-black tracking-tight text-slate-950">About Us</h2>
-      </div>
-      <span className="rounded-full border border-red-200 bg-white px-5 py-2 text-[11px] font-black uppercase tracking-[0.2em] text-red-700">
-        ACGC Services
-      </span>
-    </motion.div>
-
-    <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_1fr]">
-      <motion.div
-        initial={{ opacity: 0, x: -40 }}
-        whileInView={{ opacity: 1, x: 0 }}
-        viewport={{ once: true }}
-        transition={{ duration: 0.7 }}
-        className="space-y-5"
-      >
-        <div>
-          <p className="text-xs font-black uppercase tracking-[0.28em] text-slate-500">Who We Are</p>
-          <p className="mt-3 text-sm leading-8 text-slate-600">
-            ACGC Aluminum &amp; Glass Construction provides durable and professional aluminum and glass solutions for residential and commercial spaces. We combine accurate measurements, quality materials, and dependable installation services to help every project feel complete.
-          </p>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ delay: 0.15, duration: 0.5 }}
-            className="rounded-2xl border border-slate-100 bg-slate-50 p-5"
-          >
-            <p className="text-[11px] font-black uppercase tracking-[0.26em] text-red-700">Our Mission</p>
-            <p className="mt-3 text-sm leading-7 text-slate-600">To deliver clean, dependable, and customer-focused aluminum and glass workmanship.</p>
-          </motion.div>
-          <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ delay: 0.25, duration: 0.5 }}
-            className="rounded-2xl border border-slate-100 bg-slate-50 p-5"
-          >
-            <p className="text-[11px] font-black uppercase tracking-[0.26em] text-red-700">Our Work</p>
-            <p className="mt-3 text-sm leading-7 text-slate-600">Windows, doors, partitions, shutters, safety glass, and custom aluminum fabrication.</p>
-          </motion.div>
-        </div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 18 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ delay: 0.35, duration: 0.5 }}
-          className="rounded-2xl border border-red-100 bg-red-50 p-5"
-        >
-          <p className="text-[11px] font-black uppercase tracking-[0.25em] text-red-700">Our Promise</p>
-          <p className="mt-3 text-sm leading-7 text-slate-700">Every job is handled with honest guidance, careful project planning, and professional execution.</p>
-        </motion.div>
-      </motion.div>
-
-      <motion.div
-        initial={{ opacity: 0, x: 40 }}
-        whileInView={{ opacity: 1, x: 0 }}
-        viewport={{ once: true }}
-        transition={{ duration: 0.7 }}
-        className="rounded-[24px] bg-slate-950 p-6 text-white"
-      >
-        <div className="flex items-center justify-between border-b border-white/10 pb-4">
-          <span className="text-[11px] font-black uppercase tracking-[0.26em] text-red-300">Our Process</span>
-          <span className="rounded-full border border-white/20 px-4 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-white">01 → 04</span>
-        </div>
-        <div className="mt-6 space-y-5">
-          {[
-            ["Consultation", "Learn your project needs and timeline."],
-            ["Measurement", "Plan the precise fit and materials."],
-            ["Fabrication", "Produce the aluminum and glass elements."],
-            ["Installation", "Finish the project with quality workmanship."],
-          ].map(([title, description], index) => (
-            <motion.div
-              key={title}
-              initial={{ opacity: 0, x: 18 }}
-              whileInView={{ opacity: 1, x: 0 }}
-              viewport={{ once: true }}
-              transition={{ delay: 0.15 + index * 0.12, duration: 0.5 }}
-              className="flex items-start gap-3"
-            >
-              <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-600 text-[11px] font-black text-white">{String(index + 1).padStart(2, "0")}</span>
-              <div className="pt-0.5">
-                <p className="text-sm font-black uppercase tracking-[0.16em] text-white">{title}</p>
-                <p className="mt-1 text-xs leading-6 text-slate-300">{description}</p>
-              </div>
-            </motion.div>
-          ))}
-        </div>
-      </motion.div>
-    </div>
-  </div>
-
+  <AboutBusinessContent />
 </section>
 )}
-
 {/* FOOTER */}
 
 <footer className="relative left-1/2 mt-auto w-screen -translate-x-1/2 border-t border-border bg-muted/50 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-6 text-foreground dark:bg-card">
@@ -2198,26 +2096,35 @@ function LandingPage() {
 
       <div>
         <h4 className="mb-3 text-sm font-medium text-foreground">Quick Links</h4>
-        <div className="space-y-2 text-xs text-muted-foreground">
+        <nav aria-label="Footer quick links" className="space-y-2 text-xs text-muted-foreground">
           {[
             ["Home", "home"],
             ["Browse Products", "products"],
             ["Track Order", "track-order"],
             ["About Us", "about"],
           ].map(([label, sectionId]) => (
-            <button key={sectionId} type="button" onClick={() => scrollToSection(sectionId)} className="block transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none">
+            <button key={sectionId} type="button" onClick={() => scrollToSection(sectionId)} className="block rounded-sm text-left transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none">
               {label}
             </button>
           ))}
-        </div>
+        </nav>
       </div>
 
       <div>
         <h4 className="mb-3 text-sm font-medium text-foreground">Contact</h4>
         <div className="space-y-2 text-xs text-muted-foreground">
-          <p>Email: acgc.services00@email.com</p>
-          <p>Phone: +63 900 000 0000</p>
-          <p>Philippines</p>
+          <a href="mailto:acgc.services00@email.com" className="flex w-fit items-center gap-2 rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Mail size={15} aria-hidden="true" /><span>Email: acgc.services00@email.com</span>
+          </a>
+          <a href="tel:+639123456789" className="flex w-fit items-center gap-2 rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Phone size={15} aria-hidden="true" /><span>Phone: +63 912 345 6789</span>
+          </a>
+          <a href="https://www.google.com/maps/search/?api=1&amp;query=Maligaya%201%2C%20Katasaan%2C%20Dinalupihan%2C%20Bataan%2C%20Philippines" target="_blank" rel="noreferrer" className="flex w-fit items-center gap-2 rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <MapPin size={15} aria-hidden="true" /><span>Maligaya 1, Katasaan, Dinalupihan, Bataan, Philippines</span>
+          </a>
+          <a href="https://www.google.com/maps/search/?api=1&amp;query=Philippines" target="_blank" rel="noreferrer" className="flex w-fit items-center gap-2 rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <MapPin size={15} aria-hidden="true" /><span>Philippines</span>
+          </a>
         </div>
       </div>
     </div>

@@ -12,6 +12,7 @@ import Cart from "../models/Cart.js";
 import { sendMail } from "../config/mailer.js";
 import { formatOrderEmailDate, getCurrentCustomerContact, sendOrderNotification } from "../services/orderEmails.js";
 import { buildFrontendUrl } from "../services/frontendUrl.js";
+import { buildCustomerEmailTemplate } from "../services/customerEmailTemplate.js";
 import { applyInstallationWarranty, isCompletedInstallationStage } from "../services/warranty.js";
 import {
   applyInstallationNotificationTimestamps,
@@ -1891,10 +1892,25 @@ export const submitOrderReview = async (req, res) => {
     }).catch((mailError) => console.error("Review notification email failed:", mailError));
 
     if (customerEmail) {
+      const reviewEmail = buildCustomerEmailTemplate({
+        title: "Thank you for your review",
+        summary: "Thank you for sharing your feedback. Your review has been submitted successfully.",
+        status: "Review Received",
+        orderId: order.tracking || order._id,
+        fields: [
+          ["Product", productName || "Project"],
+          ["Rating", `${"★".repeat(savedReview.rating || 0)}${"☆".repeat(Math.max(0, 5 - (savedReview.rating || 0)))}`],
+          ...(savedReview.title ? [["Review title", savedReview.title]] : []),
+          ...(savedReview.comment ? [["Your review", savedReview.comment]] : []),
+        ],
+        nextSteps: "Your feedback helps us improve our products and services.",
+        actionUrl: buildFrontendUrl("/customer-dashboard", { tab: "orders", orderId: order._id }),
+        actionLabel: "View order",
+      });
       void sendMail({
         to: customerEmail,
         subject: "Thank you for your review",
-        text: `Thank you for your feedback on order ${order.tracking || order._id}. Your review has been submitted successfully.\nOrder ID: ${order.tracking || order._id}`,
+        ...reviewEmail,
       }).catch((mailError) => console.error("Customer review confirmation email failed:", mailError));
     }
   } catch (error) {
@@ -2014,12 +2030,24 @@ export const respondToContract = async (req, res) => {
 
     const orderStatus = (order.status || "").toString().toLowerCase();
     const contractStatus = (order.contract_status || "").toString().toLowerCase();
-    const isAwaitingCustomerResponse =
+    const hasVerifiedAcceptance = (order.order_type === "walk_in_customer"
+      && order.acceptance_method === "walk_in_signed_contract"
+      && Boolean(order.signed_contract_url)
+      && Boolean(order.contract_signed_date))
+      || (order.order_type !== "walk_in_customer"
+        && order.acceptance_method === "online"
+        && order.acceptedByCustomer === true);
+    const staleAcceptedWithoutCustomerProof = order.order_type !== "walk_in_customer"
+      && !hasVerifiedAcceptance
+      && Boolean(order.contractSentAt)
+      && (orderStatus === "contract_accepted" || contractStatus === "accepted");
+    const isAwaitingCustomerResponse = (
       (orderStatus === "contract_sent" || orderStatus === "site_inspection" || contractStatus === "sent") &&
       !["accepted", "declined"].includes(contractStatus) &&
-      !["contract_accepted", "contract_declined", "cancelled"].includes(orderStatus);
+      !["contract_accepted", "contract_declined", "cancelled"].includes(orderStatus)
+    ) || staleAcceptedWithoutCustomerProof;
 
-    if (action === "accept" && (orderStatus === "contract_accepted" || contractStatus === "accepted")) {
+    if (action === "accept" && hasVerifiedAcceptance) {
       return res.json({ success: true, order, message: "Contract already accepted." });
     }
 
@@ -2070,7 +2098,15 @@ export const respondToContract = async (req, res) => {
       );
       if (!acceptedOrder) {
         const latestOrder = await Order.findById(order._id);
-        if (latestOrder && (latestOrder.status === "contract_accepted" || latestOrder.contract_status === "accepted")) {
+        if (latestOrder && (
+          (latestOrder.order_type === "walk_in_customer"
+            && latestOrder.acceptance_method === "walk_in_signed_contract"
+            && Boolean(latestOrder.signed_contract_url)
+            && Boolean(latestOrder.contract_signed_date))
+          || (latestOrder.order_type !== "walk_in_customer"
+            && latestOrder.acceptance_method === "online"
+            && latestOrder.acceptedByCustomer === true)
+        )) {
           return res.json({ success: true, duplicate: true, order: latestOrder, message: "Contract already accepted." });
         }
         return res.status(409).json({ success: false, message: "The contract changed while you were accepting it. Refresh and review the latest contract." });
@@ -2920,23 +2956,28 @@ export const updateOrderProgress = async (req, res) => {
             ? new Date(delayEvent.expectedResolution).toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })
             : "Not yet determined";
           const projectName = delayEvent.productName || order.items?.[0]?.name || "your project";
-          const message = [
-            `Hello ${order.customer_name || linkedCustomer?.first_name || ""},`,
-            "",
-            `There is a delay affecting ${projectName}.`,
-            `Stage: ${delayEvent.stageName}`,
-            `Reason: ${delayEvent.reason || "Not provided"}`,
-            `Expected resolution: ${expectedResolution}`,
-            delayEvent.notes ? `Additional notes: ${delayEvent.notes}` : "",
-            "",
-            `Order ID: ${order.tracking || order._id}`,
-          ].filter(Boolean).join("\n");
+          const delayEmail = buildCustomerEmailTemplate({
+            title: "Project delay update",
+            summary: `Hello ${order.customer_name || linkedCustomer?.first_name || ""}, there is a delay affecting ${projectName}.`,
+            status: "Project Delay",
+            orderId: order.tracking || order._id,
+            fields: [
+              ["Project", projectName],
+              ["Stage", delayEvent.stageName],
+              ["Reason", delayEvent.reason || "Not provided"],
+              ["Expected resolution", expectedResolution],
+              ...(delayEvent.notes ? [["Additional notes", delayEvent.notes]] : []),
+            ],
+            nextSteps: "Our team is working to resolve the delay and will keep you updated on your project.",
+            actionUrl: buildFrontendUrl("/customer-dashboard", { tab: "orders", orderId: order._id }),
+            actionLabel: "View project status",
+          });
 
           try {
             await sendMail({
               to: customerEmail,
               subject: `Project delay update - ${order.tracking || "your order"}`,
-              text: message,
+              ...delayEmail,
             });
           } catch (mailError) {
             console.error("Customer project delay email failed:", mailError);
@@ -3080,44 +3121,22 @@ export const sendWalkInApprovalEmail = async (req, res) => {
       });
     }
 
-    const escapeHtml = (value) => String(value ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
     const customerNameValue = customerName || order.customer_name || "Valued Customer";
     const orderIdentifier = order.tracking || order._id.toString();
     const contractLink = contractUrl || order.signed_contract_url || "";
     const fromAddress = process.env.EMAIL_FROM || "ACGC Site Inspection <no-reply@acgc.com>";
-    const contractLoginLink = buildFrontendUrl("/customer-dashboard", { tab: "contracts", orderId: order._id });
+    const contractLoginLink = buildFrontendUrl("/customer-dashboard", { tab: "orders", orderId: order._id });
 
-    const htmlBody = `
-      <div style="font-family:Arial,sans-serif;color:#111827">
-        <h2 style="color:#dc2626">ACGC Glass &amp; Aluminum Services</h2>
-        <p>Hi ${escapeHtml(customerNameValue)},</p>
-        <p>Your site inspection contract details are attached as a PDF file.</p>
-        <p><strong>Order ID:</strong> ${escapeHtml(orderIdentifier)}</p>
-        <p><a href="${escapeHtml(contractLoginLink)}" style="display:inline-block;background:#dc2626;color:#fff;padding:10px 16px;text-decoration:none;border-radius:6px">Log in to view your contract</a></p>
-        <p>Please review the attached document and contact our support team if anything needs to be corrected.</p>
-        <p>Thank you,<br/>ACGC Site Inspection Team</p>
-      </div>
-    `;
-
-    const textBody = `
-Hi ${customerNameValue},
-
-Your site inspection contract details are attached as a PDF file.
-
-Order ID: ${orderIdentifier}
-
-Log in to view your contract: ${contractLoginLink}
-
-Please review the attached document and contact our support team if anything needs to be corrected.
-
-Thank you,
-ACGC Site Inspection Team
-`;
+    const contractEmail = buildCustomerEmailTemplate({
+      title: "Site inspection contract details",
+      summary: `Hi ${customerNameValue}, your site inspection contract details are attached as a PDF file.`,
+      status: "Site Inspection",
+      orderId: orderIdentifier,
+      fields: [["Contract document", `Attached PDF: ACGC-Contract-${orderIdentifier}.pdf`]],
+      nextSteps: "Please review the attached document and contact our support team if anything needs to be corrected.",
+      actionUrl: contractLoginLink,
+      actionLabel: "Log in to view your contract",
+    });
 
     const attachments = [generatedContractAttachment];
     const uploadedContractAttachment = getLocalUploadedAttachment(contractLink);
@@ -3129,8 +3148,7 @@ ACGC Site Inspection Team
       from: fromAddress,
       to: customerEmailValue,
       subject: "ACGC Site Inspection Contract Details",
-      text: textBody,
-      html: htmlBody,
+      ...contractEmail,
       attachments,
     };
 

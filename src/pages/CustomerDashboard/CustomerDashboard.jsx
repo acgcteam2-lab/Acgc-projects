@@ -69,6 +69,7 @@ import {
 } from "@/api/orders";
 import { uploadFiles } from "@/api/uploads";
 import ContractModal from "../../components/ContractModal";
+import AboutBusinessContent from "@/components/AboutBusinessContent";
 import OtpCodeInput from "@/components/OtpCodeInput";
 import ProductPriceEstimator, { getProductEstimatorState } from "@/components/ProductPriceEstimator";
 import { formatOrderItemMeasurements } from "@/components/OrderProgressTimeline";
@@ -563,10 +564,21 @@ function CustomerDashboard() {
     commitCartItems(updater).catch(reportCartSaveError);
   };
 
+  const hasCustomerAcceptedContract = (order) => {
+    if (order?.acceptedByCustomer === true) return true;
+    return order?.order_type === "walk_in_customer"
+      && order?.acceptance_method === "walk_in_signed_contract"
+      && Boolean(order?.signed_contract_url)
+      && Boolean(order?.contract_signed_date);
+  };
+
   const customerContracts = orders.filter((order) => {
     const status = normalizeOrderStatusKey(order?.status);
     const contractStatus = normalizeOrderStatusKey(order?.contract_status);
-    return ["contract_sent", "contract_accepted"].includes(status) || ["sent", "accepted"].includes(contractStatus);
+    const isSent = status === "contract_sent"
+      || contractStatus === "sent"
+      || (Boolean(order?.contractSentAt) && (status === "contract_accepted" || contractStatus === "accepted"));
+    return isSent || hasCustomerAcceptedContract(order);
   });
   const rejectedContracts = orders.filter((order) => {
     const status = normalizeOrderStatusKey(order?.status);
@@ -1237,16 +1249,7 @@ function CustomerDashboard() {
   };
 
   const isCustomerContractAccepted = (order) => {
-    if (!order) return false;
-    const status = normalizeOrderStatusKey(order?.status);
-    const contractStatus = normalizeOrderStatusKey(order?.contract_status);
-    return Boolean(
-      order.acceptedByCustomer === true ||
-      status === "contract_accepted" ||
-      contractStatus === "accepted" ||
-      status === "contract_signed" ||
-      contractStatus === "signed"
-    );
+    return hasCustomerAcceptedContract(order);
   };
 
   const getOrderItemReview = (order, itemIndex) => {
@@ -1834,12 +1837,18 @@ function CustomerDashboard() {
     if (!orderId || ordersLoading || !orders.length || autoOpenedContractRef.current === orderId) return;
 
     const order = orders.find((candidate) => String(candidate._id || candidate.id) === String(orderId));
-    if (!order || !canShowContractForOrder(order)) return;
+    if (!order) return;
 
     autoOpenedContractRef.current = orderId;
-    setActiveTab("contracts");
-    openContractModal(order);
-    navigate(`${location.pathname}?tab=contracts`, { replace: true });
+    setActiveTab("orders");
+    setOrderFilter("all");
+    setTrackingNumber("");
+    const matchingOrderIndex = orders.findIndex((candidate) => String(candidate._id || candidate.id) === String(orderId));
+    if (matchingOrderIndex >= 0) setOrderPage(Math.floor(matchingOrderIndex / 5) + 1);
+    const orderIdentifier = getOrderIdentifier(order);
+    setExpandedOrderId(orderIdentifier);
+    setHighlightedOrderId(orderIdentifier);
+    navigate(`${location.pathname}?tab=orders`, { replace: true });
   }, [location.pathname, location.search, navigate, orders, ordersLoading]);
 
   useEffect(() => {
@@ -4193,7 +4202,7 @@ function CustomerDashboard() {
         ? String(order.status).replace(/_/g, " ")
         : "No contract yet";
 
-    const accepted = order.acceptedByCustomer === true || normalizeOrderStatusKey(order?.contract_status) === "accepted" || orderStatusKey === "contract_accepted";
+    const accepted = hasCustomerAcceptedContract(order);
 
     return {
       orderNumber: order.tracking || order._id || "N/A",
@@ -4241,8 +4250,13 @@ function CustomerDashboard() {
   const contractPreviewData = contractPreviewOrder
     ? buildContractDataFromOrder(contractPreviewOrder)
     : null;
-  const isContractAccepted = contractPreviewOrder?.acceptedByCustomer === true || normalizeOrderStatusKey(contractPreviewOrder?.status) === "contract_accepted"
-    || normalizeOrderStatusKey(contractPreviewOrder?.contract_status) === "accepted";
+  const isContractAccepted = contractPreviewOrder ? hasCustomerAcceptedContract(contractPreviewOrder) : false;
+  const previewStatus = normalizeOrderStatusKey(contractPreviewOrder?.status);
+  const previewContractStatus = normalizeOrderStatusKey(contractPreviewOrder?.contract_status);
+  const isContractAwaitingCustomerResponse = Boolean(contractPreviewOrder)
+    && !isContractAccepted
+    && contractPreviewOrder.order_type !== "walk_in_customer"
+    && Boolean(contractPreviewOrder.contractSentAt || previewContractStatus === "sent" || previewStatus === "contract_sent" || ((previewContractStatus === "accepted" || previewStatus === "contract_accepted") && contractPreviewOrder.contractSentAt));
 
   const createContractExportClone = () => {
     const element = document.getElementById("contract-content");
@@ -4330,8 +4344,8 @@ function CustomerDashboard() {
     const contractStatus = normalizeOrderStatusKey(order?.contract_status);
     const orderStatus = normalizeOrderStatusKey(order?.status);
 
-    if (contractStatus === "sent" || orderStatus === "contract_sent") return "Needs Your Response";
-    if (contractStatus === "accepted" || orderStatus === "contract_accepted") return "Accepted";
+    if (hasCustomerAcceptedContract(order)) return "Accepted";
+    if (contractStatus === "sent" || orderStatus === "contract_sent" || (order?.contractSentAt && (contractStatus === "accepted" || orderStatus === "contract_accepted"))) return "Needs Your Response";
     if (contractStatus === "declined" || orderStatus === "contract_declined") return "Declined";
     return normalizeOrderStatus(order?.contract_status) || normalizeOrderStatus(order?.status) || "Unknown";
   };
@@ -4798,8 +4812,9 @@ function CustomerDashboard() {
           <button
             type="button"
             onClick={() => setActiveTab("home")}
-            className="flex min-w-0 items-center gap-2 px-1 py-0.5 text-left transition duration-200 sm:gap-3 sm:px-1.5"
+            className={`flex min-w-0 items-center gap-2 rounded-xl px-1 py-0.5 text-left transition duration-200 sm:gap-3 sm:px-1.5 ${activeTab === "home" ? darkMode ? "bg-slate-800/70" : "bg-red-50/70" : "hover:bg-slate-500/10"}`}
             aria-label="Go to ACGC Services home"
+            aria-current={activeTab === "home" ? "page" : undefined}
           >
             <img src={logo} alt="ACGC Aluminum Services" className={`h-8 w-8 shrink-0 object-contain sm:h-12 sm:w-12 lg:h-14 lg:w-14 ${darkMode ? "drop-shadow-[0_0_4px_rgba(255,255,255,0.7)]" : ""}`} />
             <div className="min-w-0">
@@ -4832,24 +4847,33 @@ function CustomerDashboard() {
             )}
             <button
               onClick={() => setActiveTab("products")}
-              className={`order-3 hidden rounded-full px-4 py-2 text-base font-semibold transition lg:inline-flex ${
-                darkMode ? "text-slate-200 hover:bg-slate-800" : "text-slate-700 hover:bg-slate-100"
+              aria-current={activeTab === "products" ? "page" : undefined}
+              className={`order-3 hidden rounded-full border px-4 py-2 text-base font-semibold transition lg:order-4 lg:inline-flex ${
+                activeTab === "products"
+                  ? darkMode ? "border-red-400/40 bg-red-950/60 text-red-200" : "border-red-200 bg-red-50 text-red-800"
+                  : darkMode ? "border-transparent text-slate-200 hover:bg-slate-800" : "border-transparent text-slate-700 hover:bg-slate-100"
               }`}
             >
               Browse Products
             </button>
             <button
               onClick={() => setActiveTab("orders")}
-              className={`order-4 hidden rounded-full px-4 py-2 text-base font-semibold transition lg:inline-flex ${
-                darkMode ? "text-slate-200 hover:bg-slate-800" : "text-slate-700 hover:bg-slate-100"
+              aria-current={activeTab === "orders" ? "page" : undefined}
+              className={`order-4 hidden rounded-full border px-4 py-2 text-base font-semibold transition lg:order-5 lg:inline-flex ${
+                activeTab === "orders"
+                  ? darkMode ? "border-red-400/40 bg-red-950/60 text-red-200" : "border-red-200 bg-red-50 text-red-800"
+                  : darkMode ? "border-transparent text-slate-200 hover:bg-slate-800" : "border-transparent text-slate-700 hover:bg-slate-100"
               }`}
             >
               Your Orders
             </button>
             <button
               onClick={() => setActiveTab("about")}
-              className={`order-5 hidden rounded-full px-4 py-2 text-base font-semibold transition lg:inline-flex ${
-                darkMode ? "text-slate-200 hover:bg-slate-800" : "text-slate-700 hover:bg-slate-100"
+              aria-current={activeTab === "about" ? "page" : undefined}
+              className={`order-5 hidden rounded-full border px-4 py-2 text-base font-semibold transition lg:order-6 lg:inline-flex ${
+                activeTab === "about"
+                  ? darkMode ? "border-red-400/40 bg-red-950/60 text-red-200" : "border-red-200 bg-red-50 text-red-800"
+                  : darkMode ? "border-transparent text-slate-200 hover:bg-slate-800" : "border-transparent text-slate-700 hover:bg-slate-100"
               }`}
             >
               About Us
@@ -4857,7 +4881,7 @@ function CustomerDashboard() {
             <button
               type="button"
               onClick={toggleDarkMode}
-              className={`order-7 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition focus:outline-none sm:h-10 sm:w-10 ${
+              className={`order-7 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition focus:outline-none sm:h-10 sm:w-10 lg:order-3 ${
                 darkMode ? "text-slate-200 hover:bg-slate-800" : "text-slate-700 hover:bg-slate-100"
               }`}
               aria-label={darkMode ? "Switch to day mode" : "Switch to night mode"}
@@ -4868,7 +4892,7 @@ function CustomerDashboard() {
                 ? <Moon size={22} strokeWidth={1.8} className="text-sky-300" />
                 : <Sun size={22} strokeWidth={1.8} className="text-amber-500" />}
             </button>
-            <div className="relative order-6">
+            <div className="relative order-6 lg:order-2">
               <button
                 onClick={() => setNotificationsOpen((s) => !s)}
                 className={`relative p-2.5 text-sm font-semibold transition ${
@@ -5161,8 +5185,7 @@ function CustomerDashboard() {
                 aria-label="Profile"
                 title="Profile"
               >
-                <User size={20} className="sm:h-6 sm:w-6" />
-                <span className="sr-only sm:not-sr-only">Profile</span>
+                <span className="text-base font-semibold">Profile</span>
               </button>
 
               {confirmOpen && createPortal(
@@ -5583,7 +5606,7 @@ function CustomerDashboard() {
                             )}
                           </div>
 
-                          <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-3 p-3 max-md:p-1.5">
+                          <div className="absolute inset-x-0 bottom-0 flex items-end justify-end gap-3 p-3 max-md:p-1.5">
                             {canRequestOrders && (
                               <div className="hidden gap-1.5 md:flex">
                                 <button
@@ -7672,7 +7695,7 @@ function CustomerDashboard() {
                     hasContractBeenSent &&
                     order.order_type !== "walk_in_customer";
                   const isCustomerAcceptedContract = isCustomerContractAccepted(order);
-                  const isOnlineContractAccepted = order.acceptedByCustomer === true || (order.contract_status === "accepted" && order.acceptance_method === "online");
+                  const isOnlineContractAccepted = order.acceptedByCustomer === true && order.acceptance_method === "online";
                   const isProjectFinished = isOrderCompletedAndReviewable(order);
                   const isOrderCancelled = String(order.status || "").toLowerCase() === "cancelled";
                     const paymentProofSubmission = paymentProofSuccessByOrder[orderId];
@@ -8945,77 +8968,8 @@ function CustomerDashboard() {
         )}
 
         {activeTab === "about" && (
-          <div className={`rounded-[28px] border p-8 shadow-sm sm:p-10 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}>
-            <div className={`flex items-center justify-between gap-4 border-b pb-4 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
-              <div className="flex items-center gap-3">
-                <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-red-50 text-red-600">
-                  <Info size={20} />
-                </span>
-                <h2 className={`text-3xl font-black tracking-tight ${darkMode ? "text-white" : "text-slate-950"}`}>About Us</h2>
-              </div>
-              <span className={`rounded-full border px-5 py-2 text-[11px] font-black uppercase tracking-[0.2em] ${darkMode ? "border-slate-600 bg-slate-700 text-slate-100" : "border-red-200 bg-white text-red-700"}`}>
-                ACGC Services
-              </span>
-            </div>
-
-            <div className="mt-8 grid gap-8 lg:grid-cols-[1fr_1fr]">
-              <div className="space-y-5">
-                <div>
-                  <p className={`text-xs font-black uppercase tracking-[0.28em] ${darkMode ? "text-slate-400" : "text-slate-500"}`}>Who We Are</p>
-                  <p className={`mt-3 text-sm leading-8 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                    ACGC Aluminum & Glass Construction provides durable and professional aluminum and glass solutions for residential and commercial spaces. We combine accurate measurements, quality materials, and dependable installation services to help every project feel complete.
-                  </p>
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className={`rounded-2xl border p-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-100 bg-slate-50"}`}>
-                    <p className="text-[11px] font-black uppercase tracking-[0.26em] text-red-700">Our Mission</p>
-                    <p className={`mt-3 text-sm leading-7 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                      To deliver clean, dependable, and customer-focused aluminum and glass workmanship.
-                    </p>
-                  </div>
-                  <div className={`rounded-2xl border p-5 ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-100 bg-slate-50"}`}>
-                    <p className="text-[11px] font-black uppercase tracking-[0.26em] text-red-700">Our Work</p>
-                    <p className={`mt-3 text-sm leading-7 ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
-                      Windows, doors, partitions, shutters, safety glass, and custom aluminum fabrication.
-                    </p>
-                  </div>
-                </div>
-
-                <div className={`rounded-2xl border p-5 ${darkMode ? "border-red-900 bg-red-950/60" : "border-red-100 bg-red-50"}`}>
-                  <p className="text-[11px] font-black uppercase tracking-[0.25em] text-red-700">Our Promise</p>
-                  <p className={`mt-3 text-sm leading-7 ${darkMode ? "text-slate-200" : "text-slate-700"}`}>
-                    Every job is handled with honest guidance, careful project planning, and professional execution.
-                  </p>
-                </div>
-              </div>
-
-              <div className="rounded-[24px] bg-slate-950 p-6 text-white">
-                <div className="flex items-center justify-between border-b border-white/10 pb-4">
-                  <span className="text-[11px] font-black uppercase tracking-[0.26em] text-red-300">Our Process</span>
-                  <span className="rounded-full border border-white/20 px-4 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-white">01 → 04</span>
-                </div>
-                <div className="mt-6 space-y-5">
-                  {[
-                    ["Consultation", "Learn your project needs and timeline."],
-                    ["Measurement", "Plan the precise fit and materials."],
-                    ["Fabrication", "Produce the aluminum and glass elements."],
-                    ["Installation", "Finish the project with quality workmanship."]
-                  ].map(([title, desc], index) => (
-                    <div key={title} className="flex items-start gap-3">
-                      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-600 text-[11px] font-black text-white">{String(index + 1).padStart(2, "0")}</span>
-                      <div className="pt-0.5">
-                        <p className="text-sm font-black uppercase tracking-[0.16em] text-white">{title}</p>
-                        <p className="mt-1 text-xs leading-6 text-slate-300">{desc}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
+          <AboutBusinessContent darkMode={darkMode} />
         )}
-
         {activeTab === "notifications" && (
           <>
             <div className="mb-5 flex flex-col gap-3 border-b pb-4 sm:mb-6 sm:flex-row sm:items-end sm:justify-between">
@@ -10070,7 +10024,7 @@ function CustomerDashboard() {
                 {displayedContracts.map((order) => {
                   const product = order.items?.[0] || {};
                   const statusLabel = getContractStatusLabel(order);
-                  const statusClass = normalizeOrderStatusKey(order?.contract_status) === "accepted" || normalizeOrderStatusKey(order?.status) === "contract_accepted"
+                  const statusClass = statusLabel === "Accepted"
                     ? darkMode
                       ? "border border-emerald-400/30 bg-emerald-500/15 text-emerald-300"
                       : "bg-emerald-100 text-emerald-700"
@@ -10172,20 +10126,22 @@ function CustomerDashboard() {
 
               <div className="min-w-0">
                 <h4 className="mb-3 text-[15px] font-medium text-white">Quick Links</h4>
-                <div className="flex flex-col gap-2.5 text-sm text-slate-300">
-                  <p className="w-fit transition-colors motion-reduce:transition-none hover:text-white hover:underline hover:underline-offset-[3px]">Home</p>
-                  <p className="w-fit transition-colors motion-reduce:transition-none hover:text-white hover:underline hover:underline-offset-[3px]">Browse Products</p>
-                  <p className="w-fit transition-colors motion-reduce:transition-none hover:text-white hover:underline hover:underline-offset-[3px]">Track Order</p>
-                  <p className="w-fit transition-colors motion-reduce:transition-none hover:text-white hover:underline hover:underline-offset-[3px]">About Us</p>
-                </div>
+                <nav aria-label="Footer quick links" className="flex flex-col items-start gap-2.5 text-sm text-slate-300">
+                  {[["Home", "home"], ["Browse Products", "products"], ["Track Order", "orders"], ["About Us", "about"]].map(([label, tab]) => (
+                    <button key={tab} type="button" onClick={() => { setActiveTab(tab); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="w-fit rounded-sm text-left transition-colors motion-reduce:transition-none hover:text-white hover:underline hover:underline-offset-[3px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+                      {label}
+                    </button>
+                  ))}
+                </nav>
               </div>
 
               <div className="min-w-0">
                 <h4 className="mb-3 text-[15px] font-medium text-white">Contact</h4>
                 <div className="flex flex-col gap-2.5 text-sm text-slate-300">
-                  <p className="flex min-w-0 items-start gap-3"><Mail size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span className="break-words">Email: acgc.services00@email.com</span></p>
-                  <p className="flex min-w-0 items-start gap-3"><Phone size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span>Phone: +63 900 000 0000</span></p>
-                  <p className="flex min-w-0 items-start gap-3"><MapPin size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span>Philippines</span></p>
+                  <a href="mailto:acgc.services00@email.com" className="flex min-w-0 items-start gap-3 rounded-sm transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"><Mail size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span className="break-words">Email: acgc.services00@email.com</span></a>
+                  <a href="tel:+639123456789" className="flex min-w-0 items-start gap-3 rounded-sm transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"><Phone size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span>Phone: +63 912 345 6789</span></a>
+                  <a href="https://www.google.com/maps/search/?api=1&amp;query=Maligaya%201%2C%20Katasaan%2C%20Dinalupihan%2C%20Bataan%2C%20Philippines" target="_blank" rel="noreferrer" className="flex min-w-0 items-start gap-3 rounded-sm transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"><MapPin size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span>Maligaya 1, Katasaan, Dinalupihan, Bataan, Philippines</span></a>
+                  <a href="https://www.google.com/maps/search/?api=1&amp;query=Philippines" target="_blank" rel="noreferrer" className="flex min-w-0 items-start gap-3 rounded-sm transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"><MapPin size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span>Philippines</span></a>
                 </div>
               </div>
             </div>
@@ -10267,6 +10223,8 @@ function CustomerDashboard() {
           actionError={contractActionError}
           notificationRecordId={contractNotificationRecordId}
           darkMode={darkMode}
+          acceptedOverride={isContractAccepted}
+          awaitingResponseOverride={isContractAwaitingCustomerResponse}
         />
 
         {/* CONTRACT CONFIRMATION MODAL */}
