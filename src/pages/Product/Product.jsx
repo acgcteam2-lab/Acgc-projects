@@ -1586,35 +1586,57 @@ function Products() {
     if (!cleanName) throw new Error("Name is required.");
     const id = item.id || item._id;
     if (!id) throw new Error("This catalog item cannot be edited because it has no record ID.");
-    if (kind === "types") await catalogApi.updateType(id, { name: cleanName });
-    if (kind === "categories") await catalogApi.updateCategory(id, { name: cleanName });
-    if (kind === "variants") await catalogApi.updateVariant(id, { name: cleanName, product_type: item.product_type || newProduct.product_type });
-    await reloadCatalogLists();
+    let response;
+    if (kind === "types") response = await catalogApi.updateType(id, { name: cleanName });
+    if (kind === "categories") response = await catalogApi.updateCategory(id, { name: cleanName });
+    if (kind === "variants") response = await catalogApi.updateVariant(id, { name: cleanName, product_type: item.product_type || newProduct.product_type });
+    const savedName = getCatalogText(response?.item?.name).trim() || cleanName;
+    const matchesItem = (entry) => String(entry.id || entry._id) === String(id);
+
+    if (kind === "types") {
+      setProductTypeCatalogItems((current) => current.map((entry) => matchesItem(entry) ? { ...entry, name: savedName } : entry));
+      setProductTypesList((current) => current.map((value) => value === item.name ? savedName : value));
+    }
+    if (kind === "categories") {
+      setCategoryCatalogItems((current) => current.map((entry) => matchesItem(entry) ? { ...entry, name: savedName } : entry));
+      setCategoryOptionsList((current) => current.map((value) => value === item.name ? savedName : value));
+    }
+    if (kind === "variants") {
+      const group = item.product_type || newProduct.product_type;
+      setVariantCatalogItems((current) => ({
+        ...current,
+        [group]: (current[group] || []).map((entry) => matchesItem(entry) ? { ...entry, name: savedName } : entry),
+      }));
+      setVariantsList((current) => ({
+        ...current,
+        [group]: (current[group] || []).map((value) => value === item.name ? savedName : value),
+      }));
+    }
     if (kind === "types" && newProduct.product_type === item.name) {
-      setNewProduct((product) => ({ ...product, product_type: cleanName }));
+      setNewProduct((product) => ({ ...product, product_type: savedName }));
     }
     if (kind === "types") {
       setProducts((current) => current.map((product) => product.product_type === item.name
-        ? { ...product, product_type: cleanName, type: cleanName }
+        ? { ...product, product_type: savedName, type: savedName }
         : product));
     }
     if (kind === "categories" && newProduct.category === item.name) {
-      setNewProduct((product) => ({ ...product, category: cleanName }));
+      setNewProduct((product) => ({ ...product, category: savedName }));
     }
     if (kind === "categories") {
       setProducts((current) => current.map((product) => product.category?.toLowerCase() === item.name.toLowerCase()
-        ? { ...product, category: cleanName.toLowerCase() }
+        ? { ...product, category: savedName.toLowerCase() }
         : product));
     }
     if (kind === "variants" && newProduct.variant === item.name) {
-      setNewProduct((product) => ({ ...product, variant: cleanName }));
+      setNewProduct((product) => ({ ...product, variant: savedName }));
     }
     if (kind === "variants") {
       setProducts((current) => current.map((product) => product.variant === item.name && product.product_type === (item.product_type || newProduct.product_type)
-        ? { ...product, variant: cleanName }
+        ? { ...product, variant: savedName }
         : product));
     }
-    return cleanName;
+    return savedName;
   };
 
   const deleteCatalogOption = async (kind, item) => {
