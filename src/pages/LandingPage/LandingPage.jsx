@@ -1170,44 +1170,13 @@ function LandingPage() {
                           className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-900/10 to-transparent" />
-                        <h3 className="absolute inset-x-4 bottom-14 line-clamp-2 text-lg font-black leading-tight text-white drop-shadow-[0_2px_5px_rgba(0,0,0,0.9)] sm:text-xl">
+                        <h3 className="absolute inset-x-4 bottom-4 line-clamp-2 text-lg font-black leading-tight text-white drop-shadow-[0_2px_5px_rgba(0,0,0,0.9)] sm:text-xl">
                           {product.product_name || product.name || "Product"}
                         </h3>
                         <span className="absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-full border border-amber-200/80 bg-amber-100/95 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-amber-950 shadow-lg backdrop-blur-sm">
                           <Star size={12} fill="currentColor" aria-hidden="true" />
                           Featured
                         </span>
-                        {customerPermissions.can_request_orders && <div className="absolute inset-x-0 bottom-0 flex items-end justify-end gap-3 p-3">
-                          <div className="flex gap-1.5">
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleFeaturedProductClick(product);
-                              }}
-                              className="inline-flex size-8 items-center justify-center rounded-xl border border-red-200 bg-white/90 text-red-700 shadow-lg transition hover:border-red-300 hover:bg-red-600 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
-                              aria-label="View product details"
-                              title="View product details"
-                            >
-                              <Package size={16} aria-hidden="true" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleAddToCart(product);
-                              }}
-                              disabled={!customerPermissions.can_request_orders || addingCartProductId === String(product._id || product.id || "")}
-                              className="inline-flex size-8 items-center justify-center rounded-xl border border-slate-200 bg-white/90 text-slate-700 shadow-lg transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50"
-                              aria-label="Add to cart"
-                              title={customerPermissions.can_request_orders ? "Add to cart" : "Order requests are unavailable"}
-                            >
-                              {addingCartProductId === String(product._id || product.id || "")
-                                ? <LoaderCircle size={16} className="animate-spin" aria-hidden="true" />
-                                : <ShoppingCart size={16} aria-hidden="true" />}
-                            </button>
-                          </div>
-                        </div>}
                       </div>
 
                       <div className="flex flex-1 flex-col gap-4 p-4 sm:p-5">
