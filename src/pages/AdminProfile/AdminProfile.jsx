@@ -1,11 +1,10 @@
 ﻿import { useEffect, useRef, useState } from "react";
+import toast, { Toaster } from "react-hot-toast";
 import {
   User,
   Mail,
   Phone,
   MapPin,
-  Building2,
-  Hash,
   LockKeyhole,
   Save,
   ShieldCheck,
@@ -15,6 +14,8 @@ import {
   ChevronRight,
   LogIn,
   LogOut,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { isPasswordPolicySatisfied, PASSWORD_POLICY_HINT, PASSWORD_POLICY_MESSAGE } from "@/lib/passwordStrength";
@@ -64,9 +65,6 @@ const createProfileDraft = (user) => ({
   role: user.role === "skilled_worker" ? user.staff_access?.subrole || "Staff" : user.role || "admin",
   phone: user.phone || "",
   street_address: user.street_address || "",
-  city: user.city || "",
-  province: user.province || "",
-  zip_code: user.zip_code || "",
   current_password: "",
   new_password: "",
   confirm_password: "",
@@ -102,9 +100,11 @@ function AdminProfile() {
   const [activityCategoryFilter, setActivityCategoryFilter] = useState("all");
   const [activitySearch, setActivitySearch] = useState("");
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [passwordModalError, setPasswordModalError] = useState("");
   const [showDiscardConfirmation, setShowDiscardConfirmation] = useState(false);
   const [emailChangeOpen, setEmailChangeOpen] = useState(false);
+  const [showEmailChangePassword, setShowEmailChangePassword] = useState(false);
   const [emailChangeSaving, setEmailChangeSaving] = useState(false);
   const [emailChangeError, setEmailChangeError] = useState("");
   const [emailChangeForm, setEmailChangeForm] = useState({ new_email: "", confirm_new_email: "", current_password: "" });
@@ -339,9 +339,6 @@ function AdminProfile() {
       profile.last_name !== (user.last_name || "") ||
       profile.phone !== (user.phone || "") ||
       profile.street_address !== (user.street_address || "") ||
-      profile.city !== (user.city || "") ||
-      profile.province !== (user.province || "") ||
-      profile.zip_code !== (user.zip_code || "") ||
       Boolean(profile.new_password) ||
       Boolean(profile.confirm_password)
     );
@@ -353,6 +350,7 @@ function AdminProfile() {
     setSuccess("");
     setPasswordModalError("");
     setShowPasswordModal(false);
+    setShowCurrentPassword(false);
     setShowDiscardConfirmation(false);
   };
 
@@ -398,9 +396,6 @@ function AdminProfile() {
         last_name: profile.last_name,
         phone: profile.phone,
         street_address: profile.street_address,
-        city: profile.city,
-        province: profile.province,
-        zip_code: profile.zip_code,
         current_password: profile.current_password,
       };
 
@@ -418,6 +413,7 @@ function AdminProfile() {
         confirm_password: "",
       }));
       setSuccess("Profile updated successfully.");
+      toast.success("Your profile changes were saved successfully.");
       return true;
     } catch (err) {
       setSaveError(err.data?.message || err.message || "Failed to update profile.");
@@ -438,6 +434,7 @@ function AdminProfile() {
     }
 
     if (!profile.current_password) {
+      setShowCurrentPassword(false);
       setShowPasswordModal(true);
       return;
     }
@@ -575,6 +572,7 @@ function AdminProfile() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-100">
+      <Toaster position="bottom-right" />
       <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((open) => !open)} />
 
       <div className="flex-1 min-h-0 flex flex-col">
@@ -639,7 +637,7 @@ function AdminProfile() {
               )}
 
               {success && (
-                <div className="mb-4 rounded-2xl border border-green-200 bg-green-50 p-4 text-green-700">
+                <div role="status" aria-live="polite" className="mb-4 rounded-2xl border border-green-200 bg-green-50 p-4 text-green-700">
                   {success}
                 </div>
               )}
@@ -718,11 +716,8 @@ function AdminProfile() {
                       <AdminProfileTextField label="Username" icon={User} darkMode={darkMode} type="text" name="username" value={profile.username} disabled />
                       <AdminProfileTextField label="Phone Number" icon={Phone} darkMode={darkMode} type="tel" inputMode="tel" maxLength={13} name="phone" value={profile.phone} onChange={handleChange} placeholder="+639171234567 or 09171234567" />
                       <div className="md:col-span-2">
-                        <AdminProfileTextField label="Street Address" icon={MapPin} darkMode={darkMode} type="text" name="street_address" value={profile.street_address} onChange={handleChange} placeholder="Street address" />
+                        <AdminProfileTextField label="Address" icon={MapPin} darkMode={darkMode} type="text" name="street_address" value={profile.street_address} onChange={handleChange} placeholder="Business address" />
                       </div>
-                      <AdminProfileTextField label="City" icon={Building2} darkMode={darkMode} type="text" name="city" value={profile.city} onChange={handleChange} placeholder="City" />
-                      <AdminProfileTextField label="Province" icon={MapPin} darkMode={darkMode} type="text" name="province" value={profile.province} onChange={handleChange} placeholder="Province" />
-                      <AdminProfileTextField label="Zip Code" icon={Hash} darkMode={darkMode} type="text" inputMode="numeric" name="zip_code" value={profile.zip_code} onChange={handleChange} placeholder="Zip Code" />
                     </div>
                   ) : activeTab === "security" ? (
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -919,7 +914,7 @@ function AdminProfile() {
                 <div className={`sticky bottom-0 z-20 -mx-4 mt-6 flex justify-end border-t px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:mt-8 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0 ${darkMode ? "border-slate-700 bg-slate-900/95" : "border-slate-200 bg-white/95"}`}>
                   <button
                     onClick={handleSave}
-                    disabled={saving}
+                    disabled={saving || !profileHasChanges()}
                     className="flex w-full items-center justify-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:rounded-2xl sm:px-6"
                   >
                     <Save size={18} />
@@ -967,14 +962,19 @@ function AdminProfile() {
                       </label>
                       <label className="block text-sm font-medium">
                         Current password
-                        <input
-                          type="password"
-                          autoComplete="current-password"
-                          required
-                          value={emailChangeForm.current_password}
-                          onChange={(event) => setEmailChangeForm((current) => ({ ...current, current_password: event.target.value }))}
-                          className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-700 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}
-                        />
+                        <span className="relative mt-1.5 block">
+                          <input
+                            type={showEmailChangePassword ? "text" : "password"}
+                            autoComplete="current-password"
+                            required
+                            value={emailChangeForm.current_password}
+                            onChange={(event) => setEmailChangeForm((current) => ({ ...current, current_password: event.target.value }))}
+                            className={`w-full rounded-xl border px-3 py-2.5 pr-11 outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-700 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                          />
+                          <button type="button" onClick={() => setShowEmailChangePassword((visible) => !visible)} aria-label={showEmailChangePassword ? "Hide current password" : "Show current password"} aria-pressed={showEmailChangePassword} className={`absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 ${darkMode ? "text-slate-400 hover:text-white" : "text-slate-500 hover:text-slate-800"}`}>
+                            {showEmailChangePassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+                          </button>
+                        </span>
                       </label>
                     </div>
                     <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -1071,7 +1071,10 @@ function AdminProfile() {
                         return;
                       }
                       const saved = await performSave({ showErrorInModal: true });
-                      if (saved) setShowPasswordModal(false);
+                      if (saved) {
+                        setShowPasswordModal(false);
+                        setShowCurrentPassword(false);
+                      }
                     }}
                     className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl"
                   >
@@ -1085,22 +1088,34 @@ function AdminProfile() {
                       </div>
                     )}
                     <label htmlFor="admin-profile-current-password" className="mb-1.5 block text-sm font-medium text-gray-700">Current password</label>
-                    <input
-                      id="admin-profile-current-password"
-                      type="password"
-                      name="current_password"
-                      value={profile.current_password}
-                      onChange={handleChange}
-                      placeholder="Current password"
-                      autoComplete="current-password"
-                      className="w-full border rounded-2xl px-4 py-3 mb-4 focus:outline-none focus:ring-2 focus:ring-red-500"
-                    />
+                    <div className="relative mb-4">
+                      <input
+                        id="admin-profile-current-password"
+                        type={showCurrentPassword ? "text" : "password"}
+                        name="current_password"
+                        value={profile.current_password}
+                        onChange={handleChange}
+                        placeholder="Current password"
+                        autoComplete="current-password"
+                        className="w-full rounded-2xl border px-4 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-red-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCurrentPassword((visible) => !visible)}
+                        aria-label={showCurrentPassword ? "Hide current password" : "Show current password"}
+                        aria-pressed={showCurrentPassword}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                      >
+                        {showCurrentPassword ? <EyeOff size={19} aria-hidden="true" /> : <Eye size={19} aria-hidden="true" />}
+                      </button>
+                    </div>
                     <div className="flex justify-end gap-3">
                       <button
                         type="button"
                         disabled={saving}
                         onClick={() => {
                           setShowPasswordModal(false);
+                          setShowCurrentPassword(false);
                           setPasswordModalError("");
                         }}
                         className="px-4 py-3 rounded-2xl border border-gray-200 bg-white hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"

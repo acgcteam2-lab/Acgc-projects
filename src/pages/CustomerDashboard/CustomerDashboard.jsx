@@ -26,6 +26,7 @@ import {
   Minus,
   FileText,
   Eye,
+  EyeOff,
   Pencil,
   Bell,
   Check,
@@ -80,6 +81,7 @@ import { buildOrderTimelineStages, calculateStageProgressPercent } from "@/lib/o
 import { getProgressColor } from "@/lib/utils";
 import { paginateItems } from "@/lib/pagination";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useAdminContactPhone } from "@/hooks/useAdminContactPhone";
 import { getSystemSettings } from "@/api/users";
 import { requestEmailChange, resendEmailChangeCode, verifyEmailChangeCode } from "@/api/auth";
 import { getCart, saveCart } from "@/api/cart";
@@ -272,6 +274,14 @@ const renderRatingStars = (rating = 0, size = 18) => {
 
 function CustomerDashboard() {
   const isMobile = useIsMobile();
+  const {
+    phone: adminContactPhone,
+    phoneHref: adminContactPhoneHref,
+    address: adminContactAddress,
+    addressHref: adminContactAddressHref,
+    email: adminContactEmail,
+    emailHref: adminContactEmailHref,
+  } = useAdminContactPhone();
   const API_HOST = (function getApiHost() {
     try {
       return (API_BASE || "").replace(/\/api$/, "");
@@ -654,6 +664,7 @@ function CustomerDashboard() {
   const [profileMessage, setProfileMessage] = useState("");
   const [profileError, setProfileError] = useState("");
   const [emailChangeOpen, setEmailChangeOpen] = useState(false);
+  const [showEmailChangePassword, setShowEmailChangePassword] = useState(false);
   const [emailChangeSaving, setEmailChangeSaving] = useState(false);
   const [emailChangeError, setEmailChangeError] = useState("");
   const [emailChangeForm, setEmailChangeForm] = useState({ new_email: "", confirm_new_email: "", current_password: "" });
@@ -3283,6 +3294,7 @@ function CustomerDashboard() {
       }
 
       setProfileMessage("Profile updated successfully.");
+      toast.success("Your profile changes were saved successfully.");
       return true;
     } catch (error) {
       setSaveError(error.data?.message || error.message || "Failed to update profile.");
@@ -4478,8 +4490,8 @@ function CustomerDashboard() {
   const orderFilterOptions = [
     { value: "all", label: "All Orders" },
     { value: "order", label: "My Orders" },
-    { value: "review", label: "To Review" },
     { value: "completed", label: "Completed" },
+    { value: "review", label: "To Review" },
     { value: "reviewed", label: "Reviewed Product" },
     { value: "cancel", label: "Cancelled" },
   ].map((option) => ({
@@ -9425,7 +9437,7 @@ function CustomerDashboard() {
               )}
 
               {profileMessage && (
-                <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-700">
+                <div role="status" aria-live="polite" className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-700">
                   {profileMessage}
                 </div>
               )}
@@ -9624,7 +9636,7 @@ function CustomerDashboard() {
                 )}
                 <button
                   onClick={handleProfileSave}
-                  disabled={profileSaving}
+                  disabled={profileSaving || !profileHasChanges()}
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                 >
                   <Save size={16} />
@@ -9697,14 +9709,19 @@ function CustomerDashboard() {
                       </label>
                       <label className="block text-sm font-medium">
                         Current Password
-                        <input
-                          type="password"
-                          autoComplete="current-password"
-                          required
-                          value={emailChangeForm.current_password}
-                          onChange={(event) => setEmailChangeForm((current) => ({ ...current, current_password: event.target.value }))}
-                          className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-700 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}
-                        />
+                        <span className="relative mt-1.5 block">
+                          <input
+                            type={showEmailChangePassword ? "text" : "password"}
+                            autoComplete="current-password"
+                            required
+                            value={emailChangeForm.current_password}
+                            onChange={(event) => setEmailChangeForm((current) => ({ ...current, current_password: event.target.value }))}
+                            className={`w-full rounded-xl border px-3 py-2.5 pr-11 outline-none focus:ring-2 focus:ring-red-500 ${darkMode ? "border-slate-700 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-900"}`}
+                          />
+                          <button type="button" onClick={() => setShowEmailChangePassword((visible) => !visible)} aria-label={showEmailChangePassword ? "Hide current password" : "Show current password"} aria-pressed={showEmailChangePassword} className={`absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 ${darkMode ? "text-slate-400 hover:text-white" : "text-slate-500 hover:text-slate-800"}`}>
+                            {showEmailChangePassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+                          </button>
+                        </span>
                       </label>
                     </div>
                     <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -10098,7 +10115,7 @@ function CustomerDashboard() {
         )}
 
         {!isMobile && (
-          <footer className={`relative left-1/2 -mb-6 ${activeTab === "orders" ? "mt-0" : "mt-8"} w-screen -translate-x-1/2 overflow-hidden bg-[#232b3d] text-white`}>
+          <footer className={`relative left-1/2 ${activeTab === "contracts" ? "mt-auto -mb-6" : activeTab === "orders" ? "mt-0 -mb-6" : "mt-8 -mb-6"} w-screen -translate-x-1/2 overflow-hidden bg-[#232b3d] text-white`}>
           <div className="mx-auto max-w-7xl px-8 pt-8 pb-5">
             <div className="grid grid-cols-1 gap-8 sm:grid-cols-[repeat(auto-fit,minmax(200px,1fr))]">
               <div className="min-w-0">
@@ -10125,9 +10142,9 @@ function CustomerDashboard() {
               <div className="min-w-0">
                 <h4 className="mb-3 text-[15px] font-medium text-white">Contact</h4>
                 <div className="flex flex-col gap-2.5 text-sm text-slate-300">
-                  <a href="mailto:acgc.services00@email.com" className="flex min-w-0 items-start gap-3 rounded-sm transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"><Mail size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span className="break-words">Email: acgc.services00@email.com</span></a>
-                  <a href="tel:+639123456789" className="flex min-w-0 items-start gap-3 rounded-sm transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"><Phone size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span>Phone: +63 912 345 6789</span></a>
-                  <a href="https://www.google.com/maps/search/?api=1&amp;query=Maligaya%201%2C%20Katasaan%2C%20Dinalupihan%2C%20Bataan%2C%20Philippines" target="_blank" rel="noreferrer" className="flex min-w-0 items-start gap-3 rounded-sm transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"><MapPin size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span>Maligaya 1, Katasaan, Dinalupihan, Bataan, Philippines</span></a>
+                  <a href={adminContactEmailHref} className="flex min-w-0 items-start gap-3 rounded-sm transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"><Mail size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span className="break-words">Email: {adminContactEmail}</span></a>
+                  <a href={adminContactPhoneHref} className="flex min-w-0 items-start gap-3 rounded-sm transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"><Phone size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span>Phone: {adminContactPhone}</span></a>
+                  <a href={adminContactAddressHref} target="_blank" rel="noreferrer" className="flex min-w-0 items-start gap-3 rounded-sm transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"><MapPin size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span>{adminContactAddress}</span></a>
                   <a href="https://www.google.com/maps/search/?api=1&amp;query=Philippines" target="_blank" rel="noreferrer" className="flex min-w-0 items-start gap-3 rounded-sm transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"><MapPin size={16} className="mt-0.5 shrink-0 text-slate-400" aria-hidden="true" /><span>Philippines</span></a>
                 </div>
               </div>

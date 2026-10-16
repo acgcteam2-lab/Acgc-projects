@@ -54,6 +54,8 @@ export const restoreAdminRecovery = (payload) => apiFetch("/auth/admin-recovery/
 
 export const getMe = () => apiFetch("/auth/me", { cache: "no-store" });
 
+export const getPublicContact = () => apiFetch("/auth/public-contact", { cache: "no-store" });
+
 export const updateProfile = (payload) => apiFetch("/auth/profile", {
   method: "PUT",
   body: JSON.stringify(payload),

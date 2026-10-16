@@ -165,12 +165,12 @@ function ForgotPassword() {
               </div>
             ) : null}
 
-            {error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
+            {error ? <div role="alert" aria-live="assertive" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
             {success ? <div className="mt-4 rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-700">{success}</div> : null}
 
             {step < 4 ? (
               <form onSubmit={handleSubmit} className="mt-6">
-                {step === 1 ? <EmailField value={email} onChange={setEmail} /> : null}
+                {step === 1 ? <EmailField value={email} onChange={(value) => { setEmail(value); setError(""); }} /> : null}
                 {step === 2 ? (
                   <div>
                     <label htmlFor="password-reset-code" className="mb-2 block text-sm font-semibold text-slate-700">Verification code</label>

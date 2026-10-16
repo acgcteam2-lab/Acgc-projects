@@ -648,6 +648,7 @@ function SiteInspection() {
   const [showModal, setShowModal] = useState(false);
   const [inspections, setInspections] = useState([]);
   const [inspectionsLoading, setInspectionsLoading] = useState(false);
+  const inspectionFetchStateRef = useRef({ inFlight: false, refreshQueued: false });
   const [generatingId, setGeneratingId] = useState(null);
   const [cancelledInspections, setCancelledInspections] = useState([]);
   const [cancellingId, setCancellingId] = useState(null);
@@ -737,7 +738,7 @@ function SiteInspection() {
       ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
       : "border border-emerald-200 bg-emerald-50 text-emerald-700",
   } : {
-    label: "Needs to be Called",
+    label: "Need to be Called",
     icon: "📞",
     className: statusBadgeClass,
   };
@@ -787,6 +788,12 @@ function SiteInspection() {
   }, [activeTab, searchQuery, statusFilter, cancelledInspections.length, inspections.length]);
 
   const fetchSiteInspections = async (showLoading = true) => {
+    const fetchState = inspectionFetchStateRef.current;
+    if (fetchState.inFlight) {
+      fetchState.refreshQueued = true;
+      return;
+    }
+    fetchState.inFlight = true;
     if (showLoading) setInspectionsLoading(true);
     try {
       const [siteResp, cancelledResp] = await Promise.all([
@@ -801,6 +808,11 @@ function SiteInspection() {
       setCancelledInspections([]);
     } finally {
       if (showLoading) setInspectionsLoading(false);
+      fetchState.inFlight = false;
+      if (fetchState.refreshQueued) {
+        fetchState.refreshQueued = false;
+        window.setTimeout(() => fetchSiteInspections(false), 0);
+      }
     }
   };
 
@@ -910,7 +922,7 @@ function SiteInspection() {
         ? "Cancelled"
         : hasValidInspectionDate(inspection)
           ? "Scheduled"
-          : "Needs to be Called";
+          : "Need to be Called";
       const searchableValues = [
         clientName,
         inspection.customer?.email,
@@ -1824,10 +1836,17 @@ function SiteInspection() {
   useEffect(() => {
     fetchSiteInspections();
     fetchProducts();
-    const unsubscribeRealtime = subscribeToRealtime("orders", () => {
+    const refreshVisibleTable = () => {
       if (document.visibilityState === "visible") fetchSiteInspections(false);
-    });
-    return unsubscribeRealtime;
+    };
+    const unsubscribeRealtime = subscribeToRealtime(["orders", "site_inspection"], refreshVisibleTable);
+    window.addEventListener("focus", refreshVisibleTable);
+    document.addEventListener("visibilitychange", refreshVisibleTable);
+    return () => {
+      unsubscribeRealtime();
+      window.removeEventListener("focus", refreshVisibleTable);
+      document.removeEventListener("visibilitychange", refreshVisibleTable);
+    };
   }, []);
 
   useEffect(() => {
@@ -2940,7 +2959,7 @@ function SiteInspection() {
 
   const getInspectionStatusDisplay = (inspection) => {
     if (activeTab === "cancelled") return "Cancelled";
-    return hasValidInspectionDate(inspection) ? "Scheduled" : "Needs to be Called";
+    return hasValidInspectionDate(inspection) ? "Scheduled" : "📞 Need to be Called";
   };
 
   const getInspectionStatusTone = (status) => {
@@ -3240,15 +3259,15 @@ function SiteInspection() {
               <div className="flex flex-col gap-2 sm:flex-row">
                 {activeTab === "site" && (
                   <FilterDropdown
-                    label="All status"
+                    label="All Status"
                     value={statusFilter}
                     onChange={setStatusFilter}
                     darkMode={darkMode}
                     className="w-full sm:w-52"
                     options={[
-                      ["all", "All status"],
+                      ["all", "All Status"],
                       ["scheduled", "Scheduled"],
-                      ["needs-call", "Needs to be Called"],
+                      ["needs-call", "Need to be Called"],
                     ]}
                   />
                 )}
@@ -4182,7 +4201,7 @@ function SiteInspection() {
             const agreedPaymentDateValue = viewInspection.agreed_payment_date ? formatDateToMMDDYYYY(viewInspection.agreed_payment_date) : null;
             const statusBadge = !viewInspection.inspection_date
               ? {
-                  label: "Needs to be Called",
+                  label: "📞Need to be Called",
                   className: darkMode
                     ? "border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-xs font-bold uppercase tracking-[0.16em] text-violet-200"
                     : "border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-bold uppercase tracking-[0.16em] text-violet-700",
@@ -4655,7 +4674,7 @@ function SiteInspection() {
                         <label className={`mb-2 block text-[14px] font-bold ${labelClass}`}>Status</label>
                         <div className={`flex h-[48px] items-center justify-center rounded-xl px-3 text-sm font-bold ${editInspection.inspection_date ? (darkMode ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border border-emerald-200 bg-emerald-50 text-emerald-700") : statusBadgeClass}`}>
                           <span className="mr-2 text-base">{editInspection.inspection_date ? "✓" : "📞"}</span>
-                          {editInspection.inspection_date ? "Scheduled" : "Needs to be Called"}
+                          {editInspection.inspection_date ? "Scheduled" : "Need to be Called"}
                         </div>
                       </div>
                     </div>

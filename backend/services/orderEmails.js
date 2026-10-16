@@ -338,6 +338,40 @@ const getEventContent = (event, order, audience, extra) => {
         ["Questions or concerns", process.env.SUPPORT_EMAIL || "acgc.services00@gmail.com"],
       ],
     },
+    installation_up_next: {
+      title: "Installation coming up",
+      summary: extra.productName
+        ? `Installation for ${extra.productName} is coming up. Our team is preparing for this project stage.`
+        : "Installation is coming up. Our team is preparing for this project stage.",
+      subject: `Installation coming up - ${orderIdOf(order)}`,
+      status: "Coming Up",
+      action: "View project progress",
+      path: "customer-dashboard?tab=orders",
+      next: "Please keep the installation area accessible and clear. We will contact you if we need to confirm anything before our team arrives.",
+      fields: [
+        ...(extra.productName ? [["Product", extra.productName]] : []),
+        ["Installation date", dateOnly(extra.installationDate || order?.estimated_installation_date)],
+        ["Installation address", order?.shipping_address || "Not provided"],
+        ["Products included", products.join("; ")],
+      ],
+    },
+    installation_completed: {
+      title: "Installation complete",
+      summary: extra.productName
+        ? `Installation for ${extra.productName} has been completed. Thank you for choosing ACGC Aluminum Services!`
+        : "Your installation has been completed. Thank you for choosing ACGC Aluminum Services!",
+      subject: `Installation complete - ${orderIdOf(order)}`,
+      status: "Completed",
+      action: "View project details",
+      path: "customer-dashboard?tab=orders",
+      next: "Thank you for choosing ACGC. If you have any questions about your completed installation, please contact our support team.",
+      fields: [
+        ...(extra.productName ? [["Product", extra.productName]] : []),
+        ["Completed on", dateTime(extra.completedAt)],
+        ["Installation address", order?.shipping_address || "Not provided"],
+        ["Products included", products.join("; ")],
+      ],
+    },
   };
 
   const content = eventContent[event];

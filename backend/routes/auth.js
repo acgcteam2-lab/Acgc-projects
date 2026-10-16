@@ -734,28 +734,57 @@ router.get("/customer-permissions", async (_req, res) => {
   }
 });
 
+const getAdminPublicContact = async () => {
+  const username = String(process.env.ADMIN_RECOVERY_USERNAME || "").trim().toLowerCase();
+  let account = null;
+  if (username) {
+    account = await Admin.findOne({ username, is_active: { $ne: false } }).select("email phone street_address city province zip_code").lean();
+  }
+  const preferredAccount = account;
+  if (!String(account?.phone || "").trim()) {
+    account = await Admin.findOne({
+      is_active: { $ne: false },
+      phone: { $regex: /\S/ },
+    }).sort({ updatedAt: -1, _id: 1 }).select("email phone street_address city province zip_code").lean();
+  }
+  if (!String(account?.phone || "").trim()) {
+    account = await User.findOne({
+      role: "admin",
+      is_active: { $ne: false },
+      phone: { $regex: /\S/ },
+    }).sort({ updatedAt: -1, _id: 1 }).select("email phone street_address city province zip_code").lean();
+  }
+  const preferredAddress = [preferredAccount?.street_address, preferredAccount?.city, preferredAccount?.province, preferredAccount?.zip_code]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean);
+  const addressAccount = preferredAddress.length ? preferredAccount : account;
+  const email = String(preferredAccount?.email || account?.email || "").trim();
+  const streetAddress = String(addressAccount?.street_address || "").trim();
+  return {
+    email,
+    phone: String(account?.phone || "").trim(),
+    address: streetAddress || [addressAccount?.city, addressAccount?.province, addressAccount?.zip_code]
+      .map((part) => String(part || "").trim())
+      .filter(Boolean)
+      .join(", "),
+  };
+};
+
+router.get("/public-contact", async (_req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ success: true, ...await getAdminPublicContact() });
+  } catch (error) {
+    console.error("Get public business contact error:", error);
+    return res.status(500).json({ success: false, message: "Unable to load business contact details." });
+  }
+});
+
 router.get("/customer-payment-contact", authMiddleware, roleMiddleware("customer"), async (_req, res) => {
   try {
-    const username = String(process.env.ADMIN_RECOVERY_USERNAME || "").trim().toLowerCase();
-    let account = null;
-    if (username) {
-      account = await Admin.findOne({ username, is_active: { $ne: false } }).select("phone").lean();
-    }
-    if (!String(account?.phone || "").trim()) {
-      account = await Admin.findOne({
-        is_active: { $ne: false },
-        phone: { $regex: /\S/ },
-      }).sort({ updatedAt: -1, _id: 1 }).select("phone").lean();
-    }
-    if (!String(account?.phone || "").trim()) {
-      account = await User.findOne({
-        role: "admin",
-        is_active: { $ne: false },
-        phone: { $regex: /\S/ },
-      }).sort({ updatedAt: -1, _id: 1 }).select("phone").lean();
-    }
     res.setHeader("Cache-Control", "no-store");
-    return res.json({ success: true, phone: String(account?.phone || "").trim() });
+    const contact = await getAdminPublicContact();
+    return res.json({ success: true, phone: contact.phone });
   } catch (error) {
     console.error("Get customer payment contact error:", error);
     return res.status(500).json({ success: false, message: "Unable to load payment support contact." });
@@ -1262,6 +1291,10 @@ router.post("/forgot-password", async (req, res) => {
       User.findOne({ email }),
     ]);
     const account = admin || user;
+
+    if (!account) {
+      return res.status(404).json({ success: false, message: "The email address you entered does not match any existing account. Please verify it and try again." });
+    }
 
     let responseAccount = account;
     if (account) {

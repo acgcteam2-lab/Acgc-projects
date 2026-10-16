@@ -45,6 +45,7 @@ export const buildInstallationNotificationEvents = (stages, { itemIndex = null, 
       message: "Your ACGC order is up next for installation. Our team will begin the installation stage soon. Please stay tuned for updates.",
       stageKey: installationStage.key || stageKey,
       stageName: installationStage.name || "Installation",
+      installationDate: installationStage.proposedInstallationDate || installationStage.date || null,
       itemIndex,
       productName,
     });
@@ -60,7 +61,7 @@ export const buildInstallationNotificationEvents = (stages, { itemIndex = null, 
       stageName: installationStage.name || "Installation",
       itemIndex,
       productName,
-      completedAt: installationStage.date || installationStage.installationCompletedAt || null,
+      completedAt: installationStage.installationCompletedAt || installationStage.date || null,
     });
   }
 

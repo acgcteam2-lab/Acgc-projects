@@ -397,6 +397,70 @@ function Transactions() {
     )).length
   ), 0);
 
+  const getReportRecordDates = (order, type) => {
+    const transactionDate = order.transactionCreatedAt || order.acceptedAt || order.createdAt;
+    const feedbackDates = [order.review, ...(order.items || []).map((item) => item.review)]
+      .flatMap((review) => review ? [review.submittedAt || review.updatedAt] : []);
+    const paymentRecords = order.payment_records || [];
+    const paymentDates = paymentRecords.length
+      ? paymentRecords.map((record) => record.payment_date || record.verified_at || record.recorded_at || record.submitted_at || record.createdAt)
+      : (Number(order.amount_paid || order.payment_amount || order.paid_amount) > 0
+        ? [order.payment_proof_confirmed_at || order.updatedAt || transactionDate]
+        : []);
+    const warrantyDates = [
+      ...(order.warranty_period || order.warranty_start_date || order.warranty_expiry_date || order.warranty_status || order.warranty_terms
+        ? [order.warranty_start_date || order.warranty_expiry_date || order.updatedAt || transactionDate]
+        : []),
+      ...(order.items || []).flatMap((item) => item.warranty_period || item.warranty_start_date || item.warranty_expiry_date || item.warranty_status || item.warranty_terms
+        ? [item.warranty_start_date || item.warranty_expiry_date || order.updatedAt || transactionDate]
+        : []),
+    ];
+    const datesByType = {
+      customer_feedback: feedbackDates,
+      payment_records: paymentDates,
+      warranty_records: warrantyDates,
+    };
+    return type === "all_reports"
+      ? [transactionDate, ...feedbackDates, ...paymentDates, ...warrantyDates]
+      : datesByType[type] || [transactionDate];
+  };
+  const reportRecordDates = transactionOrders
+    .flatMap((order) => getReportRecordDates(order, reportType))
+    .map((value) => {
+      if (!value) return "";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    })
+    .filter(Boolean)
+    .sort();
+  const reportMinDate = reportRecordDates[0] || "";
+  const reportMaxDate = reportRecordDates.at(-1) || "";
+  const reportAvailableMonths = new Set(reportRecordDates.map((date) => date.slice(0, 7)));
+
+  const isReportDateMonthAvailable = (date) => !date || reportAvailableMonths.has(date.slice(0, 7));
+
+  const handleReportStartDateChange = (date) => {
+    if (!isReportDateMonthAvailable(date)) {
+      toast.error("There are no records in the selected month. Choose a month with transaction records.");
+      return;
+    }
+    setReportStartDate(date);
+    if (date && reportEndDate && date > reportEndDate) setReportEndDate("");
+  };
+
+  const handleReportEndDateChange = (date) => {
+    if (!isReportDateMonthAvailable(date)) {
+      toast.error("There are no records in the selected month. Choose a month with transaction records.");
+      return;
+    }
+    setReportEndDate(date);
+    if (date && reportStartDate && date < reportStartDate) setReportStartDate("");
+  };
+
   const updateOrderLocally = (orderId, patch) => {
     setOrders((prev) =>
       prev.map((order) =>
@@ -414,7 +478,15 @@ function Transactions() {
       toast.error("Start date must be on or before end date.");
       return;
     }
-
+    if ((reportStartDate && ((reportMinDate && reportStartDate < reportMinDate) || (reportMaxDate && reportStartDate > reportMaxDate)))
+      || (reportEndDate && ((reportMinDate && reportEndDate < reportMinDate) || (reportMaxDate && reportEndDate > reportMaxDate)))) {
+      toast.error("Choose dates within the available transaction record dates.");
+      return;
+    }
+    if (!isReportDateMonthAvailable(reportStartDate) || !isReportDateMonthAvailable(reportEndDate)) {
+      toast.error("Choose a month that contains records for this report.");
+      return;
+    }
     reportGenerationSubmittingRef.current = true;
     setReportGenerationLoading(true);
     try {
@@ -2331,8 +2403,9 @@ function Transactions() {
                       <input
                         type="date"
                         value={reportStartDate}
-                        max={reportEndDate || undefined}
-                        onChange={(event) => setReportStartDate(event.target.value)}
+                        min={reportMinDate || undefined}
+                        max={[reportEndDate, reportMaxDate].filter(Boolean).sort()[0] || undefined}
+                        onChange={(event) => handleReportStartDateChange(event.target.value)}
                         className={`w-full rounded-lg border px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/10 ${darkMode ? "border-slate-600 bg-[#1d2f45] text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
                       />
                     </label>
@@ -2341,8 +2414,9 @@ function Transactions() {
                       <input
                         type="date"
                         value={reportEndDate}
-                        min={reportStartDate || undefined}
-                        onChange={(event) => setReportEndDate(event.target.value)}
+                        min={[reportStartDate, reportMinDate].filter(Boolean).sort().at(-1) || undefined}
+                        max={reportMaxDate || undefined}
+                        onChange={(event) => handleReportEndDateChange(event.target.value)}
                         className={`w-full rounded-lg border px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/10 ${darkMode ? "border-slate-600 bg-[#1d2f45] text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
                       />
                     </label>
@@ -2355,7 +2429,7 @@ function Transactions() {
                           onChange={(event) => setReportProjectStatus(event.target.value)}
                           className={`w-full rounded-lg border px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/10 ${darkMode ? "border-slate-600 bg-[#1d2f45] text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
                         >
-                          <option value="all">All statuses</option>
+                          <option value="all">All Status</option>
                           <option value="pending">Pending</option>
                           <option value="active">Active / In Progress</option>
                           <option value="completed">Completed</option>
@@ -2372,7 +2446,7 @@ function Transactions() {
                           onChange={(event) => setReportPaymentStatus(event.target.value)}
                           className={`w-full rounded-lg border px-3 py-2.5 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-500/10 ${darkMode ? "border-slate-600 bg-[#1d2f45] text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}
                         >
-                          <option value="all">All payment statuses</option>
+                          <option value="all">All Payment Status</option>
                           <option value="pending">Pending</option>
                           <option value="partial_downpayment">Partial Downpayment</option>
                           <option value="downpayment">Downpayment Completed</option>

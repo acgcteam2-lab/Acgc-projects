@@ -61,7 +61,7 @@ const persistInstallationNotifications = async (order, stages, itemIndex = null,
     .filter((event) => includeCompletion || event.type !== "installation_completed");
   await Promise.all(events.map(async (event) => {
     try {
-      await CustomerNotification.updateOne(
+      const result = await CustomerNotification.updateOne(
         { order: order._id, eventKey: event.eventKey },
         { $setOnInsert: {
           customer: order.customer,
@@ -79,6 +79,14 @@ const persistInstallationNotifications = async (order, stages, itemIndex = null,
         } },
         { upsert: true }
       );
+      if (result.upsertedCount > 0 || result.upsertedId) {
+        void sendOrderNotification(event.type, order, {
+          installationDate: event.installationDate || order.estimated_installation_date,
+          completedAt: event.completedAt,
+          productName: event.productName,
+          itemIndex: event.itemIndex,
+        });
+      }
     } catch (error) {
       if (error?.code !== 11000) throw error;
     }

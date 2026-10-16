@@ -5,12 +5,14 @@ import {
   ClipboardList,
   Clock3,
   Hammer,
+  Mail,
   MapPin,
   Phone,
   Ruler,
   Users,
   Wrench,
 } from "lucide-react";
+import { useAdminContactPhone } from "@/hooks/useAdminContactPhone";
 
 const stats = [
   { value: "14+", label: "Years of Experience", icon: Clock3 },
@@ -35,6 +37,7 @@ const process = [
 ];
 
 function AboutBusinessContent({ darkMode = false }) {
+  const { phone, phoneHref, address, addressHref, email, emailHref } = useAdminContactPhone();
   const text = darkMode ? "text-slate-100" : "text-slate-900";
   const muted = darkMode ? "text-slate-400" : "text-slate-600";
   const accentText = darkMode ? "text-red-300" : "text-red-700";
@@ -52,16 +55,16 @@ function AboutBusinessContent({ darkMode = false }) {
           <h3 className={`text-2xl font-black tracking-tight sm:text-3xl ${text}`}>Our Process</h3>
           <p className={`mx-auto max-w-xl text-sm leading-6 ${muted}`}>A clear, careful process keeps your project moving at every step.</p>
         </div>
-        <div className="relative grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:gap-4">
+        <div className="relative grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
           <div className={`pointer-events-none absolute left-[12%] right-[12%] top-8 hidden border-t border-dashed lg:block ${darkMode ? "border-slate-600" : "border-red-200"}`} />
           {process.map(({ title, description, icon: Icon }, index) => (
-            <article key={title} className={`relative rounded-2xl border p-4 text-center transition duration-300 hover:-translate-y-1 hover:shadow-md sm:p-5 ${darkMode ? "border-slate-700 bg-slate-800/75" : "border-slate-200 bg-white/90"}`}>
-              <div className={`relative mx-auto flex size-14 items-center justify-center rounded-2xl bg-red-800 text-white shadow-lg shadow-red-900/15 ring-4 ${darkMode ? "ring-slate-900" : "ring-white"}`}>
+            <article key={title} className={`relative rounded-2xl border p-3 text-center transition duration-300 hover:-translate-y-1 hover:shadow-md sm:p-5 ${darkMode ? "border-slate-700 bg-slate-800/75" : "border-slate-200 bg-white/90"}`}>
+              <div className={`relative mx-auto flex size-12 items-center justify-center rounded-2xl bg-red-800 text-white shadow-lg shadow-red-900/15 ring-4 sm:size-14 ${darkMode ? "ring-slate-900" : "ring-white"}`}>
                 <Icon size={21} aria-hidden="true" />
                 <span className={`absolute -right-2 -top-2 flex size-6 items-center justify-center rounded-full border-2 text-[10px] font-black shadow-sm ${darkMode ? "border-slate-800 bg-slate-800 text-red-300" : "border-white bg-white text-red-800"}`}>{index + 1}</span>
               </div>
-              <h4 className={`mt-4 text-sm font-extrabold ${text}`}>{title}</h4>
-              <p className={`mx-auto mt-2 max-w-[220px] text-xs leading-5 ${muted}`}>{description}</p>
+              <h4 className={`mt-3 text-xs font-extrabold sm:mt-4 sm:text-sm ${text}`}>{title}</h4>
+              <p className={`mx-auto mt-1.5 max-w-[220px] text-[11px] leading-4 sm:mt-2 sm:text-xs sm:leading-5 ${muted}`}>{description}</p>
             </article>
           ))}
         </div>
@@ -111,14 +114,19 @@ function AboutBusinessContent({ darkMode = false }) {
             </div>
           </div>
           <div className="mt-4 space-y-3">
-            <a href="tel:+639123456789" className={`group flex items-start gap-3 rounded-2xl border p-3.5 transition hover:border-red-300 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${inset}`}>
-              <span className={`mt-0.5 ${accentText}`}><Phone size={17} aria-hidden="true" /></span>
-              <span className="min-w-0"><span className={`block text-[10px] font-extrabold uppercase tracking-[0.15em] ${muted}`}>Phone</span><span className={`mt-1 block text-sm font-bold ${text}`}>+63 912 345 6789</span></span>
+            <a href={emailHref} className={`group flex items-start gap-3 rounded-2xl border p-3.5 transition hover:border-red-300 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${inset}`}>
+              <span className={`mt-0.5 ${accentText}`}><Mail size={17} aria-hidden="true" /></span>
+              <span className="min-w-0"><span className={`block text-[10px] font-extrabold uppercase tracking-[0.15em] ${muted}`}>Email</span><span className={`mt-1 block break-words text-sm font-bold ${text}`}>{email}</span></span>
               <ArrowUpRight size={15} className={`ml-auto mt-1 shrink-0 ${muted}`} aria-hidden="true" />
             </a>
-            <a href="https://www.google.com/maps/search/?api=1&query=Maligaya%201%2C%20Katasaan%2C%20Dinalupihan%2C%20Bataan%2C%20Philippines" target="_blank" rel="noreferrer" className={`group flex items-start gap-3 rounded-2xl border p-3.5 transition hover:border-red-300 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${inset}`}>
+            <a href={phoneHref} className={`group flex items-start gap-3 rounded-2xl border p-3.5 transition hover:border-red-300 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${inset}`}>
+              <span className={`mt-0.5 ${accentText}`}><Phone size={17} aria-hidden="true" /></span>
+              <span className="min-w-0"><span className={`block text-[10px] font-extrabold uppercase tracking-[0.15em] ${muted}`}>Phone</span><span className={`mt-1 block text-sm font-bold ${text}`}>{phone}</span></span>
+              <ArrowUpRight size={15} className={`ml-auto mt-1 shrink-0 ${muted}`} aria-hidden="true" />
+            </a>
+            <a href={addressHref} target="_blank" rel="noreferrer" className={`group flex items-start gap-3 rounded-2xl border p-3.5 transition hover:border-red-300 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${inset}`}>
               <span className={`mt-0.5 ${accentText}`}><MapPin size={17} aria-hidden="true" /></span>
-              <span className="min-w-0"><span className={`block text-[10px] font-extrabold uppercase tracking-[0.15em] ${muted}`}>Address</span><span className={`mt-1 block text-sm font-semibold leading-5 ${text}`}>Maligaya 1, Katasaan, Dinalupihan, Bataan</span></span>
+              <span className="min-w-0"><span className={`block text-[10px] font-extrabold uppercase tracking-[0.15em] ${muted}`}>Address</span><span className={`mt-1 block text-sm font-semibold leading-5 ${text}`}>{address}</span></span>
               <ArrowUpRight size={15} className={`ml-auto mt-1 shrink-0 ${muted}`} aria-hidden="true" />
             </a>
             <div className={`flex items-start gap-3 rounded-2xl border p-3.5 ${inset}`}>

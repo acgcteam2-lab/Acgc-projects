@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import {
@@ -46,6 +47,7 @@ import { buildProductPriceSnapshot, getDefaultBladeCount, getDefaultExtraChargeS
 import { savePendingProductAction } from "@/lib/pendingProductAction";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useCustomerPermissions } from "@/hooks/useCustomerPermissions";
+import { useAdminContactPhone } from "@/hooks/useAdminContactPhone";
 import { getOptimizedProductImageUrl, getProductImageSource, getProductImageSrcSet, handleProductImageError, handleProductImageLoad, PRODUCT_IMAGE_PLACEHOLDER } from "@/lib/productImageUtils";
 
 const createLandingCartId = () => globalThis.crypto?.randomUUID?.()
@@ -58,6 +60,14 @@ function LandingPage() {
   const { user, loading: authLoading } = useAuth();
   const customerPermissions = useCustomerPermissions();
   const isMobile = useIsMobile();
+  const {
+    phone: adminContactPhone,
+    phoneHref: adminContactPhoneHref,
+    address: adminContactAddress,
+    addressHref: adminContactAddressHref,
+    email: adminContactEmail,
+    emailHref: adminContactEmailHref,
+  } = useAdminContactPhone();
   const initialSearchParams = new URLSearchParams(location.search);
   const lastLocationSearchRef = useRef(location.search);
   const restoringLocationStateRef = useRef(false);
@@ -187,6 +197,11 @@ function LandingPage() {
       quantity: 1,
       ...getDefaultBladeSelections(product),
     });
+  };
+
+  const handleFeaturedProductClick = (product) => {
+    scrollToSection("products");
+    openProductDetails(product);
   };
 
   useEffect(() => {
@@ -1123,12 +1138,12 @@ function LandingPage() {
                       role="button"
                       tabIndex={0}
                       aria-label={`View details for ${product.product_name || product.name || "featured product"}`}
-                      onClick={() => openProductDetails(product)}
+                      onClick={() => handleFeaturedProductClick(product)}
                       onKeyDown={(event) => {
                         if (event.target !== event.currentTarget) return;
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
-                          openProductDetails(product);
+                          handleFeaturedProductClick(product);
                         }
                       }}
                       initial={reduceMotion ? false : { opacity: 0, y: 22 }}
@@ -1168,7 +1183,7 @@ function LandingPage() {
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
-                                openProductDetails(product);
+                                handleFeaturedProductClick(product);
                               }}
                               className="inline-flex size-8 items-center justify-center rounded-xl border border-red-200 bg-white/90 text-red-700 shadow-lg transition hover:border-red-300 hover:bg-red-600 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
                               aria-label="View product details"
@@ -1489,15 +1504,15 @@ function LandingPage() {
   </section>
 )}
 
-{selectedProduct && (
+{selectedProduct && createPortal((
   <div
-    className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5"
+    className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-[100] flex min-h-dvh items-center justify-center overflow-y-auto bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5"
   >
     <section
       role="dialog"
       aria-modal="true"
       aria-labelledby="landing-product-dialog-title"
-      className="mobile-fullscreen-dialog relative flex max-h-[90dvh] w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-white/20 bg-white shadow-2xl"
+      className="mobile-fullscreen-dialog relative flex max-h-[calc(100dvh-2rem)] min-h-0 w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-white/20 bg-white shadow-2xl"
       onClick={(event) => event.stopPropagation()}
     >
       {!isProductModalReadOnly ? <header className="flex shrink-0 items-center justify-between gap-4 border-b border-red-500/25 bg-gradient-to-r from-red-700 to-red-800 px-5 py-4 text-white sm:px-6">
@@ -1812,42 +1827,40 @@ function LandingPage() {
             </p>
           )}
           {customerPermissions.can_request_orders && <>
-          <button
-            type="button"
-            onClick={() => handleAddToCart(selectedProduct, productEstimatorForm)}
-            disabled={!customerPermissions.can_request_orders || addingCartProductId === String(selectedProduct._id || selectedProduct.id || "")}
-            className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-red-700 px-5 py-3 text-sm font-bold text-red-700 transition hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {addingCartProductId === String(selectedProduct._id || selectedProduct.id || "")
-              ? <LoaderCircle size={17} className="animate-spin" aria-hidden="true" />
-              : <ShoppingCart size={17} aria-hidden="true" />}
-            {customerPermissions.can_request_orders ? "Add to Cart" : "Orders Disabled"}
-          </button>
-          <button
-            type="button"
-            onClick={() => continueProductActionAfterLogin("direct")}
-            disabled={!customerPermissions.can_request_orders}
-            className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {customerPermissions.can_request_orders ? "Place Order Request" : "Orders Disabled"} {customerPermissions.can_request_orders && <ArrowRight size={16} aria-hidden="true" />}
-          </button>
+            <button
+              type="button"
+              onClick={() => handleAddToCart(selectedProduct, productEstimatorForm)}
+              disabled={addingCartProductId === String(selectedProduct._id || selectedProduct.id || "")}
+              className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-red-700 px-5 py-3 text-sm font-bold text-red-700 transition hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {addingCartProductId === String(selectedProduct._id || selectedProduct.id || "")
+                ? <LoaderCircle size={17} className="animate-spin" aria-hidden="true" />
+                : <ShoppingCart size={17} aria-hidden="true" />}
+              Add to Cart
+            </button>
+            <button
+              type="button"
+              onClick={() => continueProductActionAfterLogin("direct")}
+              className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+            >
+              Place Order Request <ArrowRight size={16} aria-hidden="true" />
+            </button>
           </>}
           </>}
         </aside>
       </div>
     </section>
   </div>
-)}
+), document.body)}
 
 {showLoginRequired && (
-  <div
-    className="customer-modal-overlay fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
-  >
+  createPortal((
+  <div className="customer-modal-overlay fixed inset-0 z-[130] flex min-h-dvh items-center justify-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm">
     <section
       role="dialog"
       aria-modal="true"
       aria-labelledby="cart-login-required-title"
-      className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+      className="my-auto max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
       onClick={(event) => event.stopPropagation()}
     >
       <div className="flex items-start gap-3">
@@ -1893,6 +1906,7 @@ function LandingPage() {
       </div>
     </section>
   </div>
+  ), document.body)
 )}
 
 {active === "track-order" && (
@@ -2089,29 +2103,29 @@ function LandingPage() {
 )}
 {/* FOOTER */}
 
-<footer className="relative left-1/2 mt-auto w-screen -translate-x-1/2 border-t border-border bg-muted/50 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-6 text-foreground dark:bg-card">
+<footer className="relative left-1/2 mt-auto w-screen -translate-x-1/2 border-t border-white/15 bg-[#232b3d] pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-6 text-white">
   <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
     <div className="grid gap-6 md:gap-8 lg:grid-cols-3">
       <div>
         <div className="flex items-center gap-3">
           <img src={logo} alt="logo" className="h-10 w-14 object-contain" />
           <div>
-            <h3 className="text-base font-medium text-foreground">ACGC Aluminum Services</h3>
-            <p className="text-xs text-muted-foreground">Premium Glass &amp; Aluminum Solutions</p>
+            <h3 className="text-base font-medium text-white">ACGC Aluminum Services</h3>
+            <p className="text-xs text-slate-300">Premium Glass &amp; Aluminum Solutions</p>
           </div>
         </div>
       </div>
 
       <div>
-        <h4 className="mb-3 text-sm font-medium text-foreground">Quick Links</h4>
-        <nav aria-label="Footer quick links" className="space-y-2 text-xs text-muted-foreground">
+        <h4 className="mb-3 text-sm font-medium text-white">Quick Links</h4>
+        <nav aria-label="Footer quick links" className="space-y-2 text-xs text-slate-300">
           {[
             ["Home", "home"],
             ["Browse Products", "products"],
             ["Track Order", "track-order"],
             ["About Us", "about"],
           ].map(([label, sectionId]) => (
-            <button key={sectionId} type="button" onClick={() => scrollToSection(sectionId)} className="block rounded-sm text-left transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none">
+            <button key={sectionId} type="button" onClick={() => scrollToSection(sectionId)} className="block rounded-sm text-left transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white motion-reduce:transition-none">
               {label}
             </button>
           ))}
@@ -2119,25 +2133,25 @@ function LandingPage() {
       </div>
 
       <div>
-        <h4 className="mb-3 text-sm font-medium text-foreground">Contact</h4>
-        <div className="space-y-2 text-xs text-muted-foreground">
-          <a href="mailto:acgc.services00@email.com" className="flex w-fit items-center gap-2 rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <Mail size={15} aria-hidden="true" /><span>Email: acgc.services00@email.com</span>
+        <h4 className="mb-3 text-sm font-medium text-white">Contact</h4>
+        <div className="space-y-2 text-xs text-slate-300">
+          <a href={adminContactEmailHref} className="flex w-fit items-center gap-2 rounded-sm transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+            <Mail size={15} aria-hidden="true" /><span>Email: {adminContactEmail}</span>
           </a>
-          <a href="tel:+639123456789" className="flex w-fit items-center gap-2 rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <Phone size={15} aria-hidden="true" /><span>Phone: +63 912 345 6789</span>
+          <a href={adminContactPhoneHref} className="flex w-fit items-center gap-2 rounded-sm transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+            <Phone size={15} aria-hidden="true" /><span>Phone: {adminContactPhone}</span>
           </a>
-          <a href="https://www.google.com/maps/search/?api=1&amp;query=Maligaya%201%2C%20Katasaan%2C%20Dinalupihan%2C%20Bataan%2C%20Philippines" target="_blank" rel="noreferrer" className="flex w-fit items-center gap-2 rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <MapPin size={15} aria-hidden="true" /><span>Maligaya 1, Katasaan, Dinalupihan, Bataan, Philippines</span>
+          <a href={adminContactAddressHref} target="_blank" rel="noreferrer" className="flex w-fit items-center gap-2 rounded-sm transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+            <MapPin size={15} aria-hidden="true" /><span>{adminContactAddress}</span>
           </a>
-          <a href="https://www.google.com/maps/search/?api=1&amp;query=Philippines" target="_blank" rel="noreferrer" className="flex w-fit items-center gap-2 rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <a href="https://www.google.com/maps/search/?api=1&amp;query=Philippines" target="_blank" rel="noreferrer" className="flex w-fit items-center gap-2 rounded-sm transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
             <MapPin size={15} aria-hidden="true" /><span>Philippines</span>
           </a>
         </div>
       </div>
     </div>
 
-    <div className="mt-6 border-t border-border pt-4 text-center text-[11px] text-muted-foreground">
+    <div className="mt-6 border-t border-white/15 pt-4 text-center text-[11px] text-slate-300">
       © 2026 ACGC Aluminum Services — All Rights Reserved.
     </div>
   </div>

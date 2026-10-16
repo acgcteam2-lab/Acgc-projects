@@ -2401,12 +2401,12 @@ function Products() {
                 />
 
                 <FilterDropdown
-                  label="All statuses"
+                  label="All Status"
                   value={statusFilter}
                   onChange={setStatusFilter}
                   darkMode={darkMode}
                   options={[
-                    ["All", "All statuses"],
+                    ["All", "All Status"],
                     ["Active", "Active"],
                     ["Inactive", "Inactive"],
                   ]}
