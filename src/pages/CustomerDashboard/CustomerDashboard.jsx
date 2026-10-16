@@ -70,6 +70,7 @@ import {
 import { uploadFiles } from "@/api/uploads";
 import ContractModal from "../../components/ContractModal";
 import AboutBusinessContent from "@/components/AboutBusinessContent";
+import FilterDropdown from "@/components/FilterDropdown";
 import OtpCodeInput from "@/components/OtpCodeInput";
 import ProductPriceEstimator, { getProductEstimatorState } from "@/components/ProductPriceEstimator";
 import { formatOrderItemMeasurements } from "@/components/OrderProgressTimeline";
@@ -4263,7 +4264,7 @@ function CustomerDashboard() {
     if (!element) return null;
 
     const clone = element.cloneNode(true);
-    clone.style.width = `${element.scrollWidth}px`;
+    clone.style.width = "794px";
     clone.style.height = "auto";
     clone.style.maxHeight = "none";
     clone.style.overflow = "visible";
@@ -4880,7 +4881,7 @@ function CustomerDashboard() {
             <button
               type="button"
               onClick={toggleDarkMode}
-              className={`order-7 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition focus:outline-none sm:h-10 sm:w-10 lg:order-3 ${
+              className={`order-7 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition focus:outline-none sm:h-10 sm:w-10 lg:order-9 ${
                 darkMode ? "text-slate-200 hover:bg-slate-800" : "text-slate-700 hover:bg-slate-100"
               }`}
               aria-label={darkMode ? "Switch to day mode" : "Switch to night mode"}
@@ -4891,7 +4892,7 @@ function CustomerDashboard() {
                 ? <Moon size={22} strokeWidth={1.8} className="text-sky-300" />
                 : <Sun size={22} strokeWidth={1.8} className="text-amber-500" />}
             </button>
-            <div className="relative order-6 lg:order-2">
+            <div className="relative order-6 lg:order-8">
               <button
                 onClick={() => setNotificationsOpen((s) => !s)}
                 className={`relative p-2.5 text-sm font-semibold transition ${
@@ -4911,7 +4912,7 @@ function CustomerDashboard() {
               </button>
 
               {notificationsOpen && (
-                <div className={`fixed inset-x-3 top-[calc(4.0625rem+env(safe-area-inset-top))] z-20 mt-1 flex max-h-[calc(100dvh-5.5rem)] w-[calc(100%-1.5rem)] max-w-md flex-col overflow-hidden rounded-2xl border shadow-xl lg:absolute lg:inset-x-auto lg:right-0 lg:top-auto lg:mt-2 lg:max-h-[min(36rem,calc(100vh-6rem))] lg:w-96 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+                <div className={`fixed left-auto right-3 top-[calc(4.0625rem+env(safe-area-inset-top))] z-20 mt-1 flex max-h-[calc(100dvh-5.5rem)] w-[min(24rem,calc(100vw-1.5rem))] max-w-md flex-col overflow-hidden rounded-2xl border shadow-xl lg:right-4 lg:top-[calc(4.5rem+env(safe-area-inset-top))] lg:mt-0 lg:max-h-[min(36rem,calc(100vh-6rem))] lg:w-96 ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
                   <div className={`flex shrink-0 items-center justify-between border-b px-3 py-2.5 sm:px-4 sm:py-3 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
                     <div>
                       <p className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-950"}`}>Project updates</p>
@@ -5168,7 +5169,7 @@ function CustomerDashboard() {
                 </div>
               )}
             </div>
-            <div className="relative order-8 hidden lg:block">
+            <div className="relative order-8 hidden lg:order-7 lg:block">
               <button
                 onClick={() => setActiveTab("profile")}
                 className={`flex h-9 w-9 items-center justify-center rounded-full p-2 text-base font-semibold transition sm:h-10 sm:w-auto sm:gap-2 sm:px-4 sm:py-2 ${
@@ -5220,12 +5221,11 @@ function CustomerDashboard() {
               onClick={() => {
                 setConfirmOpen(true);
               }}
-              className={`order-9 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition sm:h-10 sm:w-auto sm:gap-2 sm:px-3 ${darkMode ? "border-red-500/40 text-red-300 hover:bg-red-500/10" : "border-red-200 text-red-700 hover:bg-red-50"}`}
+              className={`order-9 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition lg:order-10 ${darkMode ? "border-red-500/40 text-red-300 hover:bg-red-500/10" : "border-red-200 text-red-700 hover:bg-red-50"}`}
               aria-label="Log out"
               title="Log out"
             >
               <LogOut size={17} aria-hidden="true" />
-              <span className="sr-only sm:not-sr-only">Log out</span>
             </button>
           </div>
         </div>
@@ -5518,32 +5518,20 @@ function CustomerDashboard() {
                       className={`w-full pl-10 pr-4 py-3 border rounded-2xl ${darkMode ? "border-slate-700 bg-slate-800 text-white placeholder:text-slate-400" : "border-slate-200 bg-white text-slate-900"}`}
                     />
                   </div>
-                  <div className="min-w-0">
-                    <select
-                      aria-label="Filter by product type"
-                      value={productTypeFilter}
-                      onChange={(event) => setProductTypeFilter(event.target.value)}
-                      className={`w-full rounded-2xl border px-4 py-3 ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
-                    >
-                      <option value="All">All types</option>
-                      {productTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
-                    </select>
-                  </div>
-                  <div className="min-w-0">
-                    <select
-                      aria-label="Filter by category"
-                      value={categoryFilter}
-                      onChange={(e) => setCategoryFilter(e.target.value)}
-                      className={`w-full rounded-2xl border px-4 py-3 ${darkMode ? "border-slate-700 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-900"}`}
-                    >
-                      <option value="All">All categories</option>
-                      {productCategoryOptions.map((category) => (
-                        <option key={category} value={category}>
-                          {category.charAt(0).toUpperCase() + category.slice(1)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  <FilterDropdown
+                    label="All types"
+                    value={productTypeFilter}
+                    onChange={setProductTypeFilter}
+                    darkMode={darkMode}
+                    options={[["All", "All types"], ...productTypeOptions.map((type) => [type, type])]}
+                  />
+                  <FilterDropdown
+                    label="All categories"
+                    value={categoryFilter}
+                    onChange={setCategoryFilter}
+                    darkMode={darkMode}
+                    options={[["All", "All categories"], ...productCategoryOptions.map((category) => [category, category.charAt(0).toUpperCase() + category.slice(1)])]}
+                  />
                 </div>
               </div>
 
@@ -9175,7 +9163,7 @@ function CustomerDashboard() {
                 aria-hidden="true"
                 className={`h-[84px] border-b ${darkMode ? "border-slate-700 bg-brand-dark-fill/10" : "border-slate-200 bg-brand/[0.07]"}`}
               />
-              <div className="flex flex-wrap items-end justify-between gap-4 px-6 pb-5.5">
+              <div className="flex flex-wrap items-end justify-between gap-3 px-4 pb-5 sm:gap-4 sm:px-6 sm:pb-6">
                 <div className="flex min-w-0 flex-1 items-end gap-4">
                   <ProfileAvatar
                     name={profileDisplayName}
@@ -9193,7 +9181,7 @@ function CustomerDashboard() {
                   onClick={() => setProfileEditing(true)}
                   variant="outline"
                   size="lg"
-                  className={`h-10 shrink-0 gap-2 rounded-[10px] border px-4 text-sm font-medium transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${darkMode ? "border-slate-600 bg-slate-900 text-slate-200 hover:border-brand-dark-text hover:bg-slate-700 hover:text-brand-dark-text" : "border-slate-300 bg-white text-slate-700 hover:border-brand hover:text-brand"}`}
+                  className={`h-10 w-full shrink-0 gap-2 rounded-[10px] border px-4 text-sm font-semibold transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 sm:w-auto ${darkMode ? "border-slate-600 bg-slate-900 text-slate-200 hover:border-brand-dark-text hover:bg-slate-700 hover:text-brand-dark-text" : "border-slate-300 bg-white text-slate-700 hover:border-brand hover:text-brand"}`}
                 >
                   <User size={16} aria-hidden="true" />
                   Edit profile
@@ -9371,15 +9359,15 @@ function CustomerDashboard() {
 
           {profileEditing && (
           createPortal(
-          <div className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-[90] overflow-y-auto bg-slate-950/55 px-3 py-4 backdrop-blur-sm sm:px-6 sm:py-8">
-          <div role="dialog" aria-modal="true" aria-labelledby="customer-profile-settings-title" className="mobile-fullscreen-dialog mx-auto max-h-[calc(100dvh-1.5rem)] w-full max-w-5xl overflow-y-auto overscroll-contain xl:h-[min(88dvh,52rem)] xl:max-h-[calc(100dvh-4rem)] xl:overflow-hidden">
-          <div className="grid grid-cols-1 gap-4 xl:h-full xl:min-h-0 xl:grid-cols-3">
-            <div className={`relative rounded-2xl shadow p-4 sm:p-5 ${darkMode ? "bg-slate-800 text-slate-100" : "bg-white text-slate-900"}`}>
+          <div className="customer-modal-overlay mobile-fullscreen-overlay fixed inset-0 z-[90] overflow-y-auto bg-slate-950/55 px-0 py-0 backdrop-blur-sm sm:px-6 sm:py-8">
+          <div role="dialog" aria-modal="true" aria-labelledby="customer-profile-settings-title" className="mobile-fullscreen-dialog mx-auto w-full max-w-5xl overflow-y-auto overscroll-contain sm:max-h-[calc(100dvh-4rem)] sm:rounded-2xl lg:h-[min(90dvh,56rem)] lg:max-h-[calc(100dvh-4rem)] lg:overflow-hidden">
+          <div className="grid grid-cols-1 gap-3 p-3 sm:gap-4 sm:p-4 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(230px,0.78fr)_minmax(0,1.65fr)]">
+            <div className={`relative min-w-0 rounded-2xl border p-4 shadow-sm sm:p-5 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-100" : "border-slate-200 bg-white text-slate-900"}`}>
               <button
                 type="button"
                 data-close-modal
                 onClick={closeProfileEditor}
-                className={`absolute right-4 top-4 rounded-lg border px-3 py-2 text-xs font-semibold xl:hidden ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+                className={`absolute right-4 top-4 rounded-lg border px-3 py-2 text-xs font-semibold lg:hidden ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
               >
                 Back to profile
               </button>
@@ -9396,15 +9384,15 @@ function CustomerDashboard() {
                 <div className="mt-5 w-full space-y-3">
                   <div className={`rounded-xl p-3.5 flex items-center gap-3 ${darkMode ? "bg-slate-900" : "bg-gray-50"}`}>
                     <Mail className="text-red-600" size={18} />
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <p className={darkMode ? "text-xs text-slate-400" : "text-xs text-gray-500"}>Email</p>
-                      <p className={`text-sm font-medium ${darkMode ? "text-white" : "text-slate-900"}`}>{profileForm.email}</p>
+                      <p className={`break-all text-sm font-medium ${darkMode ? "text-white" : "text-slate-900"}`}>{profileForm.email}</p>
                     </div>
                   </div>
 
                   <div className={`rounded-xl p-3.5 flex items-center gap-3 ${darkMode ? "bg-slate-900" : "bg-gray-50"}`}>
                     <Phone className="text-red-600" size={18} />
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <p className={darkMode ? "text-xs text-slate-400" : "text-xs text-gray-500"}>Phone</p>
                       <p className={`text-sm font-medium ${darkMode ? "text-white" : "text-slate-900"}`}>{profileForm.phone || "Not set"}</p>
                     </div>
@@ -9414,7 +9402,7 @@ function CustomerDashboard() {
               </div>
             </div>
 
-            <div className={`flex min-h-0 flex-col rounded-2xl p-4 shadow sm:p-5 xl:col-span-2 xl:overflow-hidden ${darkMode ? "bg-slate-800" : "bg-white"}`}>
+            <div className={`flex min-h-0 min-w-0 flex-col rounded-2xl border p-4 shadow-sm sm:p-5 lg:overflow-hidden ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
               <div className="mb-4 flex flex-wrap items-center gap-3">
                 <User size={24} className="text-red-600" />
                 <div>
@@ -9424,7 +9412,7 @@ function CustomerDashboard() {
                 <button
                   type="button"
                   onClick={closeProfileEditor}
-                  className={`ml-auto hidden rounded-lg border px-3 py-2 text-xs font-semibold xl:inline-flex ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+                  className={`ml-auto hidden rounded-lg border px-3 py-2 text-xs font-semibold lg:inline-flex ${darkMode ? "border-slate-600 text-slate-200 hover:bg-slate-700" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}
                 >
                   Back to profile
                 </button>
@@ -9476,7 +9464,7 @@ function CustomerDashboard() {
                   </div>
                 </div>
 
-                <div className="mt-3 max-h-[min(42dvh,26rem)] overflow-y-auto overscroll-contain lg:max-h-[min(48dvh,30rem)] xl:max-h-none xl:min-h-0 xl:flex-1">
+                <div className="mt-3 min-h-0 overflow-visible lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">
                   {profileTab === "profile" ? (
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                       <ProfileTextField
@@ -9623,7 +9611,7 @@ function CustomerDashboard() {
                 </div>
               </div>
 
-              <div className={`-mx-4 -mb-4 mt-3 flex shrink-0 justify-end border-t px-4 py-2.5 sm:-mx-5 sm:-mb-5 sm:px-5 xl:static ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
+              <div className={`sticky bottom-0 z-10 -mx-4 -mb-4 mt-3 flex shrink-0 flex-col-reverse justify-end gap-2 border-t px-4 py-3 shadow-[0_-8px_20px_rgba(15,23,42,0.08)] sm:-mx-5 sm:-mb-5 sm:px-5 sm:flex-row lg:static lg:shadow-none ${darkMode ? "border-slate-700 bg-slate-800" : "border-slate-200 bg-white"}`}>
                 {profileHasChanges() && (
                   <button
                     type="button"
@@ -9637,7 +9625,7 @@ function CustomerDashboard() {
                 <button
                   onClick={handleProfileSave}
                   disabled={profileSaving}
-                  className="bg-red-600 text-white px-4 py-2.5 rounded-xl flex items-center gap-2 text-sm font-semibold hover:bg-red-700 transition disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                 >
                   <Save size={16} />
                   {profileSaving ? "Saving..." : "Save Changes"}
@@ -10221,7 +10209,6 @@ function CustomerDashboard() {
           isLoading={contractActionLoading}
           actionError={contractActionError}
           notificationRecordId={contractNotificationRecordId}
-          darkMode={darkMode}
           acceptedOverride={isContractAccepted}
           awaitingResponseOverride={isContractAwaitingCustomerResponse}
         />

@@ -11,6 +11,7 @@ import {
   Trash2,
   X,
   Info,
+  ChevronDown,
   TriangleAlert,
   Paperclip,
   LoaderCircle,
@@ -112,7 +113,7 @@ function Transactions() {
     setCancelledPage(1);
   }, [activeTable]);
 
-  const rowsPerPage = 5;
+  const rowsPerPage = 10;
 
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -923,12 +924,12 @@ function Transactions() {
 
   const createPrintClone = (el) => {
     const clone = el.cloneNode(true);
-    clone.style.width = `${el.scrollWidth}px`;
+    clone.style.width = "794px";
     clone.style.height = "auto";
     clone.style.overflow = "visible";
     clone.style.position = "relative";
     clone.style.maxHeight = "none";
-    clone.style.maxWidth = "none";
+    clone.style.maxWidth = "794px";
 
     const wrapper = document.createElement("div");
     wrapper.style.position = "fixed";
@@ -1032,7 +1033,7 @@ function Transactions() {
     }
 
     const clone = el.cloneNode(true);
-    clone.style.width = `${el.scrollWidth}px`;
+    clone.style.width = "794px";
     clone.style.height = "auto";
     clone.style.overflow = "visible";
     clone.style.position = "relative";
@@ -1350,8 +1351,8 @@ function Transactions() {
       ? "mobile-fullscreen-overlay fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
       : "mobile-fullscreen-overlay fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/30 p-4";
     const modalClass = darkMode
-      ? "mobile-fullscreen-dialog flex min-h-0 max-h-[90vh] w-full max-w-[520px] flex-col overflow-hidden rounded-2xl border border-slate-700 bg-[#17283d] shadow-[0_18px_60px_rgba(2,6,23,0.45)] ring-1 ring-slate-700"
-      : "mobile-fullscreen-dialog flex min-h-0 max-h-[90vh] w-full max-w-[520px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.12)] ring-1 ring-slate-200";
+      ? "mobile-fullscreen-dialog flex min-h-0 max-h-[90vh] w-full max-w-[920px] flex-col overflow-hidden rounded-2xl border border-slate-700 bg-[#17283d] shadow-[0_18px_60px_rgba(2,6,23,0.45)] ring-1 ring-slate-700"
+      : "mobile-fullscreen-dialog flex min-h-0 max-h-[90vh] w-full max-w-[920px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.12)] ring-1 ring-slate-200";
     const titleClass = darkMode ? "text-red-400" : "text-red-500";
     const nameClass = darkMode ? "text-slate-100" : "text-slate-900";
     const subtitleClass = darkMode ? "text-slate-400" : "text-slate-500";
@@ -1427,21 +1428,14 @@ function Transactions() {
           </div>
 
           <div className={`${headerPanelClass} shrink-0`}>
-            <div className={alertClass}>
+            <div className={`${alertClass} mx-3 my-3 sm:mx-5`}>
               <Info size={18} className={`mt-0.5 shrink-0 ${alertIconClass}`} />
               <span>You may update the amount paid, payment method, and transaction number.</span>
             </div>
-            <div className={`${panelClass} mt-3 grid grid-cols-2 gap-3 p-3 text-xs sm:grid-cols-3`}>
-              <div><span className={tertiaryTextClass}>ORDER TRACKING ID</span><p className={`mt-1 font-bold ${strongTextClass}`}>{editPaymentOrder.tracking || editPaymentOrder._id}</p></div>
-              <div><span className={tertiaryTextClass}>TOTAL PROJECT COST</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.totalAmount)}</p></div>
-              <div><span className={tertiaryTextClass}>{editPaymentOrder.payment_terms === "full_payment" ? "REQUIRED FULL PAYMENT" : "REQUIRED DOWNPAYMENT"}</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.requiredAmount)}</p><p className={`mt-1 text-[10px] ${tertiaryTextClass}`}>Site Inspection terms: {getSavedPaymentTermsLabel(editPaymentOrder.payment_terms)}</p></div>
-              <div><span className={tertiaryTextClass}>AMOUNT ALREADY PAID</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.paidAmount)}</p></div>
-              <div><span className={tertiaryTextClass}>DOWNPAYMENT REMAINING</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(Math.max(paymentSummary.requiredAmount - paymentSummary.paidAmount, 0))}</p></div>
-              <div><span className={tertiaryTextClass}>REMAINING PROJECT BALANCE</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.remainingAmount)}</p></div>
-            </div>
           </div>
 
-          <div className={bodyClass}>
+          <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] overflow-hidden lg:grid-cols-[minmax(0,1fr)_280px] lg:grid-rows-1">
+          <div className={`${bodyClass} order-2 lg:order-1`}>
             {!pendingPaymentProof && verifiedPaymentRecords.length > 0 && (
               <div>
                 <label htmlFor="payment-action-mode" className={`mb-2 block text-[11px] font-extrabold uppercase tracking-[0.18em] ${labelClass}`}>PAYMENT ACTION</label>
@@ -1915,6 +1909,34 @@ function Transactions() {
             </div>
           </div>
 
+          <details className={`order-1 mx-3 my-2 rounded-xl border p-3 lg:hidden ${darkMode ? "border-slate-700 bg-[#132238]" : "border-slate-200 bg-slate-50"}`}>
+            <summary className="group flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-bold marker:hidden">
+              <span className={strongTextClass}>Payment Summary</span>
+              <span className="flex shrink-0 items-center gap-2 text-red-500"><span>{formatCurrency(paymentSummary.totalAmount)}</span><ChevronDown size={16} className="text-slate-500 transition-transform group-open:rotate-180" aria-hidden="true" /></span>
+            </summary>
+            <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 border-t border-slate-500/20 pt-3 text-xs sm:grid-cols-3">
+              <div className="min-w-0"><span className={tertiaryTextClass}>ORDER TRACKING ID</span><p className={`mt-1 break-all font-bold ${strongTextClass}`}>{editPaymentOrder.tracking || editPaymentOrder._id}</p></div>
+              <div><span className={tertiaryTextClass}>TOTAL PROJECT COST</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.totalAmount)}</p></div>
+              <div><span className={tertiaryTextClass}>{editPaymentOrder.payment_terms === "full_payment" ? "REQUIRED FULL PAYMENT" : "REQUIRED DOWNPAYMENT"}</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.requiredAmount)}</p><p className={`mt-1 text-[10px] ${tertiaryTextClass}`}>Site Inspection terms: {getSavedPaymentTermsLabel(editPaymentOrder.payment_terms)}</p></div>
+              <div><span className={tertiaryTextClass}>AMOUNT ALREADY PAID</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.paidAmount)}</p></div>
+              <div><span className={tertiaryTextClass}>DOWNPAYMENT REMAINING</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(Math.max(paymentSummary.requiredAmount - paymentSummary.paidAmount, 0))}</p></div>
+              <div><span className={tertiaryTextClass}>REMAINING PROJECT BALANCE</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.remainingAmount)}</p></div>
+            </div>
+          </details>
+
+          <aside className={`order-2 hidden border-b p-3 sm:p-4 lg:order-2 lg:block lg:overflow-y-auto lg:border-b-0 lg:border-l ${darkMode ? "border-slate-700 bg-[#132238]" : "border-slate-200 bg-slate-50"}`} aria-label="Payment summary">
+            <h3 className={`mb-3 text-xs font-extrabold uppercase tracking-[0.16em] ${tertiaryTextClass}`}>Payment Summary</h3>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs sm:grid-cols-3 lg:grid-cols-1">
+              <div className="min-w-0"><span className={tertiaryTextClass}>ORDER TRACKING ID</span><p className={`mt-1 break-all font-bold ${strongTextClass}`}>{editPaymentOrder.tracking || editPaymentOrder._id}</p></div>
+              <div><span className={tertiaryTextClass}>TOTAL PROJECT COST</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.totalAmount)}</p></div>
+              <div><span className={tertiaryTextClass}>{editPaymentOrder.payment_terms === "full_payment" ? "REQUIRED FULL PAYMENT" : "REQUIRED DOWNPAYMENT"}</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.requiredAmount)}</p><p className={`mt-1 text-[10px] ${tertiaryTextClass}`}>Site Inspection terms: {getSavedPaymentTermsLabel(editPaymentOrder.payment_terms)}</p></div>
+              <div><span className={tertiaryTextClass}>AMOUNT ALREADY PAID</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.paidAmount)}</p></div>
+              <div><span className={tertiaryTextClass}>DOWNPAYMENT REMAINING</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(Math.max(paymentSummary.requiredAmount - paymentSummary.paidAmount, 0))}</p></div>
+              <div><span className={tertiaryTextClass}>REMAINING PROJECT BALANCE</span><p className={`mt-1 font-bold ${strongTextClass}`}>{formatCurrency(paymentSummary.remainingAmount)}</p></div>
+            </div>
+          </aside>
+          </div>
+
           <div className={`${footerClass} shrink-0`}>
             <button type="button" disabled={paymentActionLoading} onClick={closeEditPaymentModal} className={`${footerCancelClass} min-w-0 text-center leading-tight`}>Cancel</button>
             {pendingPaymentProof && (
@@ -2265,7 +2287,7 @@ function Transactions() {
 
           {showGenerateReportModal && (
             <div
-              className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+              className="transaction-report-modal-overlay fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
               role="presentation"
               onMouseDown={(event) => event.target === event.currentTarget && !reportGenerationLoading && setShowGenerateReportModal(false)}
             >
@@ -2576,7 +2598,6 @@ function Transactions() {
               contractData={contractPreviewData}
               onDownload={downloadContractPDF}
               onPrint={printContract}
-              darkMode={darkMode}
             />
           )}
 

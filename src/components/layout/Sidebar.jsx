@@ -171,25 +171,25 @@ function Sidebar({ isOpen, onToggle, forceRender = false }) {
         <div className={`pointer-events-none absolute -bottom-28 right-6 h-56 w-56 rounded-full border ${darkMode ? "border-red-200/10" : "border-slate-900/10"}`} />
         <div className={`pointer-events-none absolute -bottom-12 right-24 h-28 w-28 rounded-full border ${darkMode ? "border-red-200/10" : "border-slate-900/10"}`} />
 
-        <div className={`relative z-10 flex border-b ${isOpen ? "items-center gap-0 p-1.5" : "flex-col items-center gap-2 p-2"}`}>
+        <div className={`relative z-10 flex border-b ${isOpen ? "items-center gap-0 p-2" : "flex-col items-center gap-2 p-2"}`}>
           <button
             type="button"
             onClick={handleLogoClick}
-            className={`grid min-w-0 cursor-pointer items-center text-left transition-[grid-template-columns,gap] duration-300 ease-in-out motion-reduce:transition-none ${isOpen ? "flex-1 grid-cols-[36px_minmax(0,1fr)] gap-1" : "w-full grid-cols-[1fr_0fr] gap-0"}`}
+            className={`grid min-w-0 cursor-pointer items-center text-left transition-[grid-template-columns,gap] duration-300 ease-in-out motion-reduce:transition-none ${isOpen ? "flex-1 grid-cols-[40px_minmax(0,1fr)] gap-2" : "w-full grid-cols-[1fr_0fr] gap-0"}`}
             aria-label="Go to dashboard"
           >
             <img
               src={logo}
               alt="ACGC Aluminum Services"
-              className={`h-8 w-9 shrink-0 justify-self-center object-contain ${darkMode ? "drop-shadow-[0_0_4px_rgba(255,255,255,0.7)]" : ""}`}
+              className="h-10 w-10 shrink-0 justify-self-center object-contain drop-shadow-[0_0_5px_rgba(255,255,255,0.9)]"
             />
 
             <div className={`min-w-0 overflow-hidden transition-[max-width,opacity] duration-200 ease-in-out motion-reduce:transition-none ${isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"}`}>
-              <h1 className="truncate text-base font-bold leading-tight text-red-500">
+              <h1 className="truncate text-[17px] font-bold leading-tight text-[#ff3038]">
                 ACGC Services
               </h1>
 
-              <p className={`whitespace-nowrap text-[10px] leading-tight font-bold ${darkMode ? "text-slate-300" : "text-gray-700"}`}>
+              <p className={`whitespace-nowrap text-[11px] leading-tight font-bold ${darkMode ? "text-slate-300" : "text-gray-700"}`}>
                 Aluminum & Glass Services
               </p>
             </div>
@@ -275,13 +275,15 @@ function Sidebar({ isOpen, onToggle, forceRender = false }) {
 
           {/* LOGOUT */}
           <button
+            type="button"
             onClick={() => setShowLogoutModal(true)}
-            title="Logout"
-            className={`relative z-10 flex min-h-10 w-full items-center rounded-lg px-3 py-2 text-sm text-red-500 transition-[gap,background-color,color] duration-300 ease-in-out motion-reduce:transition-none ${darkMode ? "hover:bg-red-950/70 hover:text-red-300" : "hover:bg-red-50"} ${isOpen ? "justify-start gap-2.5" : "justify-center gap-0"}`}
+            title="Log out"
+            aria-label="Log out"
+            className={`group relative z-10 grid min-h-10 w-full items-center rounded-lg px-3 py-2 text-left text-sm text-red-600 transition-[grid-template-columns,gap,background-color,color] duration-200 motion-reduce:transition-none ${isOpen ? "grid-cols-[20px_minmax(0,1fr)] gap-2.5" : "grid-cols-[1fr_0fr] gap-0"} ${darkMode ? "hover:bg-red-950/70 hover:text-red-300" : "hover:bg-red-50 hover:text-red-700"}`}
           >
-            <LogOut size={20} className="shrink-0" />
-            <span className={`min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-200 ease-in-out motion-reduce:transition-none ${isOpen ? "max-w-full opacity-100" : "invisible max-w-0 opacity-0"}`}>
-              Logout
+            <LogOut size={20} className="shrink-0 justify-self-center" />
+            <span className={`min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-200 ease-in-out motion-reduce:transition-none ${isOpen ? "max-w-full opacity-100" : "max-w-0 opacity-0"}`}>
+              Log out
             </span>
           </button>
 

@@ -19,6 +19,7 @@ import { uploadFiles } from "@/api/uploads";
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
+import FilterDropdown from "@/components/FilterDropdown";
 import { calculateEstimate, toSquareFeet } from "../../lib/estimator";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAdminTheme } from "@/contexts/AdminThemeContext";
@@ -264,71 +265,6 @@ function CatalogPicker({ label, value, options, catalogItems = [], onChange, onA
           </div>
         </div>,
         document.body,
-      )}
-    </div>
-  );
-}
-
-function FilterDropdown({ label, value, options, onChange, darkMode }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const dropdownRef = useRef(null);
-
-  useEffect(() => {
-    if (!isOpen) return undefined;
-
-    const closeOnOutsideClick = (event) => {
-      if (!dropdownRef.current?.contains(event.target)) setIsOpen(false);
-    };
-    const closeOnEscape = (event) => {
-      if (event.key === "Escape") setIsOpen(false);
-    };
-
-    document.addEventListener("pointerdown", closeOnOutsideClick);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsideClick);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [isOpen]);
-
-  const selectedOption = options.find(([optionValue]) => optionValue === value);
-
-  return (
-    <div ref={dropdownRef} className="relative min-w-0">
-      <button
-        type="button"
-        aria-label={label}
-        aria-haspopup="listbox"
-        aria-expanded={isOpen}
-        onClick={() => setIsOpen((open) => !open)}
-        className={`flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-lg border px-2.5 text-left text-xs font-semibold outline-none transition focus:ring-2 ${darkMode ? "border-slate-700 bg-slate-800 text-slate-200 hover:border-slate-500 focus:border-red-400 focus:ring-red-400/20" : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 focus:border-red-400 focus:ring-red-100"}`}
-      >
-        <span className="truncate">{selectedOption?.[1] || label}</span>
-        <ChevronDown size={14} className={`shrink-0 transition ${isOpen ? "rotate-180" : ""}`} aria-hidden="true" />
-      </button>
-      {isOpen && (
-        <div
-          role="listbox"
-          aria-label={label}
-          className={`absolute inset-x-0 top-full z-50 mt-1 max-h-48 overflow-y-auto rounded-lg border p-1 shadow-xl ${darkMode ? "border-slate-700 bg-slate-900" : "border-slate-200 bg-white"}`}
-        >
-          {options.map(([optionValue, optionLabel]) => (
-            <button
-              key={optionValue}
-              type="button"
-              role="option"
-              aria-selected={value === optionValue}
-              onClick={() => {
-                onChange(optionValue);
-                setIsOpen(false);
-              }}
-              className={`flex min-h-8 w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-xs ${value === optionValue ? darkMode ? "bg-red-950/50 font-semibold text-red-200" : "bg-rose-50 font-semibold text-red-800" : darkMode ? "text-slate-200 hover:bg-slate-800" : "text-slate-700 hover:bg-slate-100"}`}
-            >
-              <span className="truncate">{optionLabel}</span>
-              {value === optionValue && <span aria-hidden="true">✓</span>}
-            </button>
-          ))}
-        </div>
       )}
     </div>
   );

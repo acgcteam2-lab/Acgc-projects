@@ -580,14 +580,14 @@ function AdminProfile() {
       <div className="flex-1 min-h-0 flex flex-col">
         <Navbar />
 
-        <main className="flex-1 min-h-0 overflow-y-auto px-4 pb-24 pt-4 sm:p-6">
+        <main className="min-w-0 flex-1 min-h-0 overflow-y-auto px-4 pb-24 pt-4 sm:px-6 sm:pb-8 sm:pt-6 xl:px-8">
           <AdminPageHeader
             title={`${profileType} Profile`}
             description={`Manage your ${profileType.toLowerCase()} account settings and security.`}
           />
 
-          <div className="mt-5 grid grid-cols-1 gap-4 sm:mt-6 sm:gap-6 xl:grid-cols-3">
-            <div className="min-w-0 rounded-3xl bg-white p-5 shadow sm:p-8">
+          <div className="mx-auto mt-5 grid w-full max-w-[1440px] min-w-0 grid-cols-1 gap-4 sm:mt-6 sm:gap-6 xl:grid-cols-[minmax(250px,0.8fr)_minmax(0,1.8fr)]">
+            <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:rounded-3xl sm:p-7">
               <div className="flex flex-col items-center">
                 <ProfileAvatar
                   name={`${user?.first_name || ""} ${user?.last_name || ""}`}
@@ -602,25 +602,25 @@ function AdminProfile() {
                 <p className="text-gray-500 capitalize">{profile.role}</p>
 
                 <div className="mt-6 w-full space-y-4">
-                  <div className="bg-gray-50 rounded-2xl p-4 flex items-center gap-4">
+                  <div className="flex min-w-0 items-start gap-3 rounded-xl bg-gray-50 p-3.5 sm:items-center sm:gap-4 sm:rounded-2xl sm:p-4">
                     <Mail className="text-red-600" />
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-sm text-gray-500">Email</p>
                       <p className="break-all font-medium">{user?.email}</p>
                     </div>
                   </div>
 
-                  <div className="bg-gray-50 rounded-2xl p-4 flex items-center gap-4">
+                  <div className="flex min-w-0 items-start gap-3 rounded-xl bg-gray-50 p-3.5 sm:items-center sm:gap-4 sm:rounded-2xl sm:p-4">
                     <Phone className="text-red-600" />
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-sm text-gray-500">Phone</p>
                       <p className="font-medium">{user?.phone || "Not set"}</p>
                     </div>
                   </div>
 
-                  <div className="bg-gray-50 rounded-2xl p-4 flex items-center gap-4">
+                  <div className="flex min-w-0 items-start gap-3 rounded-xl bg-gray-50 p-3.5 sm:items-center sm:gap-4 sm:rounded-2xl sm:p-4">
                     <ShieldCheck className="text-red-600" />
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-sm text-gray-500">Role</p>
                       <p className="font-medium capitalize">{profile.role}</p>
                     </div>
@@ -629,8 +629,8 @@ function AdminProfile() {
               </div>
             </div>
 
-            <div className="min-w-0 rounded-3xl bg-white p-4 shadow sm:p-8 xl:col-span-2">
-              <h2 className="text-2xl font-bold mb-6">Profile Settings</h2>
+            <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:rounded-3xl sm:p-6 xl:p-8">
+              <h2 className="mb-5 text-xl font-bold sm:mb-6 sm:text-2xl">Profile Settings</h2>
 
               {error && (
                 <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
@@ -653,7 +653,7 @@ function AdminProfile() {
                 </div>
               )}
 
-              <div className="mt-8">
+              <div className="mt-5 sm:mt-7">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="grid w-full grid-cols-3 rounded-2xl border border-gray-200 bg-gray-100 p-1 sm:w-auto sm:rounded-3xl sm:p-2">
                     <button
@@ -694,7 +694,7 @@ function AdminProfile() {
 
                 <div className="mt-6">
                   {activeTab === "profile" ? (
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <AdminProfileTextField label="First Name" icon={User} darkMode={darkMode} type="text" name="first_name" value={profile.first_name} onChange={handleChange} placeholder="First Name" />
                       <AdminProfileTextField label="Last Name" icon={User} darkMode={darkMode} type="text" name="last_name" value={profile.last_name} onChange={handleChange} placeholder="Last Name" />
                       <AdminProfileTextField
@@ -725,7 +725,7 @@ function AdminProfile() {
                       <AdminProfileTextField label="Zip Code" icon={Hash} darkMode={darkMode} type="text" inputMode="numeric" name="zip_code" value={profile.zip_code} onChange={handleChange} placeholder="Zip Code" />
                     </div>
                   ) : activeTab === "security" ? (
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div className="md:col-span-2">
                         <AdminProfileTextField label="Current Password" icon={LockKeyhole} darkMode={darkMode} type="password" name="current_password" value={profile.current_password} onChange={handleChange} placeholder="Enter current password" autoComplete="current-password" />
                       </div>
@@ -916,11 +916,11 @@ function AdminProfile() {
               </div>
 
               {activeTab !== "activity" && (
-                <div className="mt-8 flex justify-end">
+                <div className={`sticky bottom-0 z-20 -mx-4 mt-6 flex justify-end border-t px-4 py-3 backdrop-blur sm:static sm:mx-0 sm:mt-8 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0 ${darkMode ? "border-slate-700 bg-slate-900/95" : "border-slate-200 bg-white/95"}`}>
                   <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="bg-red-600 text-white px-6 py-3 rounded-2xl flex items-center gap-2 hover:bg-red-700 transition disabled:cursor-not-allowed disabled:opacity-60"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-red-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto sm:rounded-2xl sm:px-6"
                   >
                     <Save size={18} />
                     {saving ? "Saving..." : "Save Changes"}

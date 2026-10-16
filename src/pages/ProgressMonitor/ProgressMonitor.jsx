@@ -333,7 +333,7 @@ function ProgressMonitor() {
   const [cancellingId, setCancellingId] = useState(null);
   const [startingProjectId, setStartingProjectId] = useState(null);
 
-  const rowsPerPage = 5;
+  const rowsPerPage = 10;
 
   const [projectList, setProjectList] = useState([]);
   const [projectLoading, setProjectLoading] = useState(false);

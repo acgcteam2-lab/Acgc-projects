@@ -29,6 +29,7 @@ import { uploadFiles } from "@/api/uploads";
 import Sidebar from "../../components/layout/Sidebar";
 import Navbar from "../../components/layout/Navbar";
 import AdminPageHeader from "../../components/layout/AdminPageHeader";
+import FilterDropdown from "@/components/FilterDropdown";
 import ContractModal from "../../components/ContractModal";
 import { formatDateToMMDDYYYY, formatDateTimeToMMDDYYYY, formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { getInstallationDateError, getMinimumInstallationDate } from "@/lib/installationSchedule";
@@ -688,7 +689,7 @@ function SiteInspection() {
   const manualApprovalFileInputRef = useRef(null);
 
   const today = new Date().toISOString().split("T")[0];
-  const pageSize = 8;
+  const pageSize = 10;
   const formatCurrency = (value) =>
     new Intl.NumberFormat("en-PH", {
       style: "currency",
@@ -1269,18 +1270,26 @@ function SiteInspection() {
     };
 
     return (
-      <article key={item.id || `${mode}-blade-${index}`} className={`mt-4 rounded-xl border p-3 sm:p-4 ${darkMode ? "border-slate-700 bg-[#0d2033]" : "border-slate-200 bg-white"}`}>
-        <div className={`grid gap-3 text-[11px] font-bold ${darkMode ? "text-slate-300" : "text-slate-600"} md:grid-cols-[minmax(220px,1.6fr)_0.7fr_0.8fr_0.9fr_40px]`}>
-          <div>Product / Description</div>
-          <div className="hidden md:block">Qty</div>
-          <div className="hidden md:block">Price/blade (PHP)</div>
-          <div className="hidden md:block">Est. Total</div>
-          <div className="hidden md:block" />
+      <article key={item.id || `${mode}-blade-${index}`} className={`mt-4 overflow-hidden rounded-2xl border shadow-sm ${darkMode ? "border-slate-700 bg-[#0b1b2d]" : "border-slate-200 bg-white"}`}>
+        <div className={`flex items-center justify-between gap-3 border-b px-4 py-3 ${darkMode ? "border-slate-700 bg-slate-800/70" : "border-slate-100 bg-slate-50/80"}`}>
+          <div className="min-w-0">
+            <p className={`text-[10px] font-bold uppercase tracking-[0.16em] ${mutedClass}`}>Measurement {index + 1}</p>
+            <p className={`mt-0.5 truncate text-sm font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{item.name || "Select a product"}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <div className="text-right">
+              <p className={`text-[10px] font-semibold uppercase tracking-wider ${mutedClass}`}>Estimated total</p>
+              <p className={`text-sm font-black ${darkMode ? "text-white" : "text-slate-950"}`}>{formatCurrency(rowTotal)}</p>
+            </div>
+            <button type="button" onClick={() => onRemove(item.id)} className={`inline-flex size-9 items-center justify-center rounded-xl border transition ${darkMode ? "border-slate-600 text-slate-300 hover:border-red-500/60 hover:bg-red-500/10 hover:text-red-300" : "border-slate-200 bg-white text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600"}`} aria-label={`Remove measurement ${index + 1}`} title="Remove measurement">
+              <X size={16} aria-hidden="true" />
+            </button>
+          </div>
         </div>
 
-        <div className="mt-2 grid gap-3 md:grid-cols-[minmax(220px,1.6fr)_0.7fr_0.8fr_0.9fr_40px] md:items-start">
+        <div className="grid gap-3 p-4 sm:grid-cols-[minmax(0,1.6fr)_76px_minmax(110px,0.8fr)] sm:items-end">
           <label className="min-w-0">
-            <span className={`${labelClasses} md:hidden`}>Product / Description</span>
+            <span className={labelClasses}>Product / Description</span>
             <select id={productSelectId} value={item.product_id || ""} onChange={(event) => onProductChange(item.id, event.target.value)} className={inputClasses}>
               <option value="">-- Select Active Product --</option>
               {products.map((product) => (
@@ -1291,24 +1300,17 @@ function SiteInspection() {
           </label>
 
           <label className="min-w-0">
-            <span className={`${labelClasses} md:hidden`}>Qty</span>
+            <span className={labelClasses}>Qty</span>
             <input id={quantityId} type="number" min="1" step="1" inputMode="numeric" value={quantity} onChange={(event) => onFieldChange(item.id, "qty", event.target.value)} className={`${inputClasses} text-right`} />
           </label>
 
-          <div className={`flex min-h-[42px] items-center rounded-lg px-3 text-sm font-semibold ${darkMode ? "bg-[#122d42] text-slate-100" : "bg-white text-slate-900"}`}>
-            {formatCurrency(bladeRate)} /blade
+          <div className={`flex min-h-[42px] items-center justify-between gap-2 rounded-lg border px-3 text-xs font-semibold ${darkMode ? "border-slate-700 bg-[#122d42] text-slate-100" : "border-slate-200 bg-slate-50 text-slate-800"}`}>
+            <span className={mutedClass}>Price / blade</span>
+            <span className="whitespace-nowrap font-bold">{formatCurrency(bladeRate)}</span>
           </div>
-
-          <div className={`flex min-h-[42px] items-center justify-start rounded-lg px-3 text-sm font-black md:justify-end ${darkMode ? "text-white" : "text-slate-900"}`}>
-            {formatCurrency(rowTotal)}
-          </div>
-
-          <button type="button" onClick={() => onRemove(item.id)} className={`inline-flex size-9 items-center justify-center rounded-lg border transition ${darkMode ? "border-slate-600 text-slate-300 hover:bg-slate-700" : "border-slate-200 text-slate-500 hover:bg-slate-100"}`} aria-label={`Remove measurement ${index + 1}`} title="Remove measurement">
-            <X size={16} aria-hidden="true" />
-          </button>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_1fr]">
+        <div className={`grid gap-3 px-4 pb-4 sm:grid-cols-2 ${saleMode === "frame" && selectedFrame ? "lg:grid-cols-3" : "lg:grid-cols-2"}`}>
           <label className="min-w-0">
             <span className={labelClasses}>Glass type</span>
             <select id={glassSelectId} aria-label={`Glass type for measurement ${index + 1}`} value={item.blade_glass_type || glassTypes[0]?.name || ""} onChange={(event) => onFieldChange(item.id, "blade_glass_type", event.target.value)} className={inputClasses}>
@@ -1338,10 +1340,9 @@ function SiteInspection() {
               {maximumBlades > 0 ? `Minimum: ${minimumBlades}, maximum: ${maximumBlades}` : `Minimum: ${minimumBlades}`}
             </span>
           </label>
-        </div>
 
         {saleMode === "frame" && (
-          <div className="mt-3 max-w-[210px]">
+          <div className={`rounded-xl border p-3 sm:col-span-2 lg:col-span-1 ${darkMode ? "border-slate-700 bg-slate-900/40" : "border-slate-200 bg-slate-50/70"}`}>
             <label className="block">
               <span className={labelClasses}>Frame price (PHP)</span>
               <input id={framePriceId} type="number" min="0" step="0.01" inputMode="decimal" value={framePrice} onChange={(event) => onFieldChange(item.id, "frame_price", event.target.value)} className={`${inputClasses} text-right`} />
@@ -1349,18 +1350,19 @@ function SiteInspection() {
             {selectedFrame?.price !== undefined && <span className={`mt-1 block text-[11px] ${mutedClass}`}>Standard: {formatCurrency(Number(selectedFrame.price) || 0)}</span>}
           </div>
         )}
+        </div>
 
         {extraCharges.length > 0 && (
-          <div className={`mt-4 border-t border-dashed pt-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
-            <p className={`text-[11px] font-bold ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
-              Extra charges <span className={`font-medium ${mutedClass}`}>(this order only - set an amount to 0 to remove)</span>
+          <div className={`mx-4 mb-4 rounded-xl border p-3 sm:p-4 ${darkMode ? "border-slate-700 bg-slate-900/40" : "border-slate-200 bg-slate-50/70"}`}>
+            <p className={`text-xs font-bold ${darkMode ? "text-slate-200" : "text-slate-800"}`}>
+              Extra charges <span className={`font-normal ${mutedClass}`}>(this order only · set amount to 0 to remove)</span>
             </p>
-            <div className="mt-2 space-y-2">
+            <div className="mt-3 space-y-2">
               {extraCharges.map((charge, chargeIndex) => {
                 const chargeTotal = getBladeExtraChargeTotal(charge, details);
                 return (
-                  <div key={`${charge.name || charge.label}-${chargeIndex}`} className="grid gap-2 md:grid-cols-[minmax(180px,1fr)_80px_120px_120px] md:items-center">
-                    <label className={`flex min-w-0 items-center gap-3 text-sm ${darkMode ? "text-slate-200" : "text-slate-800"}`}>
+                  <div key={`${charge.name || charge.label}-${chargeIndex}`} className={`grid gap-2 rounded-lg border p-2.5 sm:grid-cols-[minmax(0,1fr)_76px_110px_110px] sm:items-center ${darkMode ? "border-slate-700 bg-slate-800/60" : "border-slate-200 bg-white"}`}>
+                    <label className={`flex min-w-0 items-center gap-2.5 text-sm ${darkMode ? "text-slate-200" : "text-slate-800"}`}>
                       <input
                         type="checkbox"
                         checked={charge.is_selected !== false}
@@ -1383,9 +1385,9 @@ function SiteInspection() {
         )}
 
         {hasPerProductWarranty && (
-          <div className={`mt-4 border-t border-dashed pt-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+          <div className={`mx-4 mb-4 rounded-xl border p-3 sm:p-4 ${darkMode ? "border-slate-700 bg-slate-900/40" : "border-slate-200 bg-slate-50/70"}`}>
             <label htmlFor={`${mode}-blade-warranty-${index}`} className={labelClasses}>Warranty for {item.name || `product ${index + 1}`}</label>
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(160px,0.7fr)]">
               <select
                 id={`${mode}-blade-warranty-${index}`}
                 value={getItemWarrantySelectValue(item)}
@@ -3059,7 +3061,7 @@ function SiteInspection() {
         <main className="flex-1 min-h-0 overflow-y-auto p-6">
 
           <AdminPageHeader
-            title="Site Inspection Management"
+            title="Site Inspection"
             description="Manage all site inspections and estimations."
             stats={[
               { label: "Inspections", value: inspections.length, color: "text-blue-200" },
@@ -3237,16 +3239,18 @@ function SiteInspection() {
 
               <div className="flex flex-col gap-2 sm:flex-row">
                 {activeTab === "site" && (
-                  <select
-                    aria-label="Filter inspections by status"
+                  <FilterDropdown
+                    label="All status"
                     value={statusFilter}
-                    onChange={(event) => setStatusFilter(event.target.value)}
-                    className={`min-h-10 rounded-xl border px-3 py-2 text-sm font-semibold outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-100 ${darkMode ? "border-slate-600 bg-[#122d42] text-slate-100" : "border-slate-200 bg-white text-slate-700"}`}
-                  >
-                    <option value="all">All status</option>
-                    <option value="scheduled">Scheduled</option>
-                    <option value="needs-call">Needs to be Called</option>
-                  </select>
+                    onChange={setStatusFilter}
+                    darkMode={darkMode}
+                    className="w-full sm:w-52"
+                    options={[
+                      ["all", "All status"],
+                      ["scheduled", "Scheduled"],
+                      ["needs-call", "Needs to be Called"],
+                    ]}
+                  />
                 )}
                 <button
                   onClick={() => { resetNewInspectionForm(); setShowModal(true); }}
@@ -3764,7 +3768,7 @@ function SiteInspection() {
                         const bladeRow = renderBladeMeasurementRow(item, index, handleItemFieldChange, handleItemProductChange, removeItemRow, computeTotals(), "new");
                         if (bladeRow) return bladeRow;
                         return (
-                          <div key={item.id} className={`grid min-w-[760px] grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 border-t p-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                          <div key={item.id} className={`m-2 grid min-w-[760px] grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 rounded-xl border p-3 shadow-sm transition-colors ${darkMode ? "border-slate-700 bg-[#0d2033] hover:border-slate-600" : "border-slate-200 bg-slate-50/70 hover:border-slate-300"}`}>
                             <div className="flex flex-col items-start gap-2">
                               <select
                                 value={item.product_id || ""}
@@ -4821,7 +4825,7 @@ function SiteInspection() {
                         const bladeRow = renderBladeMeasurementRow(item, index, handleEditItemFieldChange, handleEditItemProductChange, removeEditItemRow, computeEditTotals(), "edit");
                         if (bladeRow) return bladeRow;
                         return (
-                          <div key={item.id || `${item.product_id || "row"}-${Math.random()}`} className={`grid grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 border-t p-3 ${darkMode ? "border-slate-700" : "border-slate-200"}`}>
+                          <div key={item.id || `${item.product_id || "row"}-${index}`} className={`m-2 grid grid-cols-[1.7fr_0.9fr_0.9fr_0.8fr_0.7fr_1fr_1fr] gap-2 rounded-xl border p-3 shadow-sm transition-colors ${darkMode ? "border-slate-700 bg-[#0d2033] hover:border-slate-600" : "border-slate-200 bg-slate-50/70 hover:border-slate-300"}`}>
                             <div className="flex flex-col items-start gap-2">
                               <select
                                 value={item.product_id || ""}
@@ -5287,7 +5291,6 @@ function SiteInspection() {
           onRegenerate={handleRegenerateContract}
           onSendToCustomer={contractInspection?.order_type === "walk_in_customer" ? undefined : handleSendToCustomer}
           isSendingToCustomer={sendingCustomerEmail}
-          darkMode={darkMode}
         />
       </div>
     </div>

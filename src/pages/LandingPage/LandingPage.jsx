@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import toast, { Toaster } from "react-hot-toast";
 import OrderProgressTimeline from "@/components/OrderProgressTimeline";
+import FilterDropdown from "@/components/FilterDropdown";
 import AboutBusinessContent from "@/components/AboutBusinessContent";
 import ProductPriceEstimator from "@/components/ProductPriceEstimator";
 import { getProductEstimatorState } from "@/components/ProductPriceEstimator";
@@ -1276,38 +1277,18 @@ function LandingPage() {
             className="w-full rounded-2xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-slate-900 outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-100"
           />
         </label>
-        <label className="min-w-0">
-          <span className="sr-only">Filter by product type</span>
-          <select
-            value={productType}
-            onChange={(event) => {
-              setProductType(event.target.value);
-              setProductPage(1);
-            }}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-100"
-          >
-            <option value="All">All types</option>
-            {productTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
-          </select>
-        </label>
-        <label className="min-w-0">
-          <span className="sr-only">Filter by category</span>
-          <select
-            value={productCategory}
-            onChange={(event) => {
-              setProductCategory(event.target.value);
-              setProductPage(1);
-            }}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-100"
-          >
-            <option value="All">All categories</option>
-            {productCategoryOptions.map((category) => (
-              <option key={category} value={category}>
-                {category.charAt(0).toUpperCase() + category.slice(1)}
-              </option>
-            ))}
-          </select>
-        </label>
+        <FilterDropdown
+          label="All types"
+          value={productType}
+          onChange={(value) => { setProductType(value); setProductPage(1); }}
+          options={[["All", "All types"], ...productTypeOptions.map((type) => [type, type])]}
+        />
+        <FilterDropdown
+          label="All categories"
+          value={productCategory}
+          onChange={(value) => { setProductCategory(value); setProductPage(1); }}
+          options={[["All", "All categories"], ...productCategoryOptions.map((category) => [category, category.charAt(0).toUpperCase() + category.slice(1)])]}
+        />
       </div>
     </div>
 

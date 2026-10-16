@@ -78,6 +78,10 @@ const findScrollableAncestor = (start, stopAt = null) => {
 };
 
 const guardBackgroundScroll = (event) => {
+  // Ctrl/Command + wheel is the browser's desktop zoom gesture. Keep it native
+  // even while a modal is open; only block wheel input used for page scrolling.
+  if (event.ctrlKey || event.metaKey) return;
+
   const backdrop = getTopmostBackdrop();
   if (!backdrop || !(event.target instanceof Element)) return;
 

@@ -1599,6 +1599,21 @@ body:has(.mobile-fullscreen-overlay) .customer-mobile-navigation {
     overflow-y: auto;
     overscroll-behavior: contain;
   }
+
+  body:has(.admin-mobile-navigation) .transaction-report-modal-overlay {
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 1rem !important;
+  }
+
+  body:has(.admin-mobile-navigation) .transaction-report-modal-overlay > section {
+    width: min(100%, 42rem) !important;
+    max-width: min(42rem, calc(100vw - 2rem - env(safe-area-inset-left) - env(safe-area-inset-right))) !important;
+    max-height: min(88dvh, 48rem) !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    border-radius: 1rem;
+  }
 }
 
 .admin-theme-dark .settings-premium table.backup-history-table tbody td {
@@ -1793,8 +1808,13 @@ select:not([multiple]):not([size]) {
   background-position: right 0.9rem center;
   background-size: 1rem;
   padding-right: 2.75rem !important;
+  border-radius: 0.875rem;
   cursor: pointer;
   transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+select:not([multiple]):not([size]):hover:not(:disabled) {
+  border-color: #fca5a5;
 }
 
 select:not([multiple]):not([size]):focus-visible {
@@ -1814,9 +1834,70 @@ select:not([multiple]):not([size]):disabled {
 select:not([multiple]) option {
   background: #fff;
   color: #0f172a;
+  padding: 0.65rem 0.8rem;
+  font-size: 0.875rem;
+}
+
+select:not([multiple]) option:checked {
+  background: #fee2e2;
+  color: #7f1d1d;
+  font-weight: 600;
+}
+
+select:not([multiple]) option:hover {
+  background: #fff1f2;
+  color: #7f1d1d;
 }
 
 .admin-theme-dark select:not([multiple]) option {
   background: #172033;
   color: #e2e8f0;
+}
+
+.admin-theme-dark select:not([multiple]) option:checked {
+  background: #7f1d1d;
+  color: #fff;
+}
+
+.admin-theme-dark select:not([multiple]) option:hover {
+  background: #3b1b28;
+  color: #fecdd3;
+}
+
+.contract-paper {
+  width: 210mm;
+  max-width: 100%;
+  min-height: 297mm;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 0;
+}
+
+.contract-brand-header {
+  background-color: #020617;
+  background-image:
+    radial-gradient(circle at 100% 0%, transparent 0 138px, rgba(255, 255, 255, .1) 139px 140px, transparent 141px 190px, rgba(255, 255, 255, .08) 191px 192px, transparent 193px),
+    linear-gradient(135deg, #020617 0%, #111827 56%, #450a0a 100%);
+}
+
+@media (max-width: 640px) {
+  .contract-paper {
+    min-height: 0;
+    border-radius: 10px;
+  }
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  .contract-paper {
+    width: 210mm;
+    max-width: none;
+    min-height: 297mm;
+    border: 0;
+    border-radius: 0;
+  }
 }

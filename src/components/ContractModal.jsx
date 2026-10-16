@@ -5,8 +5,10 @@ import { formatDateToMMMDDYYYY } from "@/lib/dateUtils";
 import { getFinalProjectCost, getRequiredDownpayment } from "@/lib/orderPricing";
 import { getContractBladeDetails } from "@/pages/SiteInspection/contractState";
 
-function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, onRegenerate, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false, notificationRecordId = null, darkMode = false, transparentBackdrop = false, acceptedOverride, awaitingResponseOverride }) {
+function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, onDecline, onRegenerate, isLoading, actionError, onDownload, onDownloadPNG, onPrint, onSendToCustomer, isSendingToCustomer = false, notificationRecordId = null, transparentBackdrop = false, acceptedOverride, awaitingResponseOverride }) {
   if (!isOpen || !inspection || !contractData) return null;
+
+  const darkMode = false;
 
   const formatCurrency = (value) => new Intl.NumberFormat("en-PH", {
     style: "currency",
@@ -15,24 +17,24 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
   }).format(Number(value) || 0);
 
   const shellClass = darkMode
-    ? "mobile-fullscreen-dialog flex max-h-[94vh] w-[min(100%,900px)] flex-col overflow-hidden rounded-2xl border border-slate-600 bg-[#0d1f2f] shadow-2xl"
-    : "mobile-fullscreen-dialog flex max-h-[94vh] w-[min(100%,900px)] flex-col overflow-hidden rounded-2xl bg-slate-100 shadow-2xl";
+    ? "mobile-fullscreen-dialog flex h-[94dvh] max-h-[94dvh] w-[min(100%,210mm)] flex-col overflow-hidden rounded-2xl border border-slate-600 bg-[#0d1f2f] shadow-2xl"
+    : "mobile-fullscreen-dialog flex h-[94dvh] max-h-[94dvh] w-[min(100%,210mm)] flex-col overflow-hidden rounded-2xl bg-slate-100 shadow-2xl";
   const headerClass = darkMode ? "sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-slate-600 bg-[#11293a] px-4 py-3" : "sticky top-0 z-20 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3";
   const titleClass = darkMode ? "text-xl font-bold text-slate-100" : "text-xl font-bold text-slate-900";
   const buttonShellClass = darkMode ? "rounded-lg border border-slate-600 bg-[#1b3045] px-3 py-2 text-sm text-slate-100 hover:bg-[#233d57]" : "rounded-lg border bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50";
   const closeButtonClass = darkMode ? "rounded-lg p-2 text-slate-200 hover:bg-slate-700" : "rounded-lg p-2 text-slate-600 hover:bg-slate-100";
-  const contentClass = darkMode ? "relative mx-auto my-2 w-full max-w-[890px] overflow-y-auto bg-[#10283b] px-2.5 py-3 text-[12px] text-slate-100 shadow-sm" : "relative mx-auto my-2 w-full max-w-[890px] overflow-y-auto bg-white px-2.5 py-3 text-[12px] text-slate-800 shadow-sm";
-  const infoCardClass = darkMode ? "mb-4 grid grid-cols-2 gap-2 rounded-xl border border-slate-600 bg-[#132f46] p-2.5 text-[10px] text-slate-200" : "mb-4 grid grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-[10px] text-slate-700";
-  const infoLabelClass = darkMode ? "font-black uppercase tracking-[0.14em] text-red-300" : "font-black uppercase tracking-[0.14em] text-[#5c1118]";
-  const infoValueClass = darkMode ? "mt-1 font-bold text-white" : "mt-1 font-bold text-slate-900";
+  const contentClass = "contract-paper relative mx-0 my-0 w-full max-w-none bg-white px-0 py-0 text-[12px] text-slate-800 shadow-none";
+  const infoCardClass = "grid grid-cols-2 gap-x-4 gap-y-3 border-b border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 px-4 py-4 text-[10px] text-slate-700 sm:grid-cols-3 sm:px-6 sm:py-5";
+  const infoLabelClass = "text-[9px] font-black uppercase tracking-[0.16em] text-[#7f1d1d]";
+  const infoValueClass = "mt-1 font-bold text-slate-900";
   const noticeClass = darkMode ? "mb-4 rounded-xl border border-amber-400/40 bg-amber-500/15 px-4 py-3 text-sm text-amber-100" : "mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800";
-  const sectionLabelClass = darkMode ? "text-[10px] font-black uppercase tracking-[0.14em] text-red-300" : "text-[10px] font-black uppercase tracking-[0.14em] text-[#5c1118]";
-  const tableTopClass = darkMode ? "bg-[#6b2430] text-white" : "bg-[#5c1118] text-white";
-  const subtleTextClass = darkMode ? "text-slate-300" : "text-slate-500";
-  const subtleTextDarkClass = darkMode ? "text-slate-200" : "text-slate-600";
-  const panelClass = darkMode ? "rounded border border-slate-600 bg-[#132f46] p-4" : "rounded border border-[#e3b7b7] p-4";
-  const minorPanelClass = darkMode ? "rounded border border-emerald-500/40 bg-[#113a39] p-3 text-[10px] text-emerald-100" : "rounded border border-emerald-200 bg-emerald-50 p-3 text-[10px]";
-  const footerClass = darkMode ? "mt-6 border-t border-slate-600 pt-4 text-center text-[9px] text-slate-300" : "mt-6 border-t border-slate-200 pt-4 text-center text-[9px] text-slate-500";
+  const sectionLabelClass = "text-[10px] font-black uppercase tracking-[0.16em] text-[#68141b]";
+  const tableTopClass = "bg-[#68141b] text-white";
+  const subtleTextClass = "text-slate-500";
+  const subtleTextDarkClass = "text-slate-600";
+  const panelClass = "border-y border-slate-200 bg-slate-50 px-4 py-4 sm:px-6 sm:py-5";
+  const minorPanelClass = "rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-[10px] text-emerald-900";
+  const footerClass = "mt-6 border-t border-slate-200 pt-4 text-center text-[9px] text-slate-500";
 
   const formatDate = (value, fallback = "N/A") => {
     if (!value) return fallback;
@@ -146,8 +148,22 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
           </div>
         )}
 
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div id="contract-content" className={contentClass}>
           {isAccepted && <img src={approvedStamp} alt="Approved stamp" className="pointer-events-none absolute left-1/2 top-1/2 z-10 w-4/5 -translate-x-1/2 -translate-y-1/2 rotate-[-18deg] opacity-20" />}
+
+          <header className="contract-brand-header relative isolate grid grid-cols-1 items-center gap-4 overflow-hidden px-5 py-5 text-white shadow-lg sm:grid-cols-[1.2fr_1fr] sm:px-8 sm:py-6">
+            <div className="pointer-events-none absolute -right-12 -top-28 -z-10 h-64 w-64 rounded-full border border-white/10" />
+            <div className="pointer-events-none absolute -right-5 -top-20 -z-10 h-48 w-48 rounded-full border border-white/10" />
+            <div className="flex items-center gap-3">
+              <img src={logo} alt="ACGC" className="h-16 w-16 shrink-0 object-contain drop-shadow-[0_0_7px_rgba(255,255,255,0.85)]" />
+              <div>
+                <p className="text-sm font-black text-white sm:text-base">ACGC Glass &amp; Aluminum Services</p>
+                <p className="mt-1 text-[10px] font-semibold text-slate-200 sm:text-xs">Glass and Aluminum Specialists</p>
+              </div>
+            </div>
+            <h1 className="text-left text-xl font-black uppercase tracking-[0.08em] text-white sm:text-right sm:text-2xl">Service Contract</h1>
+          </header>
 
           <div className={infoCardClass}>
             <div><span className={infoLabelClass}>Contract No.</span><p className={infoValueClass}>{inspection.contractId || contractData.contractNumber || "N/A"}</p></div>
@@ -157,40 +173,25 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
             <div><span className={infoLabelClass}>Order ID</span><p className={`${infoValueClass} break-all`}>{inspection.tracking || inspection._id || inspection.id || contractData.orderNumber || "N/A"}</p></div>
           </div>
 
-          <header className={`grid grid-cols-[1.35fr_1fr_1.35fr] items-start gap-3 border-b-2 ${darkMode ? "border-[#f8b4b4]" : "border-[#5c1118]"} pb-4`}>
-            <div className="flex items-center gap-2">
-              <img src={logo} alt="ACGC" className="h-12 w-12 object-contain" />
-              <div>
-                <p className={`font-black ${darkMode ? "text-red-300" : "text-red-700"}`}>ACGC Glass &amp; Aluminum Services</p>
-                <p className={`text-[10px] font-bold ${darkMode ? "text-slate-300" : "text-slate-500"}`}>Glass and Aluminum Specialists</p>
-              </div>
-            </div>
-            <h1 className={`text-center text-lg font-black uppercase tracking-wide ${darkMode ? "text-[#8ec5ff]" : "text-[#3f78b5]"}`}>Service Contract</h1>
-            <div className={`text-right text-[10px] ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
-              <p><span className="font-bold">Contract No:</span> {contractData.orderNumber || "N/A"}</p>
-              <p><span className="font-bold">Date:</span> {contractData.contractDate || formatDate(new Date())}</p>
-            </div>
-          </header>
-
-          <section className={`mt-5 grid grid-cols-2 gap-6 border-b ${darkMode ? "border-slate-600" : "border-slate-200"} pb-4`}>
-            <div>
+          <section className="grid grid-cols-1 gap-0 border-b border-slate-200 sm:grid-cols-2">
+            <div className="border-b border-slate-200 px-4 py-4 sm:border-b-0 sm:border-r sm:px-6 sm:py-5">
               <h2 className={sectionLabelClass}>Service Provider</h2>
-              <p className={`mt-2 font-bold ${darkMode ? "text-red-300" : "text-red-700"}`}> ACGC Glass &amp; Aluminum Services</p>
+              <p className="mt-2 font-bold text-[#9f1722]"> ACGC Glass &amp; Aluminum Services</p>
               <p className={subtleTextDarkClass}>Olongapo City, Zambales</p>
             </div>
-            <div>
+            <div className="px-4 py-4 sm:px-6 sm:py-5">
               <h2 className={sectionLabelClass}>Client</h2>
-              <p className={`mt-2 font-bold ${darkMode ? "text-slate-100" : "text-slate-900"}`}>{customerName}</p>
+              <p className="mt-2 font-bold text-slate-900">{customerName}</p>
               <p className={subtleTextDarkClass}>{customerEmail} | {customerPhone}</p>
               <p className={subtleTextClass}>{siteAddress}</p>
             </div>
           </section>
 
-          <section className="mt-5">
-            <h2 className={`${sectionLabelClass} border-b ${darkMode ? "border-slate-600" : "border-slate-200"} pb-2`}>Scope of Work</h2>
+          <section className="px-4 py-4 sm:px-6 sm:py-5">
+            <h2 className={`${sectionLabelClass} border-b border-slate-200 pb-2`}>Scope of Work</h2>
             <p className="mt-2 text-[10px]"><span className="font-bold">Site Address:</span> {siteAddress}</p>
             <p className={`mt-1 whitespace-pre-wrap text-[10px] ${darkMode ? "text-slate-300" : "text-slate-600"}`}>{siteNotes}</p>
-            <div className={`mt-4 grid grid-cols-2 gap-4 border-b ${darkMode ? "border-slate-600" : "border-slate-200"} pb-3 text-[10px] sm:grid-cols-4`}>
+            <div className="mt-4 grid grid-cols-2 gap-3 border-y border-slate-200 bg-slate-50 px-3 py-3 text-[10px] sm:grid-cols-4">
               <p><span className="font-bold">Inspection Date:</span> {inspectionDate}</p>
               <p><span className="font-bold">Est. Install Date:</span> {installationDate}</p>
               <p><span className="font-bold">Client Type:</span> {inspection.order_type === "walk_in_customer" ? "Walk-in" : "Online"}</p>
@@ -198,17 +199,18 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
             </div>
           </section>
 
-          <section className="mt-4">
-            <table className="w-full border-collapse text-[10px]">
-              <thead className={`${tableTopClass} text-left uppercase`}>
+          <section className="mt-2">
+            <div className="overflow-x-auto border-y border-slate-200">
+            <table className="w-full border-collapse text-[10px] sm:text-[11px]">
+              <thead className={`${tableTopClass} text-left uppercase tracking-wider`}>
                 <tr>
-                  <th className="px-2 py-2">#</th>
-                  <th className="px-2 py-2">Product / Description</th>
-                  <th className="px-2 py-2 text-center">W x H (Unit)</th>
-                  <th className="px-2 py-2 text-center">Qty</th>
-                  <th className="px-2 py-2 text-right">Rate</th>
-                  {isPerProductWarranty && <th className="px-2 py-2 text-center">Warranty</th>}
-                  <th className="px-2 py-2 text-right">Amount</th>
+                  <th className="px-3 py-3">#</th>
+                  <th className="px-3 py-3">Product / Description</th>
+                  <th className="px-3 py-3 text-center">W x H (Unit)</th>
+                  <th className="px-3 py-3 text-center">Qty</th>
+                  <th className="px-3 py-3 text-right">Rate</th>
+                  {isPerProductWarranty && <th className="px-3 py-3 text-center">Warranty</th>}
+                  <th className="px-3 py-3 text-right">Amount</th>
                 </tr>
               </thead>
               <tbody>
@@ -217,12 +219,12 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
                   const sourceItem = sourceItems[index] || {};
                   const bladeDetails = getContractBladeDetails(item, sourceItem);
                   return (
-                  <tr key={`${item.name || "item"}-${index}`} className={darkMode ? "border-b border-slate-600" : "border-b border-slate-200"}>
-                    <td className="px-2 py-2">{index + 1}</td>
-                    <td className="px-2 py-2 font-medium">
+                  <tr key={`${item.name || "item"}-${index}`} className={darkMode ? "border-b border-slate-600" : "border-b border-slate-200 even:bg-slate-50/70"}>
+                    <td className="px-3 py-3 text-slate-500">{index + 1}</td>
+                    <td className="px-3 py-3 font-semibold">
                       {item.name || "Item"}
                       {bladeDetails.isBlade && (
-                        <div className={`mt-1 text-[9px] font-normal ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
+                        <div className={`mt-1 text-[10px] font-normal ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
                           <div>{bladeDetails.glassName || "Glass"} · {bladeDetails.bladeCount} blades × {formatCurrency(bladeDetails.bladeRate)}/blade</div>
                           {bladeDetails.saleMode === "frame" && (
                             <div>Frame: {bladeDetails.frameName || "Selected frame"}{bladeDetails.framePrice > 0 ? ` · ${formatCurrency(bladeDetails.framePrice)}` : ""}</div>
@@ -230,11 +232,11 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
                         </div>
                       )}
                     </td>
-                    <td className="px-2 py-2 text-center">{item.width || 0} x {item.height || 0} ({item.unit || sourceItem.measurement_unit || "in"})</td>
-                    <td className="px-2 py-2 text-center">{item.quantity || 1}</td>
-                    <td className="px-2 py-2 text-right">{bladeDetails.isBlade ? <>{formatCurrency(bladeDetails.bladeRate)} / blade{bladeDetails.framePrice > 0 ? <div className="text-[9px]">+ {formatCurrency(bladeDetails.framePrice)} frame</div> : null}</> : formatCurrency(item.unitPrice)}</td>
+                    <td className="px-3 py-3 text-center">{item.width || 0} x {item.height || 0} ({item.unit || sourceItem.measurement_unit || "in"})</td>
+                    <td className="px-3 py-3 text-center">{item.quantity || 1}</td>
+                    <td className="px-3 py-3 text-right">{bladeDetails.isBlade ? <>{formatCurrency(bladeDetails.bladeRate)} / blade{bladeDetails.framePrice > 0 ? <div className="text-[10px]">+ {formatCurrency(bladeDetails.framePrice)} frame</div> : null}</> : formatCurrency(item.unitPrice)}</td>
                     {isPerProductWarranty && (
-                      <td className="px-2 py-2 text-center text-[9px]">
+                      <td className="px-3 py-3 text-center text-[10px]">
                         <div className="font-bold">{warranty.periodText}</div>
                         {warranty.hasCoverage && (
                           <div className={`mt-1 ${darkMode ? "text-slate-300" : "text-slate-500"}`}>
@@ -244,21 +246,22 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
                         )}
                       </td>
                     )}
-                    <td className="px-2 py-2 text-right font-semibold">{formatCurrency(item.amount)}</td>
+                    <td className="px-3 py-3 text-right font-bold">{formatCurrency(item.amount)}</td>
                   </tr>
                   );
                 })}
               </tbody>
               <tfoot>
-                <tr className={darkMode ? "bg-[#153451] font-black" : "bg-slate-50 font-black"}>
-                  <td colSpan={isPerProductWarranty ? 6 : 5} className="px-2 py-2 text-right uppercase">Total Contract Amount</td>
-                  <td className={`px-2 py-2 text-right ${darkMode ? "text-[#9ed0ff]" : "text-[#3f78b5]"}`}>{formatCurrency(totalAmount)}</td>
+                <tr className={darkMode ? "bg-[#153451] font-black" : "bg-rose-50 font-black"}>
+                  <td colSpan={isPerProductWarranty ? 6 : 5} className="px-3 py-3 text-right uppercase tracking-wide">Total Contract Amount</td>
+                  <td className={`px-3 py-3 text-right text-base ${darkMode ? "text-[#9ed0ff]" : "text-[#9f1722]"}`}>{formatCurrency(totalAmount)}</td>
                 </tr>
               </tfoot>
             </table>
+            </div>
           </section>
 
-          <section className={panelClass + " mt-5"}>
+          <section className={panelClass + " mt-4"}>
             <h2 className={sectionLabelClass}>Payment Terms</h2>
             <p className={`mt-3 text-[10px] ${darkMode ? "text-slate-200" : ""}`}>{paymentTerms}</p>
             <div className="mt-2 grid grid-cols-2 gap-4 text-[10px]">
@@ -272,7 +275,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
             )}
           </section>
 
-          <section className="mt-5">
+          <section className="px-4 py-4 sm:px-6 sm:py-5">
             <h2 className={`${sectionLabelClass} border-b ${darkMode ? "border-slate-600" : "border-slate-200"} pb-2`}>Warranty</h2>
             <div className={`${minorPanelClass} mt-3`}>
               {isPerProductWarranty ? (
@@ -295,7 +298,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
             <div className="mt-3 rounded border border-yellow-300/60 bg-yellow-400/95 px-3 py-2 text-[10px] font-black text-slate-900 shadow-sm">⚠ {isFullPaymentMethod ? "Full payment" : `A downpayment of ${formatCurrency(downPayment)}`} is required to start the project based on the stated policy.</div>
           </section>
 
-          <section className={`mt-6 border-t ${darkMode ? "border-slate-600" : "border-slate-300"} pt-4`}>
+          <section className={`mt-2 border-t-2 px-4 py-4 ${darkMode ? "border-slate-600" : "border-slate-300"} sm:px-6 sm:py-5`}>
             <h2 className={`${sectionLabelClass} border-b ${darkMode ? "border-slate-600" : "border-slate-200"} pb-2`}>Client Acknowledgment</h2>
             {isAccepted ? (
               <div className={`mt-4 flex items-end justify-between gap-6 text-[10px] ${darkMode ? "text-slate-200" : "text-slate-800"}`}>
@@ -314,9 +317,10 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
             )}
           </section>
 
-          <footer className={footerClass}>
+          <footer className={`${footerClass} px-4 pb-4 sm:px-6`}>
             ACGC GLASS &amp; ALUMINUM SERVICES | This document is based on the customer site inspection details.
           </footer>
+        </div>
         </div>
       </div>
     </div>

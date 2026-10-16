@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import logo from "../../assets/images/ACGCLOGO1.png";
 import { Bell, Moon, Sun, ClipboardCheck, CheckCircle2, XCircle, ShoppingCart, CheckCheck, CreditCard, Send, LogOut } from "lucide-react";
 import { getAdminOrders } from "@/api/orders";
 import { subscribeToRealtime } from "@/lib/realtimeEvents";
@@ -16,10 +17,17 @@ function Navbar() {
 
   return (
     <>
-      <header className={`admin-navbar px-6 py-4 flex items-center justify-between shadow ${darkMode ? "bg-slate-900 text-white" : "bg-white text-slate-900"}`}>
+      <header className={`admin-navbar flex items-center justify-between gap-2 px-3 py-2 shadow sm:px-6 sm:py-4 ${darkMode ? "bg-slate-900 text-white" : "bg-white text-slate-900"}`}>
 
-        <div className="flex items-center gap-4">
-          <div>
+        <div className="flex min-w-0 items-center gap-2 sm:gap-4">
+          <div className="flex min-w-0 items-center gap-2 sm:hidden">
+            <img src={logo} alt="ACGC Aluminum Services" className="h-9 w-9 shrink-0 object-contain drop-shadow-[0_0_5px_rgba(255,255,255,0.9)]" />
+            <div className="min-w-0">
+              <p className="whitespace-nowrap text-sm font-bold leading-tight text-[#ff3038]">ACGC Services</p>
+              <p className={`whitespace-nowrap text-[9px] font-semibold leading-tight ${darkMode ? "text-slate-300" : "text-slate-600"}`}>Aluminum &amp; Glass Services</p>
+            </div>
+          </div>
+          <div className="hidden sm:block">
             <h1 className="text-xl font-bold">
               {user?.role === "skilled_worker" ? "Welcome Staff" : "Welcome Administrator"}
             </h1>
@@ -27,11 +35,11 @@ function Navbar() {
 
         </div>
 
-        <div className="flex items-center gap-3 relative">
+        <div className="relative flex shrink-0 items-center gap-1.5 sm:gap-3">
           <button
             type="button"
             onClick={toggleDarkMode}
-            className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition focus:outline-none sm:h-10 sm:w-10 ${
+            className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition focus:outline-none sm:h-10 sm:w-10 ${
               darkMode ? "text-slate-200 hover:bg-slate-800" : "text-slate-700 hover:bg-slate-100"
             }`}
             aria-label={darkMode ? "Switch to day mode" : "Switch to night mode"}
@@ -43,7 +51,7 @@ function Navbar() {
               : <Sun size={22} strokeWidth={1.8} className="text-amber-500" />}
           </button>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
             <NotificationMenu />
             <button
               type="button"
@@ -356,7 +364,7 @@ function NotificationMenu() {
       </button>
 
       {open && (
-        <div className={`fixed inset-x-3 top-[calc(5.25rem+env(safe-area-inset-top))] z-[70] mt-1 flex max-h-[calc(100dvh-11rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] w-[calc(100%-1.5rem)] max-w-md flex-col overflow-hidden rounded-2xl border shadow-2xl lg:absolute lg:inset-x-auto lg:right-0 lg:top-auto lg:z-20 lg:mt-2 lg:max-h-[min(36rem,calc(100vh-6rem))] lg:w-96 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200"}`}>
+        <div className={`fixed left-auto right-3 top-[calc(5.25rem+env(safe-area-inset-top))] z-[70] mt-1 flex max-h-[calc(100dvh-11rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] w-[min(24rem,calc(100vw-1.5rem))] max-w-md flex-col overflow-hidden rounded-2xl border shadow-2xl lg:right-4 lg:top-[calc(5.25rem+env(safe-area-inset-top))] lg:z-20 lg:mt-0 lg:max-h-[min(36rem,calc(100vh-6rem))] lg:w-96 ${darkMode ? "bg-slate-800 border-slate-700" : "bg-white border-slate-200"}`}>
           <div className={`flex shrink-0 items-center justify-between border-b px-3 py-2.5 sm:px-4 sm:py-3 ${darkMode ? "border-slate-700" : "border-slate-100"}`}>
             <div>
               <p className={`text-sm font-bold ${darkMode ? "text-white" : "text-slate-950"}`}>Admin activity</p>
