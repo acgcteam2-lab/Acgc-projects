@@ -23,7 +23,7 @@ function ContractModal({ isOpen, onClose, inspection, contractData, onAccept, on
   const titleClass = darkMode ? "text-xl font-bold text-slate-100" : "text-xl font-bold text-slate-900";
   const buttonShellClass = darkMode ? "rounded-lg border border-slate-600 bg-[#1b3045] px-3 py-2 text-sm text-slate-100 hover:bg-[#233d57]" : "rounded-lg border bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50";
   const closeButtonClass = darkMode ? "rounded-lg p-2 text-slate-200 hover:bg-slate-700" : "rounded-lg p-2 text-slate-600 hover:bg-slate-100";
-  const contentClass = "contract-paper relative mx-0 my-0 w-full max-w-none bg-white px-0 py-0 text-[12px] text-slate-800 shadow-none";
+  const contentClass = "contract-paper contract-fixed-light relative mx-0 my-0 w-full max-w-none bg-white px-0 py-0 text-[12px] text-slate-800 shadow-none";
   const infoCardClass = "grid grid-cols-2 gap-x-4 gap-y-3 border-b border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100 px-4 py-4 text-[10px] text-slate-700 sm:grid-cols-3 sm:px-6 sm:py-5";
   const infoLabelClass = "text-[9px] font-black uppercase tracking-[0.16em] text-[#7f1d1d]";
   const infoValueClass = "mt-1 font-bold text-slate-900";

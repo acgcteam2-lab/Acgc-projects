@@ -1880,6 +1880,72 @@ select:not([multiple]) option:hover {
     linear-gradient(135deg, #020617 0%, #111827 56%, #450a0a 100%);
 }
 
+/* Keep the printable contract on its own light palette when the admin shell is dark. */
+.admin-theme-dark .contract-fixed-light,
+.admin-theme-dark #contract-content {
+  color: #1e293b !important;
+  background-color: #fff !important;
+  color-scheme: light;
+}
+
+.admin-theme-dark #contract-content section {
+  color: #1e293b !important;
+}
+
+.admin-theme-dark #contract-content .bg-white {
+  background-color: #fff !important;
+}
+
+.admin-theme-dark #contract-content .bg-gray-50,
+.admin-theme-dark #contract-content .bg-slate-50 {
+  background-color: #f8fafc !important;
+}
+
+.admin-theme-dark #contract-content .bg-gray-100,
+.admin-theme-dark #contract-content .bg-slate-100 {
+  background-color: #f1f5f9 !important;
+}
+
+.admin-theme-dark #contract-content .bg-rose-50 {
+  background-color: #fff1f2 !important;
+}
+
+.admin-theme-dark #contract-content .bg-emerald-50 {
+  background-color: #ecfdf5 !important;
+}
+
+.admin-theme-dark #contract-content .text-gray-900,
+.admin-theme-dark #contract-content .text-gray-800,
+.admin-theme-dark #contract-content .text-slate-950,
+.admin-theme-dark #contract-content .text-slate-900,
+.admin-theme-dark #contract-content .text-slate-800,
+.admin-theme-dark #contract-content .text-black {
+  color: #0f172a !important;
+}
+
+.admin-theme-dark #contract-content .text-gray-700,
+.admin-theme-dark #contract-content .text-gray-600,
+.admin-theme-dark #contract-content .text-slate-700,
+.admin-theme-dark #contract-content .text-slate-600 {
+  color: #475569 !important;
+}
+
+.admin-theme-dark #contract-content .text-gray-500,
+.admin-theme-dark #contract-content .text-gray-400,
+.admin-theme-dark #contract-content .text-slate-500,
+.admin-theme-dark #contract-content .text-slate-400 {
+  color: #64748b !important;
+}
+
+.admin-theme-dark #contract-content .border-gray-100,
+.admin-theme-dark #contract-content .border-gray-200,
+.admin-theme-dark #contract-content .border-gray-300,
+.admin-theme-dark #contract-content .border-slate-100,
+.admin-theme-dark #contract-content .border-slate-200,
+.admin-theme-dark #contract-content .border-slate-300 {
+  border-color: #dbe3ed !important;
+}
+
 @media (max-width: 640px) {
   .contract-paper {
     min-height: 0;
