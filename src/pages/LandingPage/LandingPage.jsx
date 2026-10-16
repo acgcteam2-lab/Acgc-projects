@@ -421,10 +421,6 @@ function LandingPage() {
   });
 
   const handleAddToCart = async (product, options = null) => {
-    if (!customerPermissions.can_request_orders) {
-      toast.error("Order requests are currently unavailable.");
-      return false;
-    }
     if (authLoading) {
       toast("Checking your account. Please try again in a moment.");
       return false;
@@ -437,6 +433,10 @@ function LandingPage() {
         options,
       });
       setShowLoginRequired(true);
+      return false;
+    }
+    if (!customerPermissions.can_request_orders) {
+      toast.error("Order requests are currently unavailable.");
       return false;
     }
     if (user.role !== "customer") {
@@ -1353,7 +1353,7 @@ function LandingPage() {
                       </span>
                     )}
                   </div>
-                  {customerPermissions.can_request_orders && <div className="absolute inset-x-0 bottom-0 flex items-end justify-end gap-3 p-3 max-md:p-1.5">
+                  <div className="absolute inset-x-0 bottom-0 flex items-end justify-end gap-3 p-3 max-md:p-1.5">
                     <div className="flex gap-1.5 max-md:gap-1">
                       <button
                         type="button"
@@ -1373,17 +1373,17 @@ function LandingPage() {
                           event.stopPropagation();
                           handleAddToCart(product);
                         }}
-                        disabled={!customerPermissions.can_request_orders || addingCartProductId === String(productId)}
-                        className="inline-flex size-8 items-center justify-center rounded-xl border border-slate-200 bg-white/90 text-slate-700 shadow-lg transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50 max-md:size-7 max-md:rounded-lg"
+                        disabled={addingCartProductId === String(productId)}
+                        className="inline-flex size-8 items-center justify-center rounded-xl border border-slate-200 bg-white/90 text-slate-700 shadow-lg transition hover:border-slate-300 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50 max-md:size-9 max-md:rounded-lg"
                         aria-label="Add to cart"
-                        title={customerPermissions.can_request_orders ? "Add to cart" : "Order requests are unavailable"}
+                        title="Add to cart"
                       >
                         {addingCartProductId === String(productId)
                           ? <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />
                           : <ShoppingCart size={14} aria-hidden="true" />}
                       </button>
                     </div>
-                  </div>}
+                  </div>
                 </div>
 
                 <div className="flex min-w-0 flex-1 flex-col gap-3 p-4 max-md:gap-2 max-md:p-3">
@@ -1795,7 +1795,7 @@ function LandingPage() {
               {pendingActionError}
             </p>
           )}
-          {customerPermissions.can_request_orders && <>
+          <>
             <button
               type="button"
               onClick={() => handleAddToCart(selectedProduct, productEstimatorForm)}
@@ -1814,7 +1814,7 @@ function LandingPage() {
             >
               Place Order Request <ArrowRight size={16} aria-hidden="true" />
             </button>
-          </>}
+          </>
           </>}
         </aside>
       </div>
@@ -1829,7 +1829,7 @@ function LandingPage() {
       role="dialog"
       aria-modal="true"
       aria-labelledby="cart-login-required-title"
-      className="my-auto max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+      className="my-auto max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl sm:p-6"
       onClick={(event) => event.stopPropagation()}
     >
       <div className="flex items-start gap-3">
@@ -1843,14 +1843,14 @@ function LandingPage() {
           </p>
         </div>
       </div>
-      <div className="mt-6 flex justify-end gap-2">
+      <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <button
           type="button"
           onClick={() => {
             setShowLoginRequired(false);
             setPendingGuestCartAdd(null);
           }}
-          className="min-h-10 rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+          className="min-h-11 rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 sm:min-h-10"
         >
           Cancel
         </button>
@@ -1868,7 +1868,7 @@ function LandingPage() {
               },
             });
           }}
-          className="min-h-10 rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+          className="min-h-11 rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 sm:min-h-10"
         >
           Log In
         </button>
