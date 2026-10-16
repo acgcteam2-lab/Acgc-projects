@@ -1127,7 +1127,7 @@ function LandingPage() {
             ) : (
               <div className="grid gap-5 md:grid-cols-3">
                 {featuredProducts.map((product, index) => {
-                  const imageUrl = getProductImage(product);
+                  const imageUrl = getProductImage(product, 480);
                   const reviewStats = featuredProductStats[product._id || product.id] || { averageRating: 0, ratingsCount: 0 };
                   const averageRating = Number(reviewStats.averageRating) || 0;
                   const reviewsCount = Number(reviewStats.ratingsCount) || 0;
@@ -1157,13 +1157,13 @@ function LandingPage() {
                         <div data-product-image-skeleton className="absolute inset-0 animate-pulse bg-slate-200 motion-reduce:animate-none" />
                         <img
                           src={imageUrl || PRODUCT_IMAGE_PLACEHOLDER}
-                          srcSet={getProductImageSrcSet(imageUrl)}
-                          sizes="(max-width: 768px) 100vw, 33vw"
+                          srcSet={getProductImageSrcSet(imageUrl, [320, 480, 640])}
+                          sizes="(max-width: 768px) 100vw, (max-width: 1280px) 33vw, 400px"
                           alt={product.product_name || product.name || "Featured product"}
                           width="640"
                           height="480"
-                          loading="eager"
-                          fetchPriority={index === 0 ? "high" : "auto"}
+                          loading={index === 0 ? "eager" : "lazy"}
+                          fetchPriority={index === 0 ? "high" : "low"}
                           decoding="async"
                           onLoad={handleProductImageLoad}
                           onError={handleProductImageError}
